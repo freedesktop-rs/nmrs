@@ -424,8 +424,9 @@ impl WifiConnectionBuilder {
         }
     }
 
-    fn path(value: String) -> Value<'static> {
-        Value::from(value)
+    fn path(mut value: String) -> Value<'static> {
+        value.push('\0');
+        Value::from(value.into_bytes())
     }
 
     fn blob(value: Vec<u8>) -> Value<'static> {

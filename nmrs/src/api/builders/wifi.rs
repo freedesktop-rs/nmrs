@@ -254,7 +254,7 @@ mod tests {
         assert_eq!(e1x.get("phase2-auth"), Some(&Value::from("pap")));
         assert_eq!(
             e1x.get("ca-cert"),
-            Some(&Value::from("file:///etc/ssl/certs/ca.pem"))
+            Some(&Value::from(b"file:///etc/ssl/certs/ca.pem\0".to_vec()))
         );
         // system-ca-certs should NOT be present when false
         assert!(e1x.get("system-ca-certs").is_none());
@@ -291,7 +291,9 @@ mod tests {
         assert_eq!(e1x.get("phase2-auth"), None);
         assert_eq!(
             e1x.get("private-key"),
-            Some(&Value::from("file:///etc/ssl/private/client.key"))
+            Some(&Value::from(
+                b"file:///etc/ssl/private/client.key\0".to_vec()
+            ))
         );
         assert_eq!(
             e1x.get("private-key-password"),
@@ -299,11 +301,11 @@ mod tests {
         );
         assert_eq!(
             e1x.get("client-cert"),
-            Some(&Value::from("file:///etc/ssl/certs/client.crt"))
+            Some(&Value::from(b"file:///etc/ssl/certs/client.crt\0".to_vec()))
         );
         assert_eq!(
             e1x.get("ca-cert"),
-            Some(&Value::from("file:///etc/ssl/certs/ca.pem"))
+            Some(&Value::from(b"file:///etc/ssl/certs/ca.pem\0".to_vec()))
         );
         // system-ca-certs should NOT be present when false
         assert!(e1x.get("system-ca-certs").is_none());
