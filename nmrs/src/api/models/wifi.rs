@@ -773,6 +773,18 @@ impl EapOptionsBuilder {
                 "EAP client certificate cannot be specified both as a path and blob".into(),
             ));
         }
+        if self.method == Some(EapMethod::Tls) {
+            if self.private_key_path.is_none() && self.private_key_blob.is_none() {
+                return Err(ConnectionError::IncompleteBuilder(
+                    "EAP private key is required for TLS (use .private_key_path() or .private_key_blob())".into(),
+                ));
+            }
+            if self.client_cert_path.is_none() && self.client_cert_blob.is_none() {
+                return Err(ConnectionError::IncompleteBuilder(
+                    "EAP client certificate is required for TLS (use .client_cert_path() or .client_cert_blob())".into(),
+                ));
+            }
+        }
 
         Ok(EapOptions {
             identity: self.identity.ok_or_else(|| {

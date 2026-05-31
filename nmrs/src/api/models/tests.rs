@@ -970,6 +970,38 @@ fn test_eap_options_builder_tls() {
 }
 
 #[test]
+fn test_eap_options_builder_tls_missing_private_key() {
+    let err = EapOptions::builder()
+        .identity("student@university.edu")
+        .method(EapMethod::Tls)
+        .client_cert_path("file:///etc/ssl/certs/client.pem")
+        .build()
+        .unwrap_err();
+
+    match err {
+        ConnectionError::IncompleteBuilder(message) => assert!(message.contains("private key")),
+        err => panic!("expected IncompleteBuilder, got {err:?}"),
+    }
+}
+
+#[test]
+fn test_eap_options_builder_tls_missing_client_cert() {
+    let err = EapOptions::builder()
+        .identity("student@university.edu")
+        .method(EapMethod::Tls)
+        .private_key_path("file:///etc/ssl/private/client.key")
+        .build()
+        .unwrap_err();
+
+    match err {
+        ConnectionError::IncompleteBuilder(message) => {
+            assert!(message.contains("client certificate"));
+        }
+        err => panic!("expected IncompleteBuilder, got {err:?}"),
+    }
+}
+
+#[test]
 fn test_eap_options_builder_path_blob_ca_cert_path() {
     let opts = EapOptions::builder()
         .identity("student@university.edu")
