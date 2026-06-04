@@ -23,7 +23,7 @@ type_complexity = "allow"
 # Core dependencies
 zbus = "5.16.0"
 zvariant = "5.12.0"
-log = "0.4.31"
+log = "0.4.32"
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.18"
 uuid = { version = "1.23.2", features = ["v4", "v5"] }
