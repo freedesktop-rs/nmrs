@@ -12,7 +12,7 @@ use crate::api::models::{BluetoothDevice, ConnectionError, Device, DeviceIdentit
 use crate::core::bluetooth::populate_bluez_info;
 use crate::core::connection::get_device_by_interface;
 use crate::core::state_wait::wait_for_wifi_device_ready;
-use crate::dbus::{NMBluetoothProxy, NMDeviceProxy, NMProxy};
+use crate::dbus::{NMAccessPointProxy, NMBluetoothProxy, NMDeviceProxy, NMProxy, NMWirelessProxy};
 use crate::types::constants::device_type;
 use crate::util::utils::get_ip_addresses_from_active_connection;
 
@@ -94,6 +94,40 @@ pub(crate) async fn list_devices(conn: &Connection) -> Result<Vec<Device>> {
                 None
             }
         };
+        let frequency = if raw_type == device_type::WIFI {
+            match NMWirelessProxy::builder(conn)
+                .path(p.clone())?
+                .build()
+                .await
+            {
+                Ok(wifi) => match wifi.active_access_point().await {
+                    Ok(ap_path) if ap_path.as_str() != "/" => {
+                        match NMAccessPointProxy::builder(conn)
+                            .path(ap_path)?
+                            .build()
+                            .await
+                        {
+                            Ok(ap) => ap.frequency().await.ok(),
+                            Err(e) => {
+                                debug!("Failed to build active AP proxy for {}: {}", interface, e);
+                                None
+                            }
+                        }
+                    }
+                    Ok(_) => None,
+                    Err(e) => {
+                        debug!("Failed to get active AP for {}: {}", interface, e);
+                        None
+                    }
+                },
+                Err(e) => {
+                    debug!("Failed to build wireless proxy for {}: {}", interface, e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         // Get IP addresses from active connection
         let (ip4_address, ip6_address) =
@@ -129,6 +163,7 @@ pub(crate) async fn list_devices(conn: &Connection) -> Result<Vec<Device>> {
             driver,
             ip4_address,
             ip6_address,
+            frequency,
             // speed,
         });
     }

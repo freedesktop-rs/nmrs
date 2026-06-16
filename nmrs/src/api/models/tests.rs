@@ -603,6 +603,7 @@ fn test_device_is_bluetooth() {
         driver: Some("btusb".into()),
         ip4_address: None,
         ip6_address: None,
+        frequency: None,
     };
 
     assert!(bt_device.is_bluetooth());
@@ -1257,6 +1258,34 @@ fn test_device_state_is_transitional() {
             !state.is_transitional(),
             "{state:?} should not be transitional"
         );
+    }
+}
+
+#[test]
+fn test_device_state_is_enabled() {
+    let enabled = [
+        DeviceState::Disconnected,
+        DeviceState::Prepare,
+        DeviceState::Config,
+        DeviceState::NeedAuth,
+        DeviceState::IpConfig,
+        DeviceState::IpCheck,
+        DeviceState::Secondaries,
+        DeviceState::Activated,
+        DeviceState::Deactivating,
+    ];
+    for state in &enabled {
+        assert!(state.is_enabled(), "{state:?} should be enabled");
+    }
+
+    let disabled = [
+        DeviceState::Unmanaged,
+        DeviceState::Unavailable,
+        DeviceState::Failed,
+        DeviceState::Other(999),
+    ];
+    for state in &disabled {
+        assert!(!state.is_enabled(), "{state:?} should not be enabled");
     }
 }
 

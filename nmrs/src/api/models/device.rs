@@ -59,6 +59,8 @@ pub struct Device {
     pub ip4_address: Option<String>,
     /// Assigned IPv6 address with CIDR notation (only present when connected)
     pub ip6_address: Option<String>,
+    /// Operating frequency in MHz for the active Wi-Fi connection, if known.
+    pub frequency: Option<u32>,
     // Link speed in Mb/s (wired devices)
     // pub speed: Option<u32>,
 }
@@ -94,6 +96,8 @@ pub struct WifiDevice {
     pub is_active: bool,
     /// SSID of the currently active AP, if any.
     pub active_ssid: Option<String>,
+    /// Operating frequency in MHz of the currently active AP, if any.
+    pub active_frequency_mhz: Option<u32>,
 }
 
 /// Represents the hardware identity of a network device.
@@ -283,6 +287,27 @@ impl DeviceState {
                 | Self::IpConfig
                 | Self::IpCheck
                 | Self::Secondaries
+                | Self::Deactivating
+        )
+    }
+
+    /// Returns `true` if the device state indicates the device is usable.
+    ///
+    /// This is derived only from the NetworkManager device state. For actual
+    /// Wi-Fi radio power and rfkill state, use
+    /// [`NetworkManager::wifi_state`](crate::NetworkManager::wifi_state).
+    #[must_use]
+    pub fn is_enabled(&self) -> bool {
+        matches!(
+            self,
+            Self::Disconnected
+                | Self::Prepare
+                | Self::Config
+                | Self::NeedAuth
+                | Self::IpConfig
+                | Self::IpCheck
+                | Self::Secondaries
+                | Self::Activated
                 | Self::Deactivating
         )
     }

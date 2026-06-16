@@ -265,7 +265,7 @@ impl NetworkManager {
     /// Lists every managed Wi-Fi device on the system.
     ///
     /// Each [`WifiDevice`] includes its interface name, MAC, current state,
-    /// and the SSID of any active connection.
+    /// and the SSID/frequency of any active connection.
     pub async fn list_wifi_devices(&self) -> Result<Vec<WifiDevice>> {
         list_wifi_devices(&self.conn).await
     }

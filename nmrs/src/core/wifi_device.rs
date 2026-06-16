@@ -16,7 +16,7 @@ use crate::dbus::{NMAccessPointProxy, NMDeviceProxy, NMProxy, NMWirelessProxy};
 use crate::types::constants::device_type;
 use crate::util::utils::decode_ssid_or_hidden;
 
-/// Lists every managed Wi-Fi device with current MAC, state, and active SSID.
+/// Lists every managed Wi-Fi device with current MAC, state, and active AP info.
 pub(crate) async fn list_wifi_devices(conn: &Connection) -> Result<Vec<WifiDevice>> {
     let nm = NMProxy::new(conn).await?;
     let paths = nm.get_devices().await?;
@@ -47,21 +47,26 @@ pub(crate) async fn list_wifi_devices(conn: &Connection) -> Result<Vec<WifiDevic
             .build()
             .await?;
         let active_ap_path = wifi.active_access_point().await.ok();
-        let (is_active, active_ssid) = match active_ap_path {
+        let (is_active, active_ssid, active_frequency_mhz) = match active_ap_path {
             Some(ap_path) if ap_path.as_str() != "/" => {
                 match NMAccessPointProxy::builder(conn)
                     .path(ap_path)?
                     .build()
                     .await
                 {
-                    Ok(ap) => match ap.ssid().await {
-                        Ok(bytes) => (true, Some(decode_ssid_or_hidden(&bytes).into_owned())),
-                        Err(_) => (true, None),
-                    },
-                    Err(_) => (true, None),
+                    Ok(ap) => {
+                        let active_ssid = ap
+                            .ssid()
+                            .await
+                            .ok()
+                            .map(|bytes| decode_ssid_or_hidden(&bytes).into_owned());
+                        let active_frequency_mhz = ap.frequency().await.ok();
+                        (true, active_ssid, active_frequency_mhz)
+                    }
+                    Err(_) => (true, None, None),
                 }
             }
-            _ => (false, None),
+            _ => (false, None, None),
         };
 
         out.push(WifiDevice {
@@ -75,6 +80,7 @@ pub(crate) async fn list_wifi_devices(conn: &Connection) -> Result<Vec<WifiDevic
             autoconnect,
             is_active,
             active_ssid,
+            active_frequency_mhz,
         });
     }
 
