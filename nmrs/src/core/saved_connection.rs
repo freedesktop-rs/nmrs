@@ -61,6 +61,18 @@ pub(crate) fn build_settings_patch_delta(
     delta
 }
 
+fn merge_settings_patch_delta(
+    settings: &mut HashMap<String, HashMap<String, OwnedValue>>,
+    delta: HashMap<String, HashMap<String, OwnedValue>>,
+) {
+    for (section, entries) in delta {
+        let target = settings.entry(section).or_default();
+        for (key, value) in entries {
+            target.insert(key, value);
+        }
+    }
+}
+
 fn owned_to_str(v: &OwnedValue) -> Option<String> {
     Str::try_from(v.clone())
         .ok()
@@ -684,6 +696,15 @@ pub(crate) async fn update_saved_connection(
         return Ok(());
     }
 
+    let mut settings = proxy
+        .get_settings()
+        .await
+        .map_err(|e| ConnectionError::DbusOperation {
+            context: "GetSettings failed before update".into(),
+            source: e,
+        })?;
+    merge_settings_patch_delta(&mut settings, delta);
+
     let unsaved = proxy
         .unsaved()
         .await
@@ -694,7 +715,7 @@ pub(crate) async fn update_saved_connection(
 
     if unsaved {
         proxy
-            .update_unsaved(delta)
+            .update_unsaved(settings)
             .await
             .map_err(|e| ConnectionError::DbusOperation {
                 context: "UpdateUnsaved failed".into(),
@@ -702,7 +723,7 @@ pub(crate) async fn update_saved_connection(
             })?;
     } else {
         proxy
-            .update(delta)
+            .update(settings)
             .await
             .map_err(|e| ConnectionError::DbusOperation {
                 context: "Update failed".into(),
@@ -927,6 +948,29 @@ mod tests {
             d.get("connection").unwrap().get("autoconnect"),
             Some(&OwnedValue::from(false))
         );
+    }
+
+    #[test]
+    fn patch_delta_merges_into_full_settings() {
+        let mut settings = HashMap::new();
+        settings.insert(
+            "connection".into(),
+            conn_section("u5", "Home", "802-11-wireless"),
+        );
+
+        let patch = SettingsPatch {
+            autoconnect: Some(false),
+            ..Default::default()
+        };
+        let delta = build_settings_patch_delta(&patch);
+        merge_settings_patch_delta(&mut settings, delta);
+
+        let conn = settings.get("connection").unwrap();
+        assert_eq!(
+            owned_to_str(conn.get("type").unwrap()).as_deref(),
+            Some("802-11-wireless")
+        );
+        assert_eq!(conn.get("autoconnect"), Some(&OwnedValue::from(false)));
     }
 
     #[test]

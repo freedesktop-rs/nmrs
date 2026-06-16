@@ -1171,7 +1171,10 @@ impl NetworkManager {
         saved_profiles::delete_saved_connection(&self.conn, uuid).await
     }
 
-    /// Merges a [`SettingsPatch`] into an existing profile (`Update` / `UpdateUnsaved`).
+    /// Merges a [`SettingsPatch`] into an existing profile.
+    ///
+    /// This loads the current settings, applies the patch, then writes the full
+    /// settings map back with NetworkManager's `Update` / `UpdateUnsaved`.
     ///
     /// `uuid` is the profile's `connection.uuid` (see [`SavedConnection::uuid`]), **not**
     /// the Wi-Fi SSID from a scan [`Network`]. Use [`Self::get_saved_connection_uuid`] or

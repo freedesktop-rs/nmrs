@@ -7,6 +7,9 @@ All notable changes to the `nmrs` crate will be documented in this file.
 - `NetworkManager::get_saved_connection_uuid()` — resolve a profile UUID from `connection.id` (usually the Wi-Fi SSID) for use with `update_saved_connection` ([#442](https://github.com/networkmanager-rs/nmrs/issues/442))
 - `DeviceState::is_enabled()`, `Device.frequency`, and `WifiDevice.active_frequency_mhz` expose device usability and active Wi-Fi AP frequency without requiring separate AP lookups ([#445](https://github.com/networkmanager-rs/nmrs/pull/445))
 
+### Fixed
+- `NetworkManager::update_saved_connection()` now merges `SettingsPatch` into the full existing settings map before calling NetworkManager `Update`, avoiding missing required fields such as `connection.type` ([#446](https://github.com/networkmanager-rs/nmrs/pull/446))
+
 ## [3.2.0] - 2026-05-31
 ### Added
 - Add EAP-TLS support for WPA-Enterprise Wi-Fi, including TLS certificate/key path or blob configuration on `EapOptions` and `EapMethod::Tls` ([#434](https://github.com/networkmanager-rs/nmrs/pull/434))
