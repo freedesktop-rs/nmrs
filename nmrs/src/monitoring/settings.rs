@@ -131,7 +131,10 @@ async fn connection_settings_streams(
     Ok(streams)
 }
 
-fn send_change(tx: &mpsc::UnboundedSender<Result<SettingsChange>>, change: SettingsChange) -> bool {
+fn send_change(
+    tx: &mpsc::UnboundedSender<Result<SettingsChange>>,
+    change: SettingsChange,
+) -> bool {
     tx.unbounded_send(Ok(change)).is_ok()
 }
 
