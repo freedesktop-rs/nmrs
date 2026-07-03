@@ -12,8 +12,9 @@ use crate::api::models::snapshot::{
     saved_wifi_profiles as filter_saved_wifi_profiles,
 };
 use crate::api::models::{
-    ActiveConnection, AirplaneModeState, Device, Network, NetworkInfo, NetworkSnapshot, RadioState,
-    SavedConnection, SavedConnectionBrief, SettingsPatch, WifiDevice, WifiSecurity, WiredDevice,
+    ActiveConnection, AirplaneModeState, Device, MonitorHandle, Network, NetworkInfo,
+    NetworkSnapshot, RadioState, SavedConnection, SavedConnectionBrief, SettingsPatch, WifiDevice,
+    WifiSecurity, WiredDevice,
 };
 use crate::api::wifi_scope::WifiScope;
 use crate::core::active_connection as active_connections;
@@ -1387,8 +1388,8 @@ impl NetworkManager {
     /// whenever the network list or signal data changes, enabling live UI
     /// updates without polling.
     ///
-    /// This function runs indefinitely until an error occurs. Run it in a
-    /// background task.
+    /// Returns a [`MonitorHandle`] that can be used to stop monitoring
+    /// gracefully. Dropping the handle also triggers shutdown.
     ///
     /// # Example
     ///
@@ -1397,21 +1398,25 @@ impl NetworkManager {
     /// # async fn example() -> nmrs::Result<()> {
     /// let nm = NetworkManager::new().await?;
     ///
-    /// let nm_clone = nm.clone();
-    /// tokio::spawn(async move {
-    ///     nm_clone.monitor_network_changes(|| {
-    ///         println!("Networks changed!");
-    ///     }).await
-    /// });
+    /// let handle = nm.monitor_network_changes(|| {
+    ///     println!("Networks changed!");
+    /// }).await?;
+    ///
+    /// // ... later, shut down cleanly:
+    /// handle.stop().await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn monitor_network_changes<F>(&self, callback: F) -> Result<()>
+    pub async fn monitor_network_changes<F>(&self, callback: F) -> Result<MonitorHandle>
     where
         F: Fn() + Send + 'static,
     {
-        let (_tx, rx) = watch::channel(());
-        network_monitor::monitor_network_changes(&self.conn, rx, callback).await
+        let (tx, rx) = watch::channel(());
+        let conn = self.conn.clone();
+        let task = tokio::spawn(async move {
+            network_monitor::monitor_network_changes(&conn, rx, callback).await
+        });
+        Ok(MonitorHandle::new(tx, task))
     }
 
     /// Creates a unified stream of refresh-oriented NetworkManager events.
@@ -1444,8 +1449,8 @@ impl NetworkManager {
     /// device state changes (e.g., cable plugged in, device activated),
     /// enabling live UI updates without polling.
     ///
-    /// This function runs indefinitely until an error occurs. Run it in a
-    /// background task.
+    /// Returns a [`MonitorHandle`] that can be used to stop monitoring
+    /// gracefully. Dropping the handle also triggers shutdown.
     ///
     /// # Example
     ///
@@ -1454,20 +1459,24 @@ impl NetworkManager {
     /// # async fn example() -> nmrs::Result<()> {
     /// let nm = NetworkManager::new().await?;
     ///
-    /// let nm_clone = nm.clone();
-    /// tokio::spawn(async move {
-    ///     nm_clone.monitor_device_changes(|| {
-    ///         println!("Device state changed!");
-    ///     }).await
-    /// });
+    /// let handle = nm.monitor_device_changes(|| {
+    ///     println!("Device state changed!");
+    /// }).await?;
+    ///
+    /// // ... later, shut down cleanly:
+    /// handle.stop().await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn monitor_device_changes<F>(&self, callback: F) -> Result<()>
+    pub async fn monitor_device_changes<F>(&self, callback: F) -> Result<MonitorHandle>
     where
         F: Fn() + Send + 'static,
     {
-        let (_tx, rx) = watch::channel(());
-        device_monitor::monitor_device_changes(&self.conn, rx, callback).await
+        let (tx, rx) = watch::channel(());
+        let conn = self.conn.clone();
+        let task = tokio::spawn(async move {
+            device_monitor::monitor_device_changes(&conn, rx, callback).await
+        });
+        Ok(MonitorHandle::new(tx, task))
     }
 }

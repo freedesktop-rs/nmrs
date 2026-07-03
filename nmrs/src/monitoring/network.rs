@@ -24,6 +24,7 @@ enum NetworkChange {
     Added(OwnedObjectPath),
     Removed(OwnedObjectPath),
     SignalStrengthChanged,
+    DeviceAdded(OwnedObjectPath),
 }
 
 /// Monitors access point changes on all Wi-Fi devices.
@@ -119,9 +120,19 @@ where
         debug!("Subscribed to network change signals on device: {dev_path}");
     }
 
-    if streams.is_empty() {
-        warn!("No Wi-Fi devices found to monitor");
-        return Err(ConnectionError::NoWifiDevice);
+    let device_added_stream = nm.receive_device_added().await?;
+    streams.push(Box::pin(device_added_stream.map(|signal| {
+        signal.args().map_or_else(
+            |err| {
+                debug!("Failed to parse DeviceAdded signal: {err}");
+                NetworkChange::SignalStrengthChanged
+            },
+            |args| NetworkChange::DeviceAdded(args.device().clone()),
+        )
+    })));
+
+    if streams.len() == 1 {
+        warn!("No Wi-Fi devices found to monitor (listening for hotplug)");
     }
 
     debug!(
@@ -136,7 +147,7 @@ where
         select! {
             _ = shutdown.changed() => {
                 debug!("Network monitoring shutdown requested");
-                break;
+                return Ok(());
             }
             signal = merged.next() => {
                 match signal {
@@ -157,18 +168,88 @@ where
                         callback();
                     }
                     Some(NetworkChange::SignalStrengthChanged) => callback(),
-                    None => break,
+                    Some(NetworkChange::DeviceAdded(dev_path)) => {
+                        if let Err(err) = subscribe_wifi_device(
+                            conn,
+                            &dev_path,
+                            &mut merged,
+                            &mut monitored_access_points,
+                        )
+                        .await
+                        {
+                            debug!("Hotplugged device {dev_path} is not Wi-Fi or failed: {err}");
+                        } else {
+                            debug!("Subscribed to hotplugged Wi-Fi device: {dev_path}");
+                            callback();
+                        }
+                    }
+                    None => return Err(ConnectionError::Stuck(
+                        "network monitoring stream ended unexpectedly".into(),
+                    )),
                 }
             }
         }
     }
+}
 
-    while let Some(_signal) = merged.next().await {
-        debug!("Network change detected");
-        callback();
+async fn subscribe_wifi_device(
+    conn: &Connection,
+    dev_path: &OwnedObjectPath,
+    merged: &mut futures::stream::SelectAll<NetworkChangeStream>,
+    monitored_access_points: &mut HashSet<String>,
+) -> Result<()> {
+    let dev = NMDeviceProxy::builder(conn)
+        .path(dev_path.clone())?
+        .build()
+        .await?;
+
+    if dev.device_type().await? != device_type::WIFI {
+        return Err(ConnectionError::Stuck("not a Wi-Fi device".into()));
     }
 
-    Err(ConnectionError::Stuck("monitoring stream ended".into()))
+    let wifi = NMWirelessProxy::builder(conn)
+        .path(dev_path.clone())?
+        .build()
+        .await?;
+
+    let added_stream = wifi.receive_access_point_added().await?;
+    let removed_stream = wifi.receive_access_point_removed().await?;
+
+    merged.push(Box::pin(added_stream.map(|signal| {
+        signal.args().map_or_else(
+            |err| {
+                debug!("Failed to parse AccessPointAdded signal: {err}");
+                NetworkChange::SignalStrengthChanged
+            },
+            |args| NetworkChange::Added(args.path().clone()),
+        )
+    })));
+    merged.push(Box::pin(removed_stream.map(|signal| {
+        signal.args().map_or_else(
+            |err| {
+                debug!("Failed to parse AccessPointRemoved signal: {err}");
+                NetworkChange::SignalStrengthChanged
+            },
+            |args| NetworkChange::Removed(args.path().clone()),
+        )
+    })));
+
+    if let Ok(ap_paths) = wifi.access_points().await {
+        for ap_path in ap_paths {
+            if !monitored_access_points.insert(ap_path.to_string()) {
+                continue;
+            }
+            match access_point_strength_stream(conn, ap_path.clone()).await {
+                Ok(stream) => merged.push(stream),
+                Err(err) => debug!(
+                    "Failed to monitor signal strength for access point {}: {}",
+                    ap_path, err
+                ),
+            }
+        }
+    }
+
+    Ok(())
 }
 
 async fn access_point_strength_stream(

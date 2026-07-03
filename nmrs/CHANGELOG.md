@@ -5,6 +5,14 @@ All notable changes to the `nmrs` crate will be documented in this file.
 ## [Unreleased]
 ### Added 
 - Expose existing secrets on SecretRequest for re-auth prefill ([#460](https://github.com/freedesktop-rs/nmrs/pull/460))
+- `MonitorHandle` returned by `monitor_network_changes` and `monitor_device_changes` for graceful shutdown ([#461](https://github.com/freedesktop-rs/nmrs/pull/461))
+
+### Fixed
+- `monitor_network_changes` now detects hotplugged Wi-Fi devices instead of only monitoring devices present at startup ([#461](https://github.com/freedesktop-rs/nmrs/pull/461))
+- Monitors return `Ok(())` on clean shutdown instead of always returning `Err(Stuck(...))` ([#461](https://github.com/freedesktop-rs/nmrs/pull/461))
+
+### Changed
+- **Breaking:** `monitor_network_changes` and `monitor_device_changes` now return `Result<MonitorHandle>` instead of `Result<()>` ([#461](https://github.com/freedesktop-rs/nmrs/pull/461))
 
 ## [3.3.0] - 2026-06-30
 ### Added

@@ -251,14 +251,18 @@
 //! let nm = NetworkManager::new().await?;
 //!
 //! // Monitor network changes (new networks, signal changes, etc.)
-//! nm.monitor_network_changes(|| {
+//! let net_handle = nm.monitor_network_changes(|| {
 //!     println!("Networks changed! Refresh your UI.");
 //! }).await?;
 //!
 //! // Monitor device state changes (cable plugged in, device activated, etc.)
-//! nm.monitor_device_changes(|| {
+//! let dev_handle = nm.monitor_device_changes(|| {
 //!     println!("Device state changed!");
 //! }).await?;
+//!
+//! // Shut down cleanly when done:
+//! net_handle.stop().await?;
+//! dev_handle.stop().await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -416,8 +420,8 @@ pub use api::models::{
     ActiveVpnConnection, ActiveWifiConnection, ActiveWiredConnection, AirplaneModeState, ApMode,
     AppletNetworkSummary, BluetoothDevice, BluetoothIdentity, BluetoothNetworkRole, ConnectType,
     ConnectionError, ConnectionOptions, ConnectionStateReason, ConnectivityReport,
-    ConnectivityState, Device, DeviceState, DeviceType, EapMethod, EapOptions, Network,
-    NetworkEvent, NetworkEventStream, NetworkInfo, NetworkSnapshot, OpenVpnAuthType,
+    ConnectivityState, Device, DeviceState, DeviceType, EapMethod, EapOptions, MonitorHandle,
+    Network, NetworkEvent, NetworkEventStream, NetworkInfo, NetworkSnapshot, OpenVpnAuthType,
     OpenVpnCompression, OpenVpnConfig, OpenVpnConnectionType, OpenVpnProxy, Phase2, RadioState,
     SavedConnection, SavedConnectionBrief, SavedVpnSummary, SecurityFeatures, SettingsChange,
     SettingsEventStream, SettingsPatch, SettingsSummary, StateReason, TimeoutConfig, VlanConfig,

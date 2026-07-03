@@ -82,22 +82,17 @@ where
     loop {
         select! {
             _ = shutdown.changed() => {
-                debug!("Network monitoring shutdown requested");
-                break;
+                debug!("Device monitoring shutdown requested");
+                return Ok(());
             }
             signal = merged.next() => {
                 match signal {
                     Some(_) => callback(),
-                    None => break,
+                    None => return Err(ConnectionError::Stuck(
+                        "device monitoring stream ended unexpectedly".into(),
+                    )),
                 }
             }
         }
     }
-
-    while let Some(_signal) = merged.next().await {
-        debug!("Device change detected");
-        callback();
-    }
-
-    Err(ConnectionError::Stuck("monitoring stream ended".into()))
 }
