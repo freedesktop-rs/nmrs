@@ -21,6 +21,48 @@ let nm = NetworkManager::with_config(config).await?;
 let config = nm.timeout_config();
 ```
 
+## Saving Profiles Without Activating
+
+```rust
+use nmrs::builders::build_wifi_connection;
+use nmrs::{ConnectionOptions, NetworkManager, WifiSecurity};
+
+let nm = NetworkManager::new().await?;
+let settings = build_wifi_connection(
+    "GuestWiFi",
+    &WifiSecurity::WpaPsk { psk: "password".into() },
+    &ConnectionOptions::new(true),
+);
+let profile = nm.add_connection(settings).await?;
+```
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `add_connection(settings)` | `Result<OwnedObjectPath>` | Save a profile via `Settings.AddConnection` without activating it ([#463](https://github.com/freedesktop-rs/nmrs/issues/463)) |
+
+## Activating Builder Output
+
+```rust
+use nmrs::builders::{WifiConnectionBuilder, WifiMode};
+use nmrs::NetworkManager;
+
+let nm = NetworkManager::new().await?;
+let settings = WifiConnectionBuilder::new("Hotspot")
+    .wpa_psk("password")
+    .mode(WifiMode::Ap)
+    .ipv4_shared()
+    .build();
+
+nm.add_and_activate_connection(settings, Some("wlan0"), None).await?;
+```
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `add_and_activate_connection(settings, interface, specific_object)` | `Result<(OwnedObjectPath, OwnedObjectPath)>` | Create and activate a profile in one step ([#260](https://github.com/freedesktop-rs/nmrs/issues/260)) |
+
+- `interface`: device name such as `"wlan0"`, or `None` to auto-pick the first device matching `connection.type`
+- `specific_object`: access-point path for client Wi-Fi, or `None` for AP mode / Ethernet / VPN (`"/"`)
+
 ## Advanced D-Bus Access
 
 ```rust
@@ -34,8 +76,10 @@ let conn = nm.dbus_connection(); // &zbus::Connection
 | `dbus_connection()` | `&zbus::Connection` | Shared system bus connection for advanced D-Bus calls |
 
 Use this with [`nmrs::raw`](./raw.md) and the [builders](./builders.md) module
-when you need to call NetworkManager methods such as `AddConnection` or
-`AddAndActivateConnection` directly. See [Submitting Builder Output](./builders.md#submitting-builder-output).
+only when you need NetworkManager methods that nmrs does not wrap yet. For
+builder output, prefer
+[`add_connection`](./network-manager.md#saving-profiles-without-activating) and
+[`add_and_activate_connection`](./network-manager.md#activating-builder-output).
 
 ## Wi-Fi Methods
 

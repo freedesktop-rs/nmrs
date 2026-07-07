@@ -9,7 +9,10 @@ pub mod raw {
 }
 ```
 
-Use it together with [`NetworkManager::dbus_connection()`](./network-manager.md#advanced-d-bus-access) when you need to call NetworkManager D-Bus methods directly — for example after building a settings dictionary with the [`builders`](./builders.md) module.
+Use it together with [`NetworkManager::dbus_connection()`](./network-manager.md#advanced-d-bus-access)
+when you need D-Bus methods that nmrs does not wrap yet. For builder output,
+prefer [`add_connection`](./network-manager.md#saving-profiles-without-activating)
+and [`add_and_activate_connection`](./network-manager.md#activating-builder-output).
 
 ## Why it exists
 
@@ -28,8 +31,8 @@ output and with the connection returned by `dbus_connection()`.
 3. Create a zbus proxy on that connection using `nmrs::raw::zbus`.
 4. Call `AddConnection` or `AddAndActivateConnection` on NetworkManager.
 
-See [Submitting Builder Output](./builders.md#submitting-builder-output) for a
-full Wi-Fi hotspot example and [D-Bus Architecture](../advanced/dbus.md) for
+See [Submitting Builder Output](./builders.md#submitting-builder-output) for the
+preferred high-level workflow and [D-Bus Architecture](../advanced/dbus.md) for
 background on how nmrs talks to NetworkManager.
 
 ## What is not exposed

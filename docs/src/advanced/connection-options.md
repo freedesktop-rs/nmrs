@@ -86,7 +86,7 @@ let settings = ConnectionBuilder::new("802-11-wireless", "MyNetwork")
     .build();
 ```
 
-The high-level `NetworkManager` API uses `ConnectionOptions::default()` internally. For custom options, build a settings dictionary with the builder APIs and submit it via [`dbus_connection()`](../api/network-manager.md#advanced-d-bus-access). See [Submitting Builder Output](../api/builders.md#submitting-builder-output).
+The high-level `NetworkManager` API uses `ConnectionOptions::default()` internally. For custom options, build a settings dictionary with the builder APIs and submit it via [`add_connection`](../api/network-manager.md#saving-profiles-without-activating) or [`add_and_activate_connection`](../api/network-manager.md#activating-builder-output).
 
 ## Next Steps
 

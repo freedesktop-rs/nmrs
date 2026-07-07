@@ -35,8 +35,10 @@
 //! need fine-grained control over the raw settings dictionary before
 //! handing it to NetworkManager's `AddConnection` or
 //! `AddAndActivateConnection` D-Bus methods via
-//! [`NetworkManager::dbus_connection`](crate::NetworkManager::dbus_connection)
-//! and [`raw`](crate::raw).
+//! [`NetworkManager::add_connection`](crate::NetworkManager::add_connection),
+//! [`NetworkManager::add_and_activate_connection`](crate::NetworkManager::add_and_activate_connection),
+//! [`NetworkManager::dbus_connection`](crate::NetworkManager::dbus_connection),
+//! or [`raw`](crate::raw).
 //!
 //! # Examples
 //!
@@ -71,8 +73,7 @@
 //!     .build();
 //!
 //! let _conn = nm.dbus_connection();
-//! // Use `settings` with NetworkManager's AddAndActivateConnection on `_conn`
-//! // via `nmrs::raw::zbus` proxies.
+//! // Prefer `nm.add_and_activate_connection(settings, Some("wlan0"), None)` instead.
 //! # Ok(())
 //! # }
 //! ```
@@ -98,9 +99,9 @@
 //!     .expect("WireGuardBuilder is fully configured");
 //! ```
 //!
-//! The returned settings can then be passed to NetworkManager's
-//! `AddConnection` or `AddAndActivateConnection` D-Bus methods through
-//! [`NetworkManager::dbus_connection`](crate::NetworkManager::dbus_connection).
+//! The returned settings can then be passed to
+//! [`NetworkManager::add_connection`](crate::NetworkManager::add_connection) or
+//! [`NetworkManager::add_and_activate_connection`](crate::NetworkManager::add_and_activate_connection).
 
 pub mod bluetooth;
 pub mod connection_builder;

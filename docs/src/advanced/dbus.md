@@ -40,13 +40,14 @@ This creates a persistent D-Bus connection that's shared across all operations.
 
 For builder workflows and other low-level D-Bus calls, nmrs exposes the same
 connection through [`NetworkManager::dbus_connection()`](../api/network-manager.md#advanced-d-bus-access).
-Pair it with [`nmrs::raw`](../api/raw.md) (`zbus` / `zvariant` re-exports) so
-the types returned by builders are compatible with the connection nmrs manages.
+Pair it with [`nmrs::raw`](../api/raw.md) (`zbus` / `zvariant` re-exports) when
+you need D-Bus methods that nmrs does not wrap yet.
 
-Most applications should keep using the high-level `NetworkManager` methods.
-Reach for `dbus_connection()` only when you need to call NetworkManager D-Bus
-methods that nmrs does not wrap yet (for example `AddAndActivateConnection`
-with custom builder output).
+For builder output, prefer the high-level
+[`add_connection`](../api/network-manager.md#saving-profiles-without-activating)
+and
+[`add_and_activate_connection`](../api/network-manager.md#activating-builder-output)
+methods instead of calling D-Bus directly.
 
 ### Method Calls
 
@@ -106,7 +107,11 @@ methods.
 
 Advanced callers can define their own minimal `#[zbus::proxy]` traits on top of
 [`dbus_connection()`](../api/network-manager.md#advanced-d-bus-access) and
-[`nmrs::raw`](../api/raw.md). See [Submitting Builder Output](../api/builders.md#submitting-builder-output).
+[`nmrs::raw`](../api/raw.md). For builder output, use
+[`add_connection`](../api/network-manager.md#saving-profiles-without-activating)
+or
+[`add_and_activate_connection`](../api/network-manager.md#activating-builder-output)
+first.
 
 ## D-Bus Errors
 

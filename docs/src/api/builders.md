@@ -1,8 +1,8 @@
 # Builders Module
 
-The `builders` module provides low-level APIs for constructing NetworkManager connection settings. Most users should use the high-level `NetworkManager` API instead — these builders are for advanced use cases where you need fine-grained control over the settings dictionary before calling NetworkManager D-Bus methods directly.
+The `builders` module provides low-level APIs for constructing NetworkManager connection settings. Most users should use the high-level `NetworkManager` API instead — these builders are for advanced use cases where you need fine-grained control over the settings dictionary.
 
-To submit builder output, use [`NetworkManager::dbus_connection()`](./network-manager.md#advanced-d-bus-access) together with [`nmrs::raw`](./raw.md) (`zbus` / `zvariant` re-exports). See [Submitting Builder Output](#submitting-builder-output) below.
+To submit builder output, use [`NetworkManager::add_connection`](./network-manager.md#saving-profiles-without-activating) or [`NetworkManager::add_and_activate_connection`](./network-manager.md#activating-builder-output). See [Submitting Builder Output](#submitting-builder-output) below.
 
 ## ConnectionBuilder
 
@@ -153,37 +153,21 @@ For standard connections, the `NetworkManager` API handles everything automatica
 ## Submitting Builder Output
 
 Builders produce a NetworkManager settings dictionary
-(`HashMap<&str, HashMap<&str, zvariant::Value>>`). To activate that profile you
-need the same system D-Bus connection nmrs already manages, plus compatible
-`zbus` / `zvariant` types from [`nmrs::raw`](./raw.md).
+(`HashMap<&str, HashMap<&str, zvariant::Value>>`). Pass that map to
+[`NetworkManager::add_connection`](./network-manager.md#saving-profiles-without-activating)
+to save a profile, or
+[`NetworkManager::add_and_activate_connection`](./network-manager.md#activating-builder-output)
+to create and bring it up immediately.
 
 ### Wi-Fi hotspot (AP mode)
 
-This is the workflow for cases such as [#260](https://github.com/freedesktop-rs/nmrs/issues/260) where the high-level `connect()` API does not expose every builder knob (for example `WifiMode::Ap`):
+This closes the workflow requested in [#260](https://github.com/freedesktop-rs/nmrs/issues/260) — use `WifiMode::Ap` with the high-level API:
 
 ```rust
 use nmrs::builders::{WifiConnectionBuilder, WifiMode};
-use nmrs::raw::{zbus, zvariant};
-use nmrs::{NetworkManager, Result};
+use nmrs::NetworkManager;
 
-#[zbus::proxy(
-    interface = "org.freedesktop.NetworkManager",
-    default_service = "org.freedesktop.NetworkManager",
-    default_path = "/org/freedesktop/NetworkManager"
-)]
-trait Nm {
-    fn add_and_activate_connection(
-        &self,
-        connection: std::collections::HashMap<
-            &str,
-            std::collections::HashMap<&str, zvariant::Value<'_>>,
-        >,
-        device: zvariant::OwnedObjectPath,
-        specific_object: zvariant::OwnedObjectPath,
-    ) -> zbus::Result<(zvariant::OwnedObjectPath, zvariant::OwnedObjectPath)>;
-}
-
-async fn start_hotspot(nm: &NetworkManager, interface: &str) -> Result<()> {
+async fn start_hotspot(nm: &NetworkManager, interface: &str) -> nmrs::Result<()> {
     let settings = WifiConnectionBuilder::new("Hotspot")
         .wpa_psk("password")
         .mode(WifiMode::Ap)
@@ -191,26 +175,38 @@ async fn start_hotspot(nm: &NetworkManager, interface: &str) -> Result<()> {
         .ipv6_ignore()
         .build();
 
-    let device = nm.get_device_by_interface(interface).await?;
-    let proxy = NmProxy::new(nm.dbus_connection()).await?;
-    proxy
-        .add_and_activate_connection(settings, device, "/".into())
-        .await?;
-
+    nm.add_and_activate_connection(settings, Some(interface), None).await?;
     Ok(())
 }
 ```
 
-Notes:
-
-- Use `"/"` as `specific_object` for AP mode and other cases where there is no target access point.
-- For client (infrastructure) mode, resolve an access-point object path first (nmrs does this internally in `connect()`).
-- Map D-Bus errors to `ConnectionError::Dbus` (or handle them in your own error type).
-- nmrs does not yet provide a high-level wrapper for `AddConnection` / `AddAndActivateConnection`; `dbus_connection()` is the supported escape hatch.
+`specific_object` defaults to `"/"`, which is correct for AP mode.
 
 ### Saving without activating
 
-To persist a profile without bringing it up immediately, define a proxy method for `AddConnection` instead and pass the same `settings` map. nmrs uses that D-Bus call internally when saving VPN profiles.
+To persist a profile without bringing it up immediately — the workflow from [#463](https://github.com/freedesktop-rs/nmrs/issues/463):
+
+```rust
+use nmrs::builders::build_wifi_connection;
+use nmrs::{ConnectionOptions, NetworkManager, WifiSecurity};
+
+let nm = NetworkManager::new().await?;
+let settings = build_wifi_connection(
+    "GuestWiFi",
+    &WifiSecurity::WpaPsk { psk: "password".into() },
+    &ConnectionOptions::new(true),
+);
+let profile = nm.add_connection(settings).await?;
+```
+
+Activate the saved profile later with `activate_connection` via D-Bus, or use the existing high-level `connect()` APIs when the profile matches a visible network.
+
+### Advanced: direct D-Bus access
+
+If you need an NetworkManager D-Bus method that nmrs does not wrap yet, combine
+[`dbus_connection()`](./network-manager.md#advanced-d-bus-access) with
+[`nmrs::raw`](./raw.md) and define your own `#[zbus::proxy]` trait on top of
+the builder output.
 
 ## OpenVpnBuilder
 
@@ -254,6 +250,6 @@ See [docs.rs/nmrs](https://docs.rs/nmrs) for complete builder documentation.
 
 ## See Also
 
-- [Raw Module](./raw.md) – `zbus` / `zvariant` re-exports for advanced D-Bus work
-- [NetworkManager API](./network-manager.md#advanced-d-bus-access) – `dbus_connection()`
+- [NetworkManager API](./network-manager.md#activating-builder-output) – `add_connection()` / `add_and_activate_connection()`
+- [Raw Module](./raw.md) – `zbus` / `zvariant` re-exports for unwrapped D-Bus calls
 - [D-Bus Architecture](../advanced/dbus.md) – how settings reach NetworkManager

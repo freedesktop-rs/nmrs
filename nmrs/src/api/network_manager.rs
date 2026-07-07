@@ -27,6 +27,10 @@ use crate::core::connection::{
 use crate::core::connection_settings::{
     get_saved_connection_path, get_saved_connection_uuid, has_saved_connection,
 };
+use crate::core::custom_connection::{
+    add_and_activate_connection as add_and_activate_profile,
+    add_connection as add_connection_profile,
+};
 use crate::core::device::{
     is_connecting, list_bluetooth_devices, list_devices, list_wired_device_details,
     wait_for_wifi_ready,
@@ -236,10 +240,11 @@ impl NetworkManager {
 
     /// Returns the underlying system D-Bus connection.
     ///
-    /// Advanced callers can use this together with [`builders`](crate::builders)
-    /// and [`raw`](crate::raw) to invoke NetworkManager D-Bus methods such as
-    /// `AddConnection` or `AddAndActivateConnection` on the same connection
-    /// managed by this [`NetworkManager`] instance.
+    /// Most callers should prefer [`add_connection`](Self::add_connection) and
+    /// [`add_and_activate_connection`](Self::add_and_activate_connection) over
+    /// invoking D-Bus methods directly. Use this accessor together with
+    /// [`builders`](crate::builders) and [`raw`](crate::raw) only when you
+    /// need NetworkManager D-Bus calls that nmrs does not wrap yet.
     ///
     /// # Examples
     ///
@@ -255,14 +260,107 @@ impl NetworkManager {
     ///     .ipv4_shared()
     ///     .build();
     ///
+    /// // Prefer the high-level API:
+    /// nm.add_and_activate_connection(settings, Some("wlan0"), None).await?;
+    ///
+    /// // Or access the raw connection for unwrapped D-Bus calls:
     /// let _conn = nm.dbus_connection();
-    /// // Pass `settings` to NetworkManager's AddAndActivateConnection via
-    /// // `nmrs::raw::zbus` proxies on `_conn`.
     /// # Ok(())
     /// # }
     /// ```
     pub fn dbus_connection(&self) -> &Connection {
         &self.conn
+    }
+
+    /// Saves a connection profile without activating it.
+    ///
+    /// Wraps NetworkManager's `Settings.AddConnection` D-Bus method. Pass a
+    /// settings dictionary produced by the [`builders`](crate::builders) module
+    /// or [`NetworkManager::connect`](Self::connect)'s internal builders.
+    ///
+    /// Returns the D-Bus object path of the new saved profile.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use nmrs::builders::{build_wifi_connection, WifiConnectionBuilder, WifiMode};
+    /// use nmrs::{ConnectionOptions, NetworkManager, WifiSecurity};
+    ///
+    /// # async fn example() -> nmrs::Result<()> {
+    /// let nm = NetworkManager::new().await?;
+    ///
+    /// // Save a client profile for later activation.
+    /// let opts = ConnectionOptions::new(true);
+    /// let settings = build_wifi_connection(
+    ///     "GuestWiFi",
+    ///     &WifiSecurity::WpaPsk { psk: "password".into() },
+    ///     &opts,
+    /// );
+    /// let profile = nm.add_connection(settings).await?;
+    /// println!("Saved profile at {}", profile.as_str());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn add_connection(
+        &self,
+        settings: HashMap<&str, HashMap<&str, zvariant::Value<'_>>>,
+    ) -> Result<zvariant::OwnedObjectPath> {
+        add_connection_profile(&self.conn, settings).await
+    }
+
+    /// Creates a connection profile and activates it in one step.
+    ///
+    /// Wraps NetworkManager's `AddAndActivateConnection` D-Bus method. This is
+    /// the supported way to use builder output for cases such as Wi-Fi AP/hotspot
+    /// mode that are not covered by [`connect`](Self::connect).
+    ///
+    /// # Arguments
+    ///
+    /// * `settings` — connection settings dictionary from a builder
+    /// * `interface` — network device to use (for example `"wlan0"`). When
+    ///   `None`, nmrs picks the first device matching `connection.type`
+    /// * `specific_object` — optional target object path. Use `None` for AP
+    ///   mode, Ethernet, and VPN profiles (`"/"`). For client Wi-Fi, pass the
+    ///   access-point object path.
+    ///
+    /// Returns the saved profile path and active-connection path.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use nmrs::builders::{WifiConnectionBuilder, WifiMode};
+    /// use nmrs::NetworkManager;
+    ///
+    /// # async fn example() -> nmrs::Result<()> {
+    /// let nm = NetworkManager::new().await?;
+    /// let settings = WifiConnectionBuilder::new("Hotspot")
+    ///     .wpa_psk("password")
+    ///     .mode(WifiMode::Ap)
+    ///     .ipv4_shared()
+    ///     .ipv6_ignore()
+    ///     .build();
+    ///
+    /// let (profile, active) =
+    ///     nm.add_and_activate_connection(settings, Some("wlan0"), None).await?;
+    /// println!("Profile: {}, active: {}", profile.as_str(), active.as_str());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn add_and_activate_connection(
+        &self,
+        settings: HashMap<&str, HashMap<&str, zvariant::Value<'_>>>,
+        interface: Option<&str>,
+        specific_object: Option<&str>,
+    ) -> Result<(zvariant::OwnedObjectPath, zvariant::OwnedObjectPath)> {
+        let _guard = self.connect_guard.lock().await;
+        add_and_activate_profile(
+            &self.conn,
+            settings,
+            interface,
+            specific_object,
+            self.timeout_config,
+        )
+        .await
     }
 
     /// List all network devices managed by NetworkManager.

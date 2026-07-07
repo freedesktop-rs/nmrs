@@ -139,7 +139,9 @@
 //! higher-level [`NetworkManager`] API; these builders are exposed for
 //! advanced use cases that need to assemble the raw settings dictionary
 //! before calling a D-Bus method directly via
-//! [`dbus_connection`](crate::NetworkManager::dbus_connection) and [`raw`](crate::raw).
+//! [`add_connection`](crate::NetworkManager::add_connection),
+//! [`add_and_activate_connection`](crate::NetworkManager::add_and_activate_connection),
+//! [`dbus_connection`](crate::NetworkManager::dbus_connection), or [`raw`](crate::raw).
 //!
 //! ## Raw D-Bus Access
 //!
@@ -350,9 +352,9 @@ pub mod raw {
 /// high-level methods such as [`connect`](crate::NetworkManager::connect)
 /// and [`connect_vpn`](crate::NetworkManager::connect_vpn). Use these
 /// builders only when you need to feed a raw settings dictionary to
-/// NetworkManager's `AddConnection` or `AddAndActivateConnection` D-Bus
-/// methods directly via [`dbus_connection`](crate::NetworkManager::dbus_connection)
-/// and [`raw`](crate::raw).
+/// NetworkManager via [`add_connection`](crate::NetworkManager::add_connection),
+/// [`add_and_activate_connection`](crate::NetworkManager::add_and_activate_connection),
+/// [`dbus_connection`](crate::NetworkManager::dbus_connection), or [`raw`](crate::raw).
 ///
 /// # Example
 ///
