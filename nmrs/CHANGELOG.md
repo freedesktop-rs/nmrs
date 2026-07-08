@@ -3,6 +3,8 @@
 All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
+
+## [3.4.0] - 2026-07-08
 ### Added 
 - Expose existing secrets on SecretRequest for re-auth prefill ([#460](https://github.com/freedesktop-rs/nmrs/pull/460))
 - `MonitorHandle` returned by `monitor_network_changes` and `monitor_device_changes` for graceful shutdown ([#461](https://github.com/freedesktop-rs/nmrs/pull/461))
@@ -436,7 +438,8 @@ present)` constructor; `RadioState::new` keeps existing behavior and defaults
 [3.2.1]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v1.2.0...nmrs-v3.2.1
 [3.2.2]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v1.2.0...nmrs-v3.2.2
 [3.3.0]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v1.2.0...nmrs-v3.3.0
-[Unreleased]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.3.0...HEAD
+[3.4.0]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v1.2.0...nmrs-v3.4.0
+[Unreleased]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.4.0...HEAD
 [1.1.0]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v1.0.1...nmrs-v1.1.0
 [1.0.1]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v1.0.0...nmrs-v1.0.1
 [1.0.0]: https://github.com/freedesktop-rs/nmrs/compare/v0.5.0-beta...nmrs-v1.0.0
