@@ -126,7 +126,6 @@ impl TimeoutConfig {
 /// // Manual connection only
 /// let opts_manual = ConnectionOptions::new(false);
 /// ```
-
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct ConnectionOptions {
