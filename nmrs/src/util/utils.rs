@@ -3,7 +3,7 @@
 //! Provides helpers for converting between Wi-Fi data representations:
 //! frequency to channel, signal strength to visual bars, SSID bytes to strings.
 
-use log::{debug, warn};
+use log::{trace, warn};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::str;
@@ -246,7 +246,7 @@ pub(crate) async fn extract_connection_state_reason(
         Ok(builder) => match builder.build().await {
             Ok(ac) => match ac.state().await {
                 Ok(state) => {
-                    debug!(
+                    trace!(
                         "Active connection state: {}, but reason not available as property",
                         state
                     );

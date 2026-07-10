@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use log::debug;
+use log::trace;
 use zbus::Connection;
 use zvariant::{OwnedObjectPath, Value};
 
@@ -54,7 +54,7 @@ async fn find_first_device_by_type(conn: &Connection, raw_type: u32) -> Result<O
             .await?;
 
         if dev.device_type().await? == raw_type {
-            debug!(
+            trace!(
                 "Resolved device {} for connection type {}",
                 dev.interface().await.unwrap_or_default(),
                 raw_type

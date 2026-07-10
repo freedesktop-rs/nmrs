@@ -6,7 +6,7 @@
 //! `Device.Disconnect()` — the kernel hands the radio back to NM but no
 //! connection will be re-activated until autoconnect is re-enabled.
 
-use log::{debug, warn};
+use log::{trace, warn};
 use zbus::Connection;
 
 use crate::Result;
@@ -120,7 +120,7 @@ pub(crate) async fn set_wifi_enabled_for_interface(
         });
     }
 
-    debug!("setting Autoconnect={} for {}", enabled, interface);
+    trace!("setting Autoconnect={} for {}", enabled, interface);
     if let Err(e) = dev.set_autoconnect(enabled).await {
         warn!("failed to set autoconnect on {}: {}", interface, e);
         return Err(ConnectionError::DbusOperation {

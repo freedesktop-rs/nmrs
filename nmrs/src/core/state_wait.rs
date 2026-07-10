@@ -20,7 +20,7 @@
 
 use futures::{FutureExt, StreamExt, select};
 use futures_timer::Delay;
-use log::{debug, warn};
+use log::{debug, trace, warn};
 use std::pin::pin;
 use std::time::Duration;
 use zbus::Connection;
@@ -85,12 +85,12 @@ pub(crate) async fn wait_for_connection_activation(
 
     // Subscribe to signals FIRST to avoid race condition
     let mut stream = active_conn.receive_activation_state_changed().await?;
-    debug!("Subscribed to ActiveConnection StateChanged signal");
+    trace!("Subscribed to ActiveConnection StateChanged signal");
 
     // Check current state - if already terminal, return immediately
     let current_state = active_conn.state().await?;
     let state = ActiveConnectionState::from(current_state);
-    debug!("Current active connection state: {state}");
+    trace!("Current active connection state: {state}");
 
     match state {
         ActiveConnectionState::Activated => {
@@ -137,11 +137,11 @@ pub(crate) async fn wait_for_connection_activation(
                             Ok(args) => {
                                 let new_state = ActiveConnectionState::from(args.state);
                                 let reason = ConnectionStateReason::from(args.reason);
-                                debug!("Active connection state changed to: {new_state} (reason: {reason})");
+                                trace!("Active connection state changed to: {new_state} (reason: {reason})");
 
                                 match new_state {
                                     ActiveConnectionState::Activated => {
-                                        debug!("Connection activation successful");
+                                        trace!("Connection activation successful");
                                         return Ok(());
                                     }
                                     ActiveConnectionState::Deactivated => {
@@ -180,10 +180,10 @@ pub(crate) async fn wait_for_device_disconnect(
 ) -> Result<()> {
     // Subscribe to signals FIRST to avoid race condition
     let mut stream = dev.receive_device_state_changed().await?;
-    debug!("Subscribed to device StateChanged signal for disconnect");
+    trace!("Subscribed to device StateChanged signal for disconnect");
 
     let current_state = dev.state().await?;
-    debug!("Current device state for disconnect: {current_state}");
+    trace!("Current device state for disconnect: {current_state}");
 
     if current_state == device_state::DISCONNECTED || current_state == device_state::UNAVAILABLE {
         debug!("Device already disconnected");
@@ -221,12 +221,12 @@ pub(crate) async fn wait_for_device_disconnect(
                         match signal.args() {
                             Ok(args) => {
                                 let new_state = args.new_state;
-                                debug!("Device state during disconnect: {new_state}");
+                                trace!("Device state during disconnect: {new_state}");
 
                                 if new_state == device_state::DISCONNECTED
                                     || new_state == device_state::UNAVAILABLE
                                 {
-                                    debug!("Device reached disconnected state");
+                                    trace!("Device reached disconnected state");
                                     return Ok(());
                                 }
                             }
@@ -248,10 +248,10 @@ pub(crate) async fn wait_for_device_disconnect(
 pub(crate) async fn wait_for_wifi_device_ready(dev: &NMDeviceProxy<'_>) -> Result<()> {
     // Subscribe to signals FIRST to avoid race condition
     let mut stream = dev.receive_device_state_changed().await?;
-    debug!("Subscribed to device StateChanged signal for ready check");
+    trace!("Subscribed to device StateChanged signal for ready check");
 
     let current_state = dev.state().await?;
-    debug!("Current device state for ready check: {current_state}");
+    trace!("Current device state for ready check: {current_state}");
 
     if current_state == device_state::DISCONNECTED || current_state == device_state::ACTIVATED {
         debug!("Device already ready");
@@ -287,12 +287,12 @@ pub(crate) async fn wait_for_wifi_device_ready(dev: &NMDeviceProxy<'_>) -> Resul
                         match signal.args() {
                             Ok(args) => {
                                 let new_state = args.new_state;
-                                debug!("Device state during ready wait: {new_state}");
+                                trace!("Device state during ready wait: {new_state}");
 
                                 if new_state == device_state::DISCONNECTED
                                     || new_state == device_state::ACTIVATED
                                 {
-                                    debug!("Device is now ready");
+                                    trace!("Device is now ready");
                                     return Ok(());
                                 }
                             }

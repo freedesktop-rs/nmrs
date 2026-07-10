@@ -5,7 +5,7 @@
 //! enables live UI updates.
 
 use futures::stream::{Stream, StreamExt};
-use log::{debug, warn};
+use log::{debug, trace, warn};
 use std::collections::HashSet;
 use std::pin::Pin;
 use tokio::select;
@@ -117,14 +117,14 @@ where
             Err(err) => debug!("Failed to list access points on device {dev_path}: {err}"),
         }
 
-        debug!("Subscribed to network change signals on device: {dev_path}");
+        trace!("Subscribed to network change signals on device: {dev_path}");
     }
 
     let device_added_stream = nm.receive_device_added().await?;
     streams.push(Box::pin(device_added_stream.map(|signal| {
         signal.args().map_or_else(
             |err| {
-                debug!("Failed to parse DeviceAdded signal: {err}");
+                trace!("Failed to parse DeviceAdded signal: {err}");
                 NetworkChange::SignalStrengthChanged
             },
             |args| NetworkChange::DeviceAdded(args.device().clone()),
@@ -177,7 +177,7 @@ where
                         )
                         .await
                         {
-                            debug!("Hotplugged device {dev_path} is not Wi-Fi or failed: {err}");
+                            trace!("Hotplugged device {dev_path} is not Wi-Fi or failed: {err}");
                         } else {
                             debug!("Subscribed to hotplugged Wi-Fi device: {dev_path}");
                             callback();
@@ -218,7 +218,7 @@ async fn subscribe_wifi_device(
     merged.push(Box::pin(added_stream.map(|signal| {
         signal.args().map_or_else(
             |err| {
-                debug!("Failed to parse AccessPointAdded signal: {err}");
+                trace!("Failed to parse AccessPointAdded signal: {err}");
                 NetworkChange::SignalStrengthChanged
             },
             |args| NetworkChange::Added(args.path().clone()),
@@ -227,7 +227,7 @@ async fn subscribe_wifi_device(
     merged.push(Box::pin(removed_stream.map(|signal| {
         signal.args().map_or_else(
             |err| {
-                debug!("Failed to parse AccessPointRemoved signal: {err}");
+                trace!("Failed to parse AccessPointRemoved signal: {err}");
                 NetworkChange::SignalStrengthChanged
             },
             |args| NetworkChange::Removed(args.path().clone()),
@@ -241,7 +241,7 @@ async fn subscribe_wifi_device(
             }
             match access_point_strength_stream(conn, ap_path.clone()).await {
                 Ok(stream) => merged.push(stream),
-                Err(err) => debug!(
+                Err(err) => trace!(
                     "Failed to monitor signal strength for access point {}: {}",
                     ap_path, err
                 ),
@@ -262,7 +262,7 @@ async fn access_point_strength_stream(
         .await?;
 
     let stream = ap.receive_strength_changed().await.skip(1).map(move |_| {
-        debug!("Access point signal strength changed: {ap_path}");
+        trace!("Access point signal strength changed: {ap_path}");
         NetworkChange::SignalStrengthChanged
     });
 

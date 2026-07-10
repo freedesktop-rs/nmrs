@@ -6,7 +6,7 @@
 //!   strongSwan, PPTP, L2TP, and any other installed plugin.
 #![allow(deprecated)]
 
-use log::{debug, info, warn};
+use log::{debug, info, trace, warn};
 use std::collections::HashMap;
 use zbus::Connection;
 use zvariant::OwnedObjectPath;
@@ -641,11 +641,11 @@ pub(crate) async fn connect_vpn(
     let specific_object = OwnedObjectPath::default();
 
     let active_conn = if let Some(saved_path) = saved {
-        debug!("Activating existent VPN connection");
+        trace!("Activating existent VPN connection");
         nm.activate_connection(saved_path, vpn_device_path.clone(), specific_object.clone())
             .await?
     } else {
-        debug!("Creating new VPN connection");
+        trace!("Creating new VPN connection");
         let opts = ConnectionOptions {
             autoconnect: false,
             autoconnect_priority: None,
@@ -666,12 +666,12 @@ pub(crate) async fn connect_vpn(
 
         let settings_api = settings_proxy(conn).await?;
 
-        debug!("Adding connection via Settings API");
+        trace!("Adding connection via Settings API");
         let add_reply = settings_api
             .call_method("AddConnection", &(settings,))
             .await?;
         let conn_path: OwnedObjectPath = add_reply.body().deserialize()?;
-        debug!("Connection added, activating VPN connection");
+        trace!("Connection added, activating VPN connection");
 
         nm.activate_connection(conn_path, vpn_device_path, specific_object)
             .await?
@@ -679,14 +679,14 @@ pub(crate) async fn connect_vpn(
 
     let timeout = timeout_config.map(|c| c.connection_timeout);
     wait_for_connection_activation(conn, &active_conn, timeout).await?;
-    debug!("Connection reached Activated state, waiting briefly...");
+    trace!("Connection reached Activated state, waiting briefly...");
 
     match NMActiveConnectionProxy::builder(conn).path(active_conn.clone()) {
         Ok(builder) => match builder.build().await {
             Ok(active_conn_check) => {
                 let final_state = active_conn_check.state().await?;
                 let state = crate::api::models::ActiveConnectionState::from(final_state);
-                debug!("Connection state after delay: {:?}", state);
+                trace!("Connection state after delay: {:?}", state);
 
                 match state {
                     crate::api::models::ActiveConnectionState::Activated => {
@@ -785,7 +785,7 @@ pub(crate) async fn disconnect_vpn(conn: &Connection, name: &str) -> Result<()> 
         let is_vpn = detect_vpn_kind(&settings_map).is_some();
 
         if id_match && is_vpn {
-            debug!("Found active VPN connection, deactivating: {name}");
+            trace!("Found active VPN connection, deactivating: {name}");
             nm.deactivate_connection(ac_path.clone()).await?;
             info!("Successfully disconnected VPN: {name}");
             return Ok(());
@@ -803,7 +803,7 @@ pub(crate) async fn forget_vpn(conn: &Connection, name: &str) -> Result<()> {
     debug!("Starting forget operation for VPN: {name}");
 
     match disconnect_vpn(conn, name).await {
-        Ok(_) => debug!("VPN disconnected before deletion"),
+        Ok(_) => trace!("VPN disconnected before deletion"),
         Err(e) => warn!(
             "Failed to disconnect VPN before deletion (may already be disconnected): {}",
             e
@@ -846,7 +846,7 @@ pub(crate) async fn forget_vpn(conn: &Connection, name: &str) -> Result<()> {
         let vpn_kind = detect_vpn_kind(&settings_map);
 
         if id_ok && vpn_kind.is_some() {
-            debug!("Found VPN connection, deleting: {name}");
+            trace!("Found VPN connection, deleting: {name}");
             cproxy.call_method("Delete", &()).await.map_err(|e| {
                 ConnectionError::DbusOperation {
                     context: format!("failed to delete VPN connection '{}'", name),

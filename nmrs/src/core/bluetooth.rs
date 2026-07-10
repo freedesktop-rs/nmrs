@@ -6,7 +6,7 @@
 //! Similar to other device types, it handles scanning, connecting, and monitoring
 //! Bluetooth devices using NetworkManager's D-Bus API.
 
-use log::debug;
+use log::{debug, trace};
 use zbus::Connection;
 use zvariant::OwnedObjectPath;
 // use futures_timer::Delay;
@@ -131,14 +131,14 @@ pub(crate) async fn connect_bluetooth(
             return Ok(());
         }
     } else {
-        debug!("Not currently connected to any Bluetooth device");
+        trace!("Not currently connected to any Bluetooth device");
     }
 
     // Find the Bluetooth hardware adapter
     // Note: Unlike WiFi, Bluetooth connections in NetworkManager don't require
     // specifying a specific device. We use "/" to let NetworkManager auto-select.
     let bt_device = find_bluetooth_device(conn, &nm).await?;
-    debug!("Using auto-select device path for Bluetooth connection");
+    trace!("Using auto-select device path for Bluetooth connection");
 
     // Check for saved connection
     let saved = get_saved_connection_path(conn, name).await?;
@@ -173,7 +173,7 @@ pub(crate) async fn connect_bluetooth(
 
             let connection_settings = bluetooth::build_bluetooth_connection(name, settings, &opts);
 
-            debug!(
+            trace!(
                 "Creating Bluetooth connection with settings: {:#?}",
                 connection_settings
             );
@@ -223,7 +223,7 @@ pub(crate) async fn disconnect_bluetooth_and_wait(
         .build()
         .await?;
 
-    debug!("Sending disconnect request to Bluetooth device");
+    trace!("Sending disconnect request to Bluetooth device");
     raw.call_method("Disconnect", &()).await?;
 
     // Wait for disconnect using signal-based monitoring

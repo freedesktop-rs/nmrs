@@ -4,7 +4,7 @@ use std::pin::Pin;
 
 use futures::channel::mpsc;
 use futures::stream::{Stream, StreamExt};
-use log::{debug, warn};
+use log::{trace, warn};
 use zbus::Connection;
 use zvariant::OwnedObjectPath;
 
@@ -126,7 +126,7 @@ async fn connection_settings_streams(
         .await?
         .map(move |_| SettingsSignal::Removed(path.clone()));
 
-    debug!("subscribed to settings connection signals");
+    trace!("subscribed to settings connection signals");
     let streams: Vec<SettingsSignalStream> = vec![Box::pin(updated), Box::pin(removed)];
     Ok(streams)
 }

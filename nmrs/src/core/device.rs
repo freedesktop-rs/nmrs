@@ -4,7 +4,7 @@
 //! and enabling/disabling Wi-Fi. Uses D-Bus signals for efficient state
 //! monitoring instead of polling.
 
-use log::{debug, warn};
+use log::{debug, trace, warn};
 use zbus::Connection;
 
 use crate::Result;
@@ -71,7 +71,7 @@ pub(crate) async fn list_devices(conn: &Connection) -> Result<Vec<Device>> {
         let perm_mac = match d_proxy.perm_hw_address().await {
             Ok(addr) => addr,
             Err(e) => {
-                debug!(
+                trace!(
                     "Permanent hardware address not available for device {}: {}",
                     interface, e
                 );
@@ -85,7 +85,7 @@ pub(crate) async fn list_devices(conn: &Connection) -> Result<Vec<Device>> {
         let managed = match d_proxy.managed().await {
             Ok(m) => Some(m),
             Err(e) => {
-                debug!(
+                trace!(
                     "Failed to get 'managed' property for device {}: {}",
                     interface, e
                 );
@@ -95,7 +95,7 @@ pub(crate) async fn list_devices(conn: &Connection) -> Result<Vec<Device>> {
         let driver = match d_proxy.driver().await {
             Ok(d) => Some(d),
             Err(e) => {
-                debug!("Failed to get driver for device {}: {}", interface, e);
+                trace!("Failed to get driver for device {}: {}", interface, e);
                 None
             }
         };
@@ -114,19 +114,19 @@ pub(crate) async fn list_devices(conn: &Connection) -> Result<Vec<Device>> {
                         {
                             Ok(ap) => ap.frequency().await.ok(),
                             Err(e) => {
-                                debug!("Failed to build active AP proxy for {}: {}", interface, e);
+                                trace!("Failed to build active AP proxy for {}: {}", interface, e);
                                 None
                             }
                         }
                     }
                     Ok(_) => None,
                     Err(e) => {
-                        debug!("Failed to get active AP for {}: {}", interface, e);
+                        trace!("Failed to get active AP for {}: {}", interface, e);
                         None
                     }
                 },
                 Err(e) => {
-                    debug!("Failed to build wireless proxy for {}: {}", interface, e);
+                    trace!("Failed to build wireless proxy for {}: {}", interface, e);
                     None
                 }
             }

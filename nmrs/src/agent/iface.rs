@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use futures::SinkExt;
 use futures::channel::{mpsc, oneshot};
 use futures::future::{self, Either};
-use log::{debug, warn};
+use log::{debug, trace, warn};
 use zvariant::{ObjectPath, OwnedObjectPath};
 
 use crate::types::constants::timeouts;
@@ -170,7 +170,7 @@ impl SecretAgentInterface {
         _connection: ConnectionDict,
         connection_path: ObjectPath<'_>,
     ) -> Result<(), SecretAgentDBusError> {
-        debug!("SaveSecrets: path={}", connection_path);
+        trace!("SaveSecrets: path={}", connection_path);
         let _ = self.store_tx.unbounded_send(SecretStoreEvent::Save {
             connection_path: connection_path.into(),
         });
@@ -183,7 +183,7 @@ impl SecretAgentInterface {
         _connection: ConnectionDict,
         connection_path: ObjectPath<'_>,
     ) -> Result<(), SecretAgentDBusError> {
-        debug!("DeleteSecrets: path={}", connection_path);
+        trace!("DeleteSecrets: path={}", connection_path);
         let _ = self.store_tx.unbounded_send(SecretStoreEvent::Delete {
             connection_path: connection_path.into(),
         });

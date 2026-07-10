@@ -4,7 +4,7 @@ use std::pin::Pin;
 
 use futures::channel::mpsc;
 use futures::stream::{Stream, StreamExt};
-use log::{debug, warn};
+use log::{trace, warn};
 use zbus::Connection;
 use zvariant::OwnedObjectPath;
 
@@ -86,7 +86,7 @@ async fn run_network_events(
                 }
                 match access_point_strength_stream(&conn, path.clone()).await {
                     Ok(stream) => merged.push(stream),
-                    Err(err) => debug!("failed to monitor access point {path}: {err}"),
+                    Err(err) => trace!("failed to monitor access point {path}: {err}"),
                 }
             }
             InternalEvent::AccessPointRemoved => {
@@ -101,7 +101,7 @@ async fn run_network_events(
                 }
                 match device_state_stream(&conn, path.clone()).await {
                     Ok(stream) => merged.push(stream),
-                    Err(err) => debug!("failed to monitor device {path}: {err}"),
+                    Err(err) => trace!("failed to monitor device {path}: {err}"),
                 }
                 match wireless_device_streams(&conn, path.clone()).await {
                     Ok(streams) => {
@@ -109,7 +109,7 @@ async fn run_network_events(
                             merged.push(stream);
                         }
                     }
-                    Err(err) => debug!("failed to monitor wireless device {path}: {err}"),
+                    Err(err) => trace!("failed to monitor wireless device {path}: {err}"),
                 }
             }
             InternalEvent::DeviceRemoved => {
@@ -195,7 +195,7 @@ async fn device_state_streams<'a>(
     for path in nm.get_devices().await? {
         match device_state_stream(conn, path.clone()).await {
             Ok(stream) => streams.push(stream),
-            Err(err) => debug!("failed to monitor device {path}: {err}"),
+            Err(err) => trace!("failed to monitor device {path}: {err}"),
         }
     }
 
@@ -242,7 +242,7 @@ async fn access_point_streams<'a>(
     for device_path in nm.get_devices().await? {
         match wireless_device_streams(conn, device_path.clone()).await {
             Ok(device_streams) => streams.extend(device_streams),
-            Err(err) => debug!("failed to monitor wireless device {device_path}: {err}"),
+            Err(err) => trace!("failed to monitor wireless device {device_path}: {err}"),
         }
     }
 
@@ -289,11 +289,11 @@ async fn wireless_device_streams<'a>(
             for access_point in access_points {
                 match access_point_strength_stream(conn, access_point.clone()).await {
                     Ok(stream) => streams.push(stream),
-                    Err(err) => debug!("failed to monitor access point {access_point}: {err}"),
+                    Err(err) => trace!("failed to monitor access point {access_point}: {err}"),
                 }
             }
         }
-        Err(err) => debug!("failed to list access points on {device_path}: {err}"),
+        Err(err) => trace!("failed to list access points on {device_path}: {err}"),
     }
 
     Ok(streams)

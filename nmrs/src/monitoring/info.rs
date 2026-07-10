@@ -3,7 +3,7 @@
 //! Provides functions to retrieve detailed information about WiFi networks,
 //! including security capabilities, signal strength, and connection details.
 
-use log::debug;
+use log::trace;
 use zbus::Connection;
 
 use crate::Result;
@@ -84,21 +84,21 @@ pub(crate) async fn show_details(conn: &Connection, net: &Network) -> Result<Net
             let freq = match ap.frequency().await {
                 Ok(f) => Some(f),
                 Err(e) => {
-                    debug!("Failed to get frequency for AP: {}", e);
+                    trace!("Failed to get frequency for AP: {}", e);
                     None
                 }
             };
             let max_br = match ap.max_bitrate().await {
                 Ok(br) => Some(br),
                 Err(e) => {
-                    debug!("Failed to get max bitrate for AP: {}", e);
+                    trace!("Failed to get max bitrate for AP: {}", e);
                     None
                 }
             };
             let mode_raw = match ap.mode().await {
                 Ok(m) => Some(m),
                 Err(e) => {
-                    debug!("Failed to get mode for AP: {}", e);
+                    trace!("Failed to get mode for AP: {}", e);
                     None
                 }
             };

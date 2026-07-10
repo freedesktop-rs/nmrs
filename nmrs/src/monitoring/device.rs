@@ -5,7 +5,7 @@
 //! to poll. This enables live UI updates for both wired and wireless devices.
 
 use futures::stream::{Stream, StreamExt};
-use log::debug;
+use log::{debug, trace};
 use std::pin::Pin;
 use tokio::select;
 use tokio::sync::watch;
@@ -55,7 +55,7 @@ where
     streams.push(Box::pin(device_removed_stream.map(|_| ())));
     streams.push(Box::pin(state_changed_stream.map(|_| ())));
 
-    debug!("Subscribed to NetworkManager device signals");
+    trace!("Subscribed to NetworkManager device signals");
 
     // Also subscribe to individual device state changes for existing devices
     let devices = nm.get_devices().await?;
@@ -67,7 +67,7 @@ where
             && let Ok(state_stream) = dev.receive_device_state_changed().await
         {
             streams.push(Box::pin(state_stream.map(|_| ())));
-            debug!("Subscribed to state change signals on device: {dev_path}");
+            trace!("Subscribed to state change signals on device: {dev_path}");
         }
     }
 

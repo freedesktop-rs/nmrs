@@ -1,5 +1,5 @@
 use futures_timer::Delay;
-use log::{debug, error, info, warn};
+use log::{debug, error, info, trace, warn};
 use std::collections::HashMap;
 use zbus::Connection;
 use zvariant::OwnedObjectPath;
@@ -62,7 +62,7 @@ pub(crate) async fn connect(
     let decision = decide_saved_connection(saved_raw, &creds)?;
 
     let wifi_device = resolve_wifi_device(conn, &nm, interface).await?;
-    debug!("Resolved WiFi device: {}", wifi_device.as_str());
+    trace!("Resolved WiFi device: {}", wifi_device.as_str());
 
     let wifi = NMWirelessProxy::builder(conn)
         .path(wifi_device.clone())?
@@ -76,7 +76,7 @@ pub(crate) async fn connect(
             return Ok(());
         }
     } else {
-        debug!("Not currently connected to any network");
+        trace!("Not currently connected to any network");
     }
 
     let specific_object = scan_and_resolve_ap(conn, &wifi, ssid).await?;
@@ -135,7 +135,7 @@ pub(crate) async fn connect_wired(
     let nm = NMProxy::new(conn).await?;
 
     let wired_device = find_wired_device(conn, &nm).await?;
-    debug!("Found wired device: {}", wired_device.as_str());
+    trace!("Found wired device: {}", wired_device.as_str());
 
     // Check if already connected
     let dev = NMDeviceProxy::builder(conn)
@@ -277,7 +277,7 @@ pub(crate) async fn forget_by_name_and_type(
                         }
                         debug!("Device confirmed disconnected, proceeding with deletion");
                     }
-                    debug!("WiFi disconnect phase completed");
+                    trace!("WiFi disconnect phase completed");
                 }
             }
         }
@@ -307,13 +307,13 @@ pub(crate) async fn forget_by_name_and_type(
                         )));
                     }
                 }
-                debug!("Bluetooth disconnect phase completed");
+                trace!("Bluetooth disconnect phase completed");
             }
         }
     }
 
     // Delete connection profiles (generic, works for all types)
-    debug!("Starting connection deletion phase...");
+    trace!("Starting connection deletion phase...");
 
     let settings = nm_proxy(
         conn,
@@ -347,7 +347,7 @@ pub(crate) async fn forget_by_name_and_type(
                 && id.as_str() == name
             {
                 should_delete = true;
-                debug!("Found connection by ID: {id}");
+                trace!("Found connection by ID: {id}");
             }
 
             // Additional WiFi-specific matching by SSID
@@ -362,7 +362,7 @@ pub(crate) async fn forget_by_name_and_type(
                 }
                 if decode_ssid_or_empty(&raw) == name {
                     should_delete = true;
-                    debug!("Found WiFi connection by SSID match");
+                    trace!("Found WiFi connection by SSID match");
                 }
             }
 
@@ -372,7 +372,7 @@ pub(crate) async fn forget_by_name_and_type(
                 && bdaddr.as_str() == name
             {
                 should_delete = true;
-                debug!("Found Bluetooth connection by bdaddr match");
+                trace!("Found Bluetooth connection by bdaddr match");
             }
 
             if let Some(wsec) = settings_map.get("802-11-wireless-security") {
@@ -380,7 +380,7 @@ pub(crate) async fn forget_by_name_and_type(
                 let empty_psk = matches!(wsec.get("psk"), Some(Value::Str(s)) if s.is_empty());
 
                 if (missing_psk || empty_psk) && should_delete {
-                    debug!("Connection has missing/empty PSK, will delete");
+                    trace!("Connection has missing/empty PSK, will delete");
                 }
             }
 
@@ -388,7 +388,7 @@ pub(crate) async fn forget_by_name_and_type(
                 match cproxy.call_method("Delete", &()).await {
                     Ok(_) => {
                         deleted_count += 1;
-                        debug!("Deleted connection: {}", cpath.as_str());
+                        trace!("Deleted connection: {}", cpath.as_str());
                     }
                     Err(e) => {
                         warn!("Failed to delete connection {}: {}", cpath.as_str(), e);
@@ -446,9 +446,9 @@ pub(crate) async fn disconnect_wifi_and_wait(
     )
     .await?;
 
-    debug!("Sending disconnect request");
+    trace!("Sending disconnect request");
     raw.call_method("Disconnect", &()).await?;
-    debug!("Disconnect method called successfully");
+    trace!("Disconnect method called successfully");
 
     // Wait for disconnect using signal-based monitoring
     let timeout = timeout_config.map(|c| c.disconnect_timeout);
@@ -644,7 +644,7 @@ pub(crate) async fn connect_to_bssid(
                 .await?;
 
             match wifi.request_scan(HashMap::new()).await {
-                Ok(_) => debug!("Scan requested successfully"),
+                Ok(_) => trace!("Scan requested successfully"),
                 Err(e) => warn!("Scan request failed: {e}"),
             }
             futures_timer::Delay::new(timeouts::scan_wait()).await;
@@ -721,7 +721,7 @@ async fn connect_via_saved(
         .await
     {
         Ok(active_conn) => {
-            debug!(
+            trace!(
                 "activate_connection() succeeded, active connection: {}",
                 active_conn.as_str()
             );
@@ -826,7 +826,7 @@ async fn build_and_activate_new(
 
     let settings = build_wifi_connection(ssid, &creds, &opts);
 
-    debug!("Creating new connection, settings: \n{settings:#?}");
+    trace!("Creating new connection, settings: \n{settings:#?}");
 
     ensure_disconnected(conn, wifi_device, timeout_config).await?;
 
@@ -835,7 +835,7 @@ async fn build_and_activate_new(
         .await
     {
         Ok(paths) => {
-            debug!(
+            trace!(
                 "add_and_activate_connection() succeeded, active connection: {}",
                 paths.1.as_str()
             );
@@ -847,7 +847,7 @@ async fn build_and_activate_new(
         }
     };
 
-    debug!("Waiting for connection activation using signal monitoring...");
+    trace!("Waiting for connection activation using signal monitoring...");
 
     // Wait for connection activation using the ActiveConnection signals
     let timeout = timeout_config.map(|c| c.connection_timeout);
@@ -870,16 +870,16 @@ async fn scan_and_resolve_ap(
     ssid: &str,
 ) -> Result<OwnedObjectPath> {
     match wifi.request_scan(HashMap::new()).await {
-        Ok(_) => debug!("Scan requested successfully"),
+        Ok(_) => trace!("Scan requested successfully"),
         Err(e) => warn!("Scan request failed: {e}"),
     }
 
     // Brief wait for scan results to populate
     Delay::new(timeouts::scan_wait()).await;
-    debug!("Scan wait complete");
+    trace!("Scan wait complete");
 
     let ap = find_ap(conn, wifi, ssid).await?;
-    debug!("Matched target SSID '{ssid}'");
+    trace!("Matched target SSID '{ssid}'");
     Ok(ap)
 }
 
@@ -923,7 +923,7 @@ pub(crate) async fn is_connected(conn: &Connection, ssid: &str) -> Result<bool> 
             return Ok(true);
         }
     } else {
-        debug!("Not currently connected to any network");
+        trace!("Not currently connected to any network");
     }
     Ok(false)
 }
@@ -982,7 +982,7 @@ pub(crate) async fn disconnect(
                 continue;
             }
             match nm.deactivate_connection(conn_path.clone()).await {
-                Ok(_) => debug!("Connection deactivated"),
+                Ok(_) => trace!("Connection deactivated"),
                 Err(e) => warn!("Failed to deactivate connection: {}", e),
             }
         }
@@ -1013,7 +1013,7 @@ pub(crate) async fn get_device_by_interface(
         if let Ok(iface) = dev.interface().await
             && iface == interface_name
         {
-            debug!("Found device with interface: {}", interface_name);
+            trace!("Found device with interface: {}", interface_name);
             return Ok(dev_path);
         }
     }

@@ -4,7 +4,7 @@
 //! connection profiles. Saved connections persist across reboots and
 //! store credentials for automatic reconnection.
 
-use log::debug;
+use log::trace;
 use std::collections::HashMap;
 use zbus::Connection;
 use zvariant::{OwnedObjectPath, Value};
@@ -129,7 +129,7 @@ pub(crate) async fn delete_connection(conn: &Connection, conn_path: OwnedObjectP
             source: e,
         })?;
 
-    debug!("Deleted connection: {}", conn_path.as_str());
+    trace!("Deleted connection: {}", conn_path.as_str());
     Ok(())
 }
 

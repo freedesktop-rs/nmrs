@@ -1,6 +1,6 @@
 //! Connectivity state reads and captive-portal URL discovery.
 
-use log::debug;
+use log::trace;
 use zbus::Connection;
 
 use crate::Result;
@@ -110,7 +110,7 @@ async fn try_ip4_captive_portal(
         if let Ok(v) = raw.get_property::<String>(prop).await
             && !v.is_empty()
         {
-            debug!("captive portal URL from IP4Config.{prop}: {v}");
+            trace!("captive portal URL from IP4Config.{prop}: {v}");
             return Some(v);
         }
     }
