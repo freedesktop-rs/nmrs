@@ -193,13 +193,17 @@ async fn main() -> nmrs::Result<()> {
     let nm_clone = nm.clone();
     
     // Monitor network changes
-    nm.monitor_network_changes(move || {
+    let monitor_handle = nm.monitor_network_changes(move || {
         println!("Networks changed! Scanning...");
         // In a real app, you'd update your UI here
     }).await?;
-    
-    // Keep the program running
-    tokio::signal::ctrl_c().await.ok();
+
+    // Wait a moment for any network changes
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+    // Stop monitoring with a clean shutdown
+    monitor_handle.stop().await?;
+    println!("Monitoring stopped...");
     Ok(())
 }
 ```
