@@ -10,8 +10,6 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 COPY Cargo.toml Cargo.lock ./
-RUN sed -i 's/"nmrs-gui"//' Cargo.toml && sed -i '/^$/d' Cargo.toml
-
 COPY nmrs ./nmrs
 
 RUN cargo build -p nmrs --release && cargo build -p nmrs
