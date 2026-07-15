@@ -50,6 +50,12 @@ pub struct AccessPoint {
     pub device_state: DeviceState,
 }
 
+impl AccessPoint {
+    pub fn is_hidden(&self) -> bool {
+        self.ssid_bytes.is_empty()
+    }
+}
+
 /// Wi-Fi access point operating mode.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]

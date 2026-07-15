@@ -74,12 +74,13 @@ impl NetworkSnapshot {
     pub fn wifi_groups(&self) -> Vec<WifiNetworkGroup> {
         let mut grouped: HashMap<(String, String), Vec<AccessPoint>> = HashMap::new();
         for ap in &self.access_points {
-            if !ap.ssid.is_empty() {
-                grouped
-                    .entry((ap.interface.clone(), ap.ssid.clone()))
-                    .or_default()
-                    .push(ap.clone());
+            if ap.is_hidden() {
+                continue;
             }
+            grouped
+                .entry((ap.interface.clone(), ap.ssid.clone()))
+                .or_default()
+                .push(ap.clone());
         }
 
         let mut groups = grouped
@@ -185,6 +186,15 @@ impl NetworkSnapshot {
             connectivity: self.connectivity.clone(),
             airplane_mode: self.airplane_mode,
         }
+    }
+
+    #[must_use]
+    pub fn hidden_access_points(&self) -> Vec<AccessPoint> {
+        self.access_points
+            .clone()
+            .into_iter()
+            .filter(|x| x.is_hidden())
+            .collect()
     }
 }
 
@@ -684,5 +694,23 @@ mod tests {
         );
         let groups = snapshot.wifi_groups();
         assert_eq!(groups.len(), 1);
+    }
+
+    #[test]
+    fn hidden_networks_available() {
+        let snapshot = snapshot(
+            vec![
+                ap("wlan0", "", "AA:AA:AA:AA:AA:01", 70),
+                ap("wlan1", "Cafe", "BB:BB:BB:BB:BB:01", 90),
+            ],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        let empty_groups: Vec<AccessPoint> = snapshot.hidden_access_points();
+        let groups = snapshot.wifi_groups();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].ssid, "Cafe");
+        assert_eq!(empty_groups.len(), 1);
     }
 }
