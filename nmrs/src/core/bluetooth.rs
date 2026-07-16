@@ -47,7 +47,7 @@ pub(crate) async fn populate_bluez_info(
 ) -> Result<(Option<String>, Option<String>)> {
     validate_bluetooth_address(bdaddr)?;
 
-    let bluez_path = bluez_device_path(bdaddr, adapter);
+    let bluez_path = bluez_device_path(bdaddr, adapter).await;
 
     match BluezDeviceExtProxy::builder(conn)
         .path(bluez_path)?
@@ -146,7 +146,7 @@ pub(crate) async fn connect_bluetooth(
     let specific_object = OwnedObjectPath::try_from(bluez_device_path(
         &settings.bdaddr,
         settings.adapter.as_deref(),
-    ))
+    ).await)
     .map_err(|e| ConnectionError::InvalidAddress(format!("Invalid BlueZ path: {e}")))?;
 
     match saved {
@@ -241,24 +241,24 @@ mod tests {
     use super::*;
     use crate::models::BluetoothNetworkRole;
 
-    #[test]
-    fn test_bluez_path_format_default_adapter() {
+    #[tokio::test]
+    async fn test_bluez_path_format_default_adapter() {
         assert_eq!(
-            bluez_device_path("00:1A:7D:DA:71:13", None),
+            bluez_device_path("00:1A:7D:DA:71:13", None).await,
             "/org/bluez/hci0/dev_00_1A_7D_DA_71_13"
         );
     }
 
-    #[test]
-    fn test_bluez_path_format_specific_adapter() {
+    #[tokio::test]
+    async fn test_bluez_path_format_specific_adapter() {
         assert_eq!(
-            bluez_device_path("00:1A:7D:DA:71:13", Some("hci1")),
+            bluez_device_path("00:1A:7D:DA:71:13", Some("hci1")).await,
             "/org/bluez/hci1/dev_00_1A_7D_DA_71_13"
         );
     }
 
-    #[test]
-    fn test_bluez_path_format_various_addresses() {
+    #[tokio::test]
+    async fn test_bluez_path_format_various_addresses() {
         let test_cases = [
             ("AA:BB:CC:DD:EE:FF", "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF"),
             ("00:00:00:00:00:00", "/org/bluez/hci0/dev_00_00_00_00_00_00"),
@@ -267,7 +267,7 @@ mod tests {
 
         for (bdaddr, expected) in test_cases {
             assert_eq!(
-                bluez_device_path(bdaddr, None),
+                bluez_device_path(bdaddr, None).await,
                 expected,
                 "Failed for bdaddr: {bdaddr}"
             );

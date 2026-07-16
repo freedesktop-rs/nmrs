@@ -7,8 +7,8 @@ use log::{trace, warn};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::str;
-use zbus::Connection;
-use zvariant::OwnedObjectPath;
+use zbus::{Connection, Proxy};
+use zvariant::{OwnedObjectPath, OwnedValue};
 
 use crate::Result;
 use crate::api::models::ConnectionStateReason;
@@ -283,9 +283,32 @@ pub(crate) async fn extract_connection_state_reason(
 /// bluez_device_path("00:1A:7D:DA:71:13", Some("hci1"))
 /// // => "/org/bluez/hci1/dev_00_1A_7D_DA_71_13"
 /// ```
-pub(crate) fn bluez_device_path(bdaddr: &str, adapter: Option<&str>) -> String {
-    let adapter = adapter.unwrap_or("hci0");
+pub(crate) async fn bluez_device_path(bdaddr: &str, adapter: Option<&str>) -> String {
+
+    let default_adapter = get_adapter().await;
+    let default_adapter = match default_adapter {
+        Ok(val) => val.unwrap(),
+        Err(err) => format!("Failed to get adapter with error: {}", err)
+    };
+    let adapter = adapter.unwrap_or(&default_adapter);
     format!("/org/bluez/{adapter}/dev_{}", bdaddr.replace(':', "_"))
+}
+
+// Helper to get the device adapter without assuming hci0
+async fn get_adapter() -> zbus::Result<Option<String>> {
+    let conn = Connection::system().await?;
+    let proxy = Proxy::new(
+        &conn, "org.bluez", 
+        "/", 
+        "org.freedesktop.DBus.ObjectManager").await?;
+     let objects: HashMap<
+        OwnedObjectPath,
+        HashMap<String, HashMap<String, OwnedValue>>,
+    > = proxy.call("GetManagedObjects", &()).await?;
+    let adapter= objects.iter()
+        .filter(|(_, interfaces)| interfaces.contains_key("org.bluez.Adapter1"))
+        .find_map(|(path, _)| path.split("/").last().map(str::to_string));
+    Ok(adapter)
 }
 
 /// Macro to convert Result to Option with error logging.
@@ -443,14 +466,14 @@ mod tests {
         assert_eq!(strength_or_zero(None), 0);
     }
 
-    #[test]
-    fn test_bluez_device_path() {
+    #[tokio::test]
+    async fn test_bluez_device_path() {
         assert_eq!(
-            bluez_device_path("00:1A:7D:DA:71:13", None),
+            bluez_device_path("00:1A:7D:DA:71:13", None).await,
             "/org/bluez/hci0/dev_00_1A_7D_DA_71_13"
         );
         assert_eq!(
-            bluez_device_path("00:1A:7D:DA:71:13", Some("hci1")),
+            bluez_device_path("00:1A:7D:DA:71:13", Some("hci1")).await,
             "/org/bluez/hci1/dev_00_1A_7D_DA_71_13"
         )
     }
