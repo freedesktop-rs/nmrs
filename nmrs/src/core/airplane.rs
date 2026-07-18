@@ -419,7 +419,7 @@ async fn wait_for_powered_no_timeout(proxy: &BluezAdapterProxy<'_>, target: bool
 
 #[cfg(test)]
 mod tests {
-    use super::finalize_airplane_toggle_results;
+    use super::{finalize_airplane_toggle_results, reconcile_hardware};
     use crate::ConnectionError;
 
     #[test]
@@ -433,7 +433,7 @@ mod tests {
             true,
         );
 
-        assert!(result.is_ok());
+        assert!(matches!(result, Ok(())));
     }
 
     #[test]
@@ -449,7 +449,8 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(ConnectionError::BluetoothToggleFailed(_))
+            Err(ConnectionError::BluetoothToggleFailed(message))
+                if message == "adapter did not settle"
         ));
     }
 
@@ -464,7 +465,7 @@ mod tests {
             false,
         );
 
-        assert!(result.is_ok());
+        assert!(matches!(result, Ok(())));
     }
 
     #[test]
@@ -479,6 +480,67 @@ mod tests {
             true,
         );
 
-        assert!(matches!(result, Err(ConnectionError::InvalidInput { .. })));
+        assert!(matches!(
+            result,
+            Err(ConnectionError::InvalidInput { field, reason })
+                if field == "bluetooth" && reason == "unexpected failure"
+        ));
+    }
+
+    #[test]
+    fn aggregate_toggle_propagates_wifi_before_other_results() {
+        let result = finalize_airplane_toggle_results(
+            Err(ConnectionError::InvalidInput {
+                field: "wifi".into(),
+                reason: "write failed".into(),
+            }),
+            Err(ConnectionError::InvalidInput {
+                field: "wwan".into(),
+                reason: "write failed".into(),
+            }),
+            Ok(()),
+            true,
+        );
+
+        assert!(matches!(
+            result,
+            Err(ConnectionError::InvalidInput { field, reason })
+                if field == "wifi" && reason == "write failed"
+        ));
+    }
+
+    #[test]
+    fn aggregate_toggle_propagates_wwan_when_wifi_succeeds() {
+        let result = finalize_airplane_toggle_results(
+            Ok(()),
+            Err(ConnectionError::InvalidInput {
+                field: "wwan".into(),
+                reason: "write failed".into(),
+            }),
+            Ok(()),
+            true,
+        );
+
+        assert!(matches!(
+            result,
+            Err(ConnectionError::InvalidInput { field, reason })
+                if field == "wwan" && reason == "write failed"
+        ));
+    }
+
+    #[test]
+    fn aggregate_toggle_succeeds_when_every_toggle_succeeds() {
+        assert!(matches!(
+            finalize_airplane_toggle_results(Ok(()), Ok(()), Ok(()), false),
+            Ok(())
+        ));
+    }
+
+    #[test]
+    fn hardware_reconciliation_trusts_any_disabled_source() {
+        assert!(reconcile_hardware(true, false, "wifi"));
+        assert!(!reconcile_hardware(true, true, "wifi"));
+        assert!(!reconcile_hardware(false, false, "wifi"));
+        assert!(!reconcile_hardware(false, true, "wifi"));
     }
 }

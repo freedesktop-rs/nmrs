@@ -348,6 +348,15 @@ pub fn parse_ovpn(content: &str) -> Result<OvpnFile, ConnectionError> {
                     "remote" => {
                         // remote <HOST> [PORT] [PROTO]
 
+                        if args.len() > 3 {
+                            return Err(OvpnParseError::InvalidArgument {
+                                key,
+                                arg: format!("{args:?}"),
+                                line,
+                            }
+                            .into());
+                        }
+
                         let host = args
                             .first()
                             .ok_or(OvpnParseError::MissingArgument {
@@ -406,6 +415,14 @@ pub fn parse_ovpn(content: &str) -> Result<OvpnFile, ConnectionError> {
                         b.proto = Some(value.clone());
                     }
                     "ca" => {
+                        if args.len() > 1 {
+                            return Err(OvpnParseError::InvalidArgument {
+                                key,
+                                arg: format!("{args:?}"),
+                                line,
+                            }
+                            .into());
+                        }
                         let path = args
                             .first()
                             .ok_or(OvpnParseError::MissingArgument {
@@ -416,6 +433,14 @@ pub fn parse_ovpn(content: &str) -> Result<OvpnFile, ConnectionError> {
                         b.ca = Some(CertSource::File(path));
                     }
                     "cert" => {
+                        if args.len() > 1 {
+                            return Err(OvpnParseError::InvalidArgument {
+                                key,
+                                arg: format!("{args:?}"),
+                                line,
+                            }
+                            .into());
+                        }
                         let path = args
                             .first()
                             .ok_or(OvpnParseError::MissingArgument {
@@ -426,6 +451,14 @@ pub fn parse_ovpn(content: &str) -> Result<OvpnFile, ConnectionError> {
                         b.cert = Some(CertSource::File(path));
                     }
                     "key" => {
+                        if args.len() > 1 {
+                            return Err(OvpnParseError::InvalidArgument {
+                                key,
+                                arg: format!("{args:?}"),
+                                line,
+                            }
+                            .into());
+                        }
                         let path = args
                             .first()
                             .ok_or(OvpnParseError::MissingArgument {
@@ -436,6 +469,14 @@ pub fn parse_ovpn(content: &str) -> Result<OvpnFile, ConnectionError> {
                         b.key = Some(CertSource::File(path));
                     }
                     "tls-crypt" => {
+                        if args.len() > 1 {
+                            return Err(OvpnParseError::InvalidArgument {
+                                key,
+                                arg: format!("{args:?}"),
+                                line,
+                            }
+                            .into());
+                        }
                         let path = args
                             .first()
                             .ok_or(OvpnParseError::MissingArgument {
@@ -448,6 +489,15 @@ pub fn parse_ovpn(content: &str) -> Result<OvpnFile, ConnectionError> {
                     "tls-auth" => {
                         // tls-auth <KEY-FILE> [DIRECTION]
 
+                        if args.len() > 2 {
+                            return Err(OvpnParseError::InvalidArgument {
+                                key,
+                                arg: format!("{args:?}"),
+                                line,
+                            }
+                            .into());
+                        }
+
                         let path = args
                             .first()
                             .ok_or(OvpnParseError::MissingArgument {
@@ -456,17 +506,27 @@ pub fn parse_ovpn(content: &str) -> Result<OvpnFile, ConnectionError> {
                             })?
                             .clone();
 
-                        let kd = args
-                            .get(1)
-                            .map(|v| {
-                                v.parse::<u8>().map_err(|_| OvpnParseError::InvalidNumber {
-                                    key: key.clone(),
-                                    value: v.clone(),
+                        let kd = if let Some(value) = args.get(1) {
+                            let direction =
+                                value
+                                    .parse::<u8>()
+                                    .map_err(|_| OvpnParseError::InvalidNumber {
+                                        key: key.clone(),
+                                        value: value.clone(),
+                                        line,
+                                    })?;
+                            if direction > 1 {
+                                return Err(OvpnParseError::InvalidArgument {
+                                    key,
+                                    arg: value.clone(),
                                     line,
-                                })
-                            })
-                            .transpose()?
-                            .filter(|&d| d <= 1);
+                                }
+                                .into());
+                            }
+                            Some(direction)
+                        } else {
+                            None
+                        };
 
                         b.tls_auth = Some(TlsAuth {
                             source: CertSource::File(path),
@@ -966,6 +1026,20 @@ mod tests {
     }
 
     #[test]
+    fn route_invalid_optional_addresses_identify_the_bad_value() {
+        assert_parse_err!(
+            "route 10.0.0.0 bad-netmask",
+            OvpnParseError::InvalidNumber { key, value, line }
+                if key == "route" && value == "bad-netmask" && line == 1
+        );
+        assert_parse_err!(
+            "route 10.0.0.0 255.255.255.0 bad-gateway",
+            OvpnParseError::InvalidNumber { key, value, line }
+                if key == "route" && value == "bad-gateway" && line == 1
+        );
+    }
+
+    #[test]
     fn parse_redirect_gateway_directive() {
         let result = parse_ok("redirect-gateway def1 bypass-dhcp bypass-dns local ipv6");
         let rg = result.redirect_gateway.expect("redirect-gateway");
@@ -1071,6 +1145,52 @@ mod tests {
         assert_parse_err!(
             "tls-auth",
             OvpnParseError::MissingArgument { key, .. } if key == "tls-auth"
+        );
+    }
+
+    #[test]
+    fn file_certificate_directives_require_exactly_one_path() {
+        for directive in ["ca", "cert", "key", "tls-crypt"] {
+            let error = parse_ovpn(directive).unwrap_err();
+            assert!(matches!(
+                error,
+                ConnectionError::ParseError(OvpnParseError::MissingArgument { key, line })
+                    if key == directive && line == 1
+            ));
+
+            let input = format!("{directive} first.pem second.pem");
+            let error = parse_ovpn(&input).unwrap_err();
+            assert!(matches!(
+                error,
+                ConnectionError::ParseError(OvpnParseError::InvalidArgument { key, line, .. })
+                    if key == directive && line == 1
+            ));
+        }
+    }
+
+    #[test]
+    fn tls_auth_directive_rejects_invalid_direction() {
+        assert_parse_err!(
+            "tls-auth /etc/openvpn/ta.key 2",
+            OvpnParseError::InvalidArgument { key, arg, line }
+                if key == "tls-auth" && arg == "2" && line == 1
+        );
+        assert_parse_err!(
+            "tls-auth /etc/openvpn/ta.key client",
+            OvpnParseError::InvalidNumber { key, value, line }
+                if key == "tls-auth" && value == "client" && line == 1
+        );
+    }
+
+    #[test]
+    fn tls_auth_and_remote_reject_extra_arguments() {
+        assert_parse_err!(
+            "tls-auth ta.key 1 extra",
+            OvpnParseError::InvalidArgument { key, .. } if key == "tls-auth"
+        );
+        assert_parse_err!(
+            "remote vpn.example.com 1194 udp extra",
+            OvpnParseError::InvalidArgument { key, .. } if key == "remote"
         );
     }
 

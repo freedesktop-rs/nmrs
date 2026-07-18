@@ -10,7 +10,7 @@ Unit tests cover validation, model construction, and builder logic. They run wit
 
 ```bash
 cd nmrs
-cargo test
+cargo test --lib --all-features
 ```
 
 ### Specific Test Modules
@@ -28,14 +28,32 @@ cargo test --lib util::validation
 
 ### Integration Tests
 
-Integration tests require a running NetworkManager instance:
+Environmental integration tests are `#[ignore]` so a normal `cargo test` never
+contacts or mutates the host NetworkManager. Run the NM-only contract through
+the isolated Docker harness:
 
 ```bash
-cargo test --test integration_test
-cargo test --test validation_test
+docker compose run --build --rm test-integration
 ```
 
-> **Note:** Integration tests that interact with real hardware may fail in CI or on systems without Wi-Fi adapters.
+The harness sets `NMRS_REQUIRE_NETWORKMANAGER=1` and provisions a private veth
+pair with DHCP before setting `NMRS_REQUIRE_WIRED=1`. It covers saved settings,
+exact direct and unified settings events, a NetworkManager-routed secret request
+and reply, native WireGuard activation, wired discovery, typed active-connection
+data, DHCP activation, disconnect, and cleanup. Once a capability is declared,
+an unavailable daemon, a D-Bus error, a missing event, or a timeout is a test
+failure. There are no skip-as-pass branches.
+
+To target a deliberately selected local daemon instead, opt in explicitly. The
+NM-only contracts create, update, and delete a saved profile and register a
+temporary secret agent, so prefer Docker unless those operations are
+intentional:
+
+```bash
+NMRS_REQUIRE_NETWORKMANAGER=1 \
+  cargo test --test integration_test --all-features \
+  networkmanager_ -- --ignored --test-threads=1
+```
 
 ## Test Categories
 
@@ -111,15 +129,17 @@ For reproducible testing with a real NetworkManager instance:
 docker compose run --build --rm test-integration
 ```
 
-This starts a private system D-Bus and NetworkManager instance, waits for it to
-be ready, and fails if tests cannot connect to the daemon. Wi-Fi-specific tests
-continue to skip until the test environment has a Wi-Fi device.
+This starts a private system D-Bus and NetworkManager instance, provisions a
+veth-backed DHCP network, waits for both to be ready, and runs the settings,
+secret-agent, native WireGuard, and wired lifecycle contracts. It fails if any
+declared facility is unavailable.
 
 ### Virtual Wi-Fi Integration
 
-On a Linux host, the CI-equivalent test target creates two virtual radios with
-`mac80211_hwsim`. One radio advertises a WPA-PSK test network using `hostapd`;
-NetworkManager manages the other radio and scans for that access point.
+On a Linux host, the CI-equivalent test target uses two virtual radios created
+with `mac80211_hwsim`. One radio advertises a WPA2-PSK test network using
+`hostapd` and serves DHCP using dnsmasq. The isolated NetworkManager manages the
+other radio.
 
 ```bash
 sudo modprobe mac80211_hwsim radios=2
@@ -129,6 +149,12 @@ sudo modprobe -r mac80211_hwsim
 
 This service uses host networking and is therefore intended for Linux hosts and
 the GitHub Actions runner, not Docker Desktop.
+
+The harness provides `NMRS_REQUIRE_WIFI=1`, the exact interface, SSID, and
+password, then asserts AP discovery, WPA authentication, DHCP activation,
+network and device callback delivery, disconnect, saved-credential reconnect,
+forget, and the exact missing-password error after cleanup. Missing declared
+capabilities and unexpected errors fail.
 
 It also mounts the host's `/run/udev` read-only so NetworkManager can manage
 the newly created hwsim links.
@@ -156,8 +182,8 @@ Tests run automatically via GitHub Actions on every push and pull request. The C
 
 1. Checks formatting (`cargo fmt --check`)
 2. Runs clippy (`cargo clippy`)
-3. Runs unit tests (`cargo test`)
-4. Runs integration tests against NetworkManager in Docker
+3. Runs unit tests (`cargo test --lib`)
+4. Runs the ignored integration contracts against isolated NetworkManager and virtual Wi-Fi harnesses
 5. Builds documentation (`mdbook build`)
 
 ## Next Steps

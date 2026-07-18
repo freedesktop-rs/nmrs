@@ -57,6 +57,10 @@ use nmrs::DeviceType;
 | `DeviceType::Vlan` | 802.1Q virtual VLAN |
 | `DeviceType::Other(u32)` | Unknown type with raw code |
 
+Devices that NetworkManager reports as `veth` are normalized to
+`DeviceType::Ethernet`. They return `true` from `is_wired()` and appear in
+`list_wired_devices()` and `list_wired_device_details()`.
+
 ### Type Helper Methods
 
 ```rust

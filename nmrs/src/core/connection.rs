@@ -14,14 +14,16 @@ use crate::monitoring::info::current_ssid;
 use crate::monitoring::transport::ActiveTransport;
 use crate::monitoring::wifi::Wifi;
 use crate::types::constants::{device_state, device_type, timeouts};
+use crate::types::device_type_registry;
 use crate::util::utils::{decode_ssid_or_empty, nm_proxy};
 use crate::util::validation::{validate_bssid, validate_ssid, validate_wifi_security};
 
 /// Decision on whether to reuse a saved connection or create a fresh one.
+#[derive(Debug, PartialEq, Eq)]
 enum SavedDecision {
     /// Reuse the saved connection at this path.
     UseSaved(OwnedObjectPath),
-    /// Delete any saved connection and create a new one with fresh credentials.
+    /// Create a new connection profile using the supplied credentials.
     RebuildFresh,
 }
 
@@ -34,8 +36,10 @@ enum SavedDecision {
 /// 4. Either activate the saved connection or create and activate a new one
 /// 5. Wait for the connection to reach the activated state
 ///
-/// If a saved connection exists but fails, it will be deleted and a fresh
-/// connection will be attempted with the provided credentials.
+/// If a saved connection exists but fails, it is deleted and a fresh
+/// connection is attempted only when the caller supplied usable fallback
+/// settings. An empty PSK requests stored credentials, so a failed saved
+/// profile is preserved and its activation error is returned.
 pub(crate) async fn connect(
     conn: &Connection,
     ssid: &str,
@@ -89,6 +93,7 @@ pub(crate) async fn connect(
                 &nm,
                 &wifi_device,
                 &specific_object,
+                ssid,
                 &creds,
                 saved,
                 timeout_config,
@@ -477,7 +482,11 @@ async fn find_device_by_type(
             .path(dp.clone())?
             .build()
             .await?;
-        if dev.device_type().await? == device_type_id {
+        if device_matches_type(
+            dev.device_type().await?,
+            dev.managed().await?,
+            device_type_id,
+        ) {
             return Ok(dp);
         }
     }
@@ -487,6 +496,13 @@ async fn find_device_by_type(
         device_type::ETHERNET => Err(ConnectionError::NoWiredDevice),
         _ => Err(ConnectionError::NoWifiDevice),
     }
+}
+
+fn device_matches_type(actual_type: u32, managed: bool, expected_type: u32) -> bool {
+    managed
+        && (actual_type == expected_type
+            || (expected_type == device_type::ETHERNET
+                && device_type_registry::is_wired(actual_type)))
 }
 
 pub(crate) async fn find_wired_device(
@@ -659,6 +675,7 @@ pub(crate) async fn connect_to_bssid(
                         &nm,
                         &wifi_device,
                         &specific_object,
+                        ssid,
                         &creds,
                         saved,
                         timeout_config,
@@ -701,8 +718,9 @@ async fn ensure_disconnected(
 ///
 /// Activates the saved connection and monitors the activation state using
 /// D-Bus signals. If activation fails (device disconnects or enters failed
-/// state), deletes the saved connection and creates a fresh one with the
-/// provided credentials.
+/// state), deletes the saved connection and creates a fresh one when the
+/// provided settings can stand alone. A request to use a stored PSK has no
+/// usable fallback, so the profile is preserved and the failure is returned.
 ///
 /// This handles cases where saved passwords are outdated or corrupted.
 async fn connect_via_saved(
@@ -710,6 +728,7 @@ async fn connect_via_saved(
     nm: &NMProxy<'_>,
     wifi_device: &OwnedObjectPath,
     ap: &OwnedObjectPath,
+    ssid: &str,
     creds: &WifiSecurity,
     saved: OwnedObjectPath,
     timeout_config: Option<TimeoutConfig>,
@@ -734,6 +753,12 @@ async fn connect_via_saved(
                 }
                 Err(e) => {
                     warn!("Saved connection activation failed: {e}");
+
+                    if !can_rebuild_after_saved_failure(creds) {
+                        warn!("No fresh credentials were supplied; preserving the saved profile");
+                        return Err(e);
+                    }
+
                     warn!("Deleting saved connection and retrying with fresh credentials");
 
                     match nm.deactivate_connection(active_conn.clone()).await {
@@ -751,10 +776,10 @@ async fn connect_via_saved(
                         autoconnect_retries: None,
                     };
 
-                    let settings = build_wifi_connection(ap.as_str(), creds, &opts);
+                    let settings = build_wifi_connection(ssid, creds, &opts);
 
                     debug!("Creating fresh connection with corrected settings");
-                    let (_, new_active_conn) = nm
+                    let (new_connection, new_active_conn) = nm
                         .add_and_activate_connection(settings, wifi_device.clone(), ap.clone())
                         .await
                         .map_err(|e| {
@@ -764,13 +789,20 @@ async fn connect_via_saved(
 
                     // Wait for the fresh connection to activate
                     let timeout = timeout_config.map(|c| c.connection_timeout);
-                    wait_for_connection_activation(conn, &new_active_conn, timeout).await?;
+                    wait_for_fresh_activation(conn, nm, &new_connection, &new_active_conn, timeout)
+                        .await?;
                 }
             }
         }
 
         Err(e) => {
             warn!("activate_connection() failed: {e}");
+
+            if !can_rebuild_after_saved_failure(creds) {
+                warn!("No fresh credentials were supplied; preserving the saved profile");
+                return Err(e.into());
+            }
+
             warn!("Saved connection may be corrupted, deleting and retrying with fresh connection");
 
             match delete_connection(conn, saved.clone()).await {
@@ -784,9 +816,9 @@ async fn connect_via_saved(
                 autoconnect_retries: None,
             };
 
-            let settings = build_wifi_connection(ap.as_str(), creds, &opts);
+            let settings = build_wifi_connection(ssid, creds, &opts);
 
-            let (_, active_conn) = nm
+            let (new_connection, active_conn) = nm
                 .add_and_activate_connection(settings, wifi_device.clone(), ap.clone())
                 .await
                 .map_err(|e| {
@@ -796,8 +828,32 @@ async fn connect_via_saved(
 
             // Wait for the fresh connection to activate
             let timeout = timeout_config.map(|c| c.connection_timeout);
-            wait_for_connection_activation(conn, &active_conn, timeout).await?;
+            wait_for_fresh_activation(conn, nm, &new_connection, &active_conn, timeout).await?;
         }
+    }
+
+    Ok(())
+}
+
+async fn wait_for_fresh_activation(
+    conn: &Connection,
+    nm: &NMProxy<'_>,
+    connection_path: &OwnedObjectPath,
+    active_connection_path: &OwnedObjectPath,
+    timeout: Option<std::time::Duration>,
+) -> Result<()> {
+    if let Err(error) = wait_for_connection_activation(conn, active_connection_path, timeout).await
+    {
+        if let Err(cleanup_error) = nm
+            .deactivate_connection(active_connection_path.clone())
+            .await
+        {
+            warn!("Failed to deactivate rejected fresh connection: {cleanup_error}");
+        }
+        if let Err(cleanup_error) = delete_connection(conn, connection_path.clone()).await {
+            warn!("Failed to delete rejected fresh connection profile: {cleanup_error}");
+        }
+        return Err(error);
     }
 
     Ok(())
@@ -830,7 +886,7 @@ async fn build_and_activate_new(
 
     ensure_disconnected(conn, wifi_device, timeout_config).await?;
 
-    let (_, active_conn) = match nm
+    let (connection_path, active_conn) = match nm
         .add_and_activate_connection(settings, wifi_device.clone(), ap.clone())
         .await
     {
@@ -851,7 +907,7 @@ async fn build_and_activate_new(
 
     // Wait for connection activation using the ActiveConnection signals
     let timeout = timeout_config.map(|c| c.connection_timeout);
-    wait_for_connection_activation(conn, &active_conn, timeout).await?;
+    wait_for_fresh_activation(conn, nm, &connection_path, &active_conn, timeout).await?;
 
     info!("Connection to '{ssid}' activated successfully");
 
@@ -888,8 +944,9 @@ async fn scan_and_resolve_ap(
 /// Decision logic:
 /// - If a saved connection exists and credentials are empty PSK, use saved
 ///   (user wants to connect with stored password)
-/// - If a saved connection exists but new PSK credentials provided, rebuild
-///   (user is updating the password)
+/// - If a saved connection exists for an open network, use saved
+/// - If a saved connection exists but fresh PSK or EAP credentials were
+///   provided, create a fresh profile so those credentials are not ignored
 /// - If no saved connection and PSK is empty, error (can't connect without password)
 /// - Otherwise, create a fresh connection
 fn decide_saved_connection(
@@ -897,18 +954,24 @@ fn decide_saved_connection(
     creds: &WifiSecurity,
 ) -> Result<SavedDecision> {
     match saved {
-        Some(_) if matches!(creds, WifiSecurity::WpaPsk { psk } if !psk.trim().is_empty()) => {
-            Ok(SavedDecision::RebuildFresh)
+        Some(path)
+            if matches!(creds, WifiSecurity::Open)
+                || matches!(creds, WifiSecurity::WpaPsk { psk } if psk.is_empty()) =>
+        {
+            Ok(SavedDecision::UseSaved(path))
         }
-
-        Some(path) => Ok(SavedDecision::UseSaved(path)),
-
-        None if matches!(creds, WifiSecurity::WpaPsk { psk } if psk.trim().is_empty()) => {
+        Some(_) => Ok(SavedDecision::RebuildFresh),
+        None if matches!(creds, WifiSecurity::WpaPsk { psk } if psk.is_empty()) => {
             Err(ConnectionError::MissingPassword)
         }
-
         None => Ok(SavedDecision::RebuildFresh),
     }
+}
+
+/// Whether a failed saved-profile activation can be retried without relying on
+/// that profile's stored secret.
+fn can_rebuild_after_saved_failure(creds: &WifiSecurity) -> bool {
+    !matches!(creds, WifiSecurity::WpaPsk { psk } if psk.is_empty())
 }
 
 /// Checks if currently connected to the specified SSID.
@@ -1019,4 +1082,145 @@ pub(crate) async fn get_device_by_interface(
     }
 
     Err(ConnectionError::NotFound)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::models::EapOptions;
+
+    fn saved_path() -> OwnedObjectPath {
+        OwnedObjectPath::try_from("/org/freedesktop/NetworkManager/Settings/1")
+            .expect("valid object path")
+    }
+
+    #[test]
+    fn automatic_device_selection_requires_matching_type_and_managed_state() {
+        assert!(device_matches_type(
+            device_type::ETHERNET,
+            true,
+            device_type::ETHERNET
+        ));
+        assert!(device_matches_type(
+            device_type::VETH,
+            true,
+            device_type::ETHERNET
+        ));
+        assert!(!device_matches_type(
+            device_type::ETHERNET,
+            false,
+            device_type::ETHERNET
+        ));
+        assert!(!device_matches_type(
+            device_type::WIFI,
+            true,
+            device_type::ETHERNET
+        ));
+        assert!(!device_matches_type(
+            device_type::VETH,
+            false,
+            device_type::ETHERNET
+        ));
+    }
+
+    fn enterprise_credentials() -> WifiSecurity {
+        WifiSecurity::WpaEap {
+            opts: EapOptions::new("user", "password"),
+        }
+    }
+
+    fn wpa3_enterprise_credentials() -> WifiSecurity {
+        WifiSecurity::Wpa3Eap192bit {
+            opts: EapOptions::new_tls_blob("user", vec![1], vec![2]),
+        }
+    }
+
+    #[test]
+    fn saved_profile_is_reused_only_without_fresh_credentials() {
+        let path = saved_path();
+
+        assert_eq!(
+            decide_saved_connection(Some(path.clone()), &WifiSecurity::Open).unwrap(),
+            SavedDecision::UseSaved(path.clone())
+        );
+        assert_eq!(
+            decide_saved_connection(
+                Some(path.clone()),
+                &WifiSecurity::WpaPsk { psk: String::new() },
+            )
+            .unwrap(),
+            SavedDecision::UseSaved(path)
+        );
+    }
+
+    #[test]
+    fn saved_profile_is_rebuilt_for_every_supplied_credential_kind() {
+        let cases = [
+            WifiSecurity::WpaPsk {
+                psk: "new password".into(),
+            },
+            WifiSecurity::WpaPsk {
+                psk: "        ".into(),
+            },
+            enterprise_credentials(),
+            wpa3_enterprise_credentials(),
+        ];
+
+        for creds in cases {
+            validate_wifi_security(&creds).expect("test credential should be valid");
+            assert_eq!(
+                decide_saved_connection(Some(saved_path()), &creds).unwrap(),
+                SavedDecision::RebuildFresh,
+                "fresh credentials must not be ignored: {creds:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn absent_profile_rejects_only_the_empty_stored_secret_sentinel() {
+        assert!(matches!(
+            decide_saved_connection(None, &WifiSecurity::WpaPsk { psk: String::new() }),
+            Err(ConnectionError::MissingPassword)
+        ));
+
+        let whitespace_psk = WifiSecurity::WpaPsk {
+            psk: "        ".into(),
+        };
+        validate_wifi_security(&whitespace_psk).expect("eight spaces is a valid-length PSK");
+        assert_eq!(
+            decide_saved_connection(None, &whitespace_psk).unwrap(),
+            SavedDecision::RebuildFresh
+        );
+    }
+
+    #[test]
+    fn absent_profile_builds_open_and_enterprise_connections() {
+        assert_eq!(
+            decide_saved_connection(None, &WifiSecurity::Open).unwrap(),
+            SavedDecision::RebuildFresh
+        );
+        assert_eq!(
+            decide_saved_connection(None, &enterprise_credentials()).unwrap(),
+            SavedDecision::RebuildFresh
+        );
+        assert_eq!(
+            decide_saved_connection(None, &wpa3_enterprise_credentials()).unwrap(),
+            SavedDecision::RebuildFresh
+        );
+    }
+
+    #[test]
+    fn saved_failure_recovery_requires_usable_fresh_settings() {
+        assert!(!can_rebuild_after_saved_failure(&WifiSecurity::WpaPsk {
+            psk: String::new(),
+        }));
+        assert!(can_rebuild_after_saved_failure(&WifiSecurity::Open));
+        assert!(can_rebuild_after_saved_failure(&WifiSecurity::WpaPsk {
+            psk: "password".into(),
+        }));
+        assert!(can_rebuild_after_saved_failure(&enterprise_credentials()));
+        assert!(can_rebuild_after_saved_failure(
+            &wpa3_enterprise_credentials()
+        ));
+    }
 }

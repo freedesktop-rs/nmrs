@@ -119,28 +119,14 @@ mod tests {
         assert!(section.contains_key("uuid"));
         assert!(section.contains_key("autoconnect"));
 
-        // Verify values
-        if let Some(Value::Str(conn_type)) = section.get("type") {
-            assert_eq!(conn_type.as_str(), "bluetooth");
-        } else {
-            panic!("type field not found or wrong type");
-        }
-
-        if let Some(Value::Str(id)) = section.get("id") {
-            assert_eq!(id.as_str(), "TestBluetooth");
-        } else {
-            panic!("id field not found or wrong type");
-        }
-
-        if let Some(Value::Bool(autoconnect)) = section.get("autoconnect") {
-            assert!(*autoconnect, "{}", true);
-        } else {
-            panic!("autoconnect field not found or wrong type");
-        }
-
-        // Check optional fields
-        assert!(section.contains_key("autoconnect-priority"));
-        assert!(section.contains_key("autoconnect-retries"));
+        assert_eq!(section.get("type"), Some(&Value::from("bluetooth")));
+        assert_eq!(section.get("id"), Some(&Value::from("TestBluetooth")));
+        assert_eq!(section.get("autoconnect"), Some(&Value::from(true)));
+        assert_eq!(
+            section.get("autoconnect-priority"),
+            Some(&Value::from(10i32))
+        );
+        assert_eq!(section.get("autoconnect-retries"), Some(&Value::from(3i32)));
     }
 
     #[test]
@@ -170,17 +156,11 @@ mod tests {
         assert!(section.contains_key("bdaddr"));
         assert!(section.contains_key("type"));
 
-        if let Some(Value::Str(bdaddr)) = section.get("bdaddr") {
-            assert_eq!(bdaddr.as_str(), "00:1A:7D:DA:71:13");
-        } else {
-            panic!("bdaddr field not found or wrong type");
-        }
-
-        if let Some(Value::Str(bt_type)) = section.get("type") {
-            assert_eq!(bt_type.as_str(), "panu");
-        } else {
-            panic!("type field not found or wrong type");
-        }
+        assert_eq!(
+            section.get("bdaddr"),
+            Some(&Value::from("00:1A:7D:DA:71:13"))
+        );
+        assert_eq!(section.get("type"), Some(&Value::from("panu")));
     }
 
     #[test]
@@ -191,17 +171,11 @@ mod tests {
         assert!(section.contains_key("bdaddr"));
         assert!(section.contains_key("type"));
 
-        if let Some(Value::Str(bdaddr)) = section.get("bdaddr") {
-            assert_eq!(bdaddr.as_str(), "C8:1F:E8:F0:51:57");
-        } else {
-            panic!("bdaddr field not found or wrong type");
-        }
-
-        if let Some(Value::Str(bt_type)) = section.get("type") {
-            assert_eq!(bt_type.as_str(), "dun");
-        } else {
-            panic!("type field not found or wrong type");
-        }
+        assert_eq!(
+            section.get("bdaddr"),
+            Some(&Value::from("C8:1F:E8:F0:51:57"))
+        );
+        assert_eq!(section.get("type"), Some(&Value::from("dun")));
     }
 
     #[test]
@@ -216,31 +190,21 @@ mod tests {
         assert!(conn.contains_key("ipv4"));
         assert!(conn.contains_key("ipv6"));
 
-        // Verify connection section
         let connection_section = conn.get("connection").unwrap();
-        if let Some(Value::Str(id)) = connection_section.get("id") {
-            assert_eq!(id.as_str(), "MyPhone");
-        }
+        assert_eq!(connection_section.get("id"), Some(&Value::from("MyPhone")));
 
-        // Verify bluetooth section
         let bt_section = conn.get("bluetooth").unwrap();
-        if let Some(Value::Str(bdaddr)) = bt_section.get("bdaddr") {
-            assert_eq!(bdaddr.as_str(), "00:1A:7D:DA:71:13");
-        }
-        if let Some(Value::Str(bt_type)) = bt_section.get("type") {
-            assert_eq!(bt_type.as_str(), "panu");
-        }
+        assert_eq!(
+            bt_section.get("bdaddr"),
+            Some(&Value::from("00:1A:7D:DA:71:13"))
+        );
+        assert_eq!(bt_section.get("type"), Some(&Value::from("panu")));
 
-        // Verify IP sections
         let ipv4_section = conn.get("ipv4").unwrap();
-        if let Some(Value::Str(method)) = ipv4_section.get("method") {
-            assert_eq!(method.as_str(), "auto");
-        }
+        assert_eq!(ipv4_section.get("method"), Some(&Value::from("auto")));
 
         let ipv6_section = conn.get("ipv6").unwrap();
-        if let Some(Value::Str(method)) = ipv6_section.get("method") {
-            assert_eq!(method.as_str(), "auto");
-        }
+        assert_eq!(ipv6_section.get("method"), Some(&Value::from("auto")));
     }
 
     #[test]
@@ -258,11 +222,16 @@ mod tests {
         assert!(conn.contains_key("ipv4"));
         assert!(conn.contains_key("ipv6"));
 
-        // Verify DUN type
         let bt_section = conn.get("bluetooth").unwrap();
-        if let Some(Value::Str(bt_type)) = bt_section.get("type") {
-            assert_eq!(bt_type.as_str(), "dun");
-        }
+        assert_eq!(
+            conn["connection"].get("autoconnect"),
+            Some(&Value::from(false))
+        );
+        assert_eq!(bt_section.get("type"), Some(&Value::from("dun")));
+        assert_eq!(
+            bt_section.get("bdaddr"),
+            Some(&Value::from("C8:1F:E8:F0:51:57"))
+        );
     }
 
     #[test]
@@ -273,27 +242,15 @@ mod tests {
         let conn1 = build_bluetooth_connection("BT1", &identity, &opts);
         let conn2 = build_bluetooth_connection("BT2", &identity, &opts);
 
-        let uuid1 = if let Some(section) = conn1.get("connection") {
-            if let Some(Value::Str(uuid)) = section.get("uuid") {
-                uuid.as_str()
-            } else {
-                panic!("uuid not found in conn1");
-            }
-        } else {
-            panic!("connection section not found in conn1");
+        let Value::Str(uuid1) = &conn1["connection"]["uuid"] else {
+            panic!("conn1 UUID must be a string");
         };
-
-        let uuid2 = if let Some(section) = conn2.get("connection") {
-            if let Some(Value::Str(uuid)) = section.get("uuid") {
-                uuid.as_str()
-            } else {
-                panic!("uuid not found in conn2");
-            }
-        } else {
-            panic!("connection section not found in conn2");
+        let Value::Str(uuid2) = &conn2["connection"]["uuid"] else {
+            panic!("conn2 UUID must be a string");
         };
+        let uuid1 = uuid::Uuid::parse_str(uuid1.as_str()).expect("conn1 must contain a valid UUID");
+        let uuid2 = uuid::Uuid::parse_str(uuid2.as_str()).expect("conn2 must contain a valid UUID");
 
-        // UUIDs should be different
         assert_ne!(uuid1, uuid2, "UUIDs should be unique");
     }
 
@@ -305,8 +262,9 @@ mod tests {
         let conn = build_bluetooth_connection("Test", &identity, &opts);
 
         let bt_section = conn.get("bluetooth").unwrap();
-        if let Some(Value::Str(bdaddr)) = bt_section.get("bdaddr") {
-            assert_eq!(bdaddr.as_str(), "AA:BB:CC:DD:EE:FF");
-        }
+        assert_eq!(
+            bt_section.get("bdaddr"),
+            Some(&Value::from("AA:BB:CC:DD:EE:FF"))
+        );
     }
 }

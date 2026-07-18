@@ -26,7 +26,7 @@ most commonly handled variants by category.
 | `ApBssidNotFound { ssid, bssid }` | No AP matching both the SSID and BSSID |
 | `InvalidBssid(String)` | Invalid BSSID format |
 | `AuthFailed` | Wrong password or rejected credentials |
-| `MissingPassword` | Empty password provided |
+| `MissingPassword` | Empty PSK provided without a saved profile to reuse |
 | `NoWifiDevice` | No Wi-Fi adapter found |
 | `WifiNotReady` | Wi-Fi device not ready in time |
 | `WifiInterfaceNotFound { interface }` | Specified Wi-Fi interface doesn't exist |

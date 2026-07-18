@@ -261,39 +261,53 @@ fn validate_path_or_blob(
 /// Returns `ConnectionError::InvalidPrivateKey` or `InvalidPublicKey` if invalid.
 fn validate_wireguard_key(key: &str, key_type: &str) -> Result<(), ConnectionError> {
     if key.is_empty() {
-        return Err(ConnectionError::InvalidPrivateKey(format!(
-            "{} cannot be empty",
-            key_type
-        )));
+        return Err(invalid_wireguard_key(
+            key_type,
+            format!("{} cannot be empty", key_type),
+        ));
     }
 
     // Check length (base64 encoded 32 bytes = 44 chars with padding)
     if key.len() != WIREGUARD_KEY_BASE64_LEN {
-        return Err(ConnectionError::InvalidPrivateKey(format!(
-            "{} must be {} characters (base64 encoded), got {}",
+        return Err(invalid_wireguard_key(
             key_type,
-            WIREGUARD_KEY_BASE64_LEN,
-            key.len()
-        )));
+            format!(
+                "{} must be {} characters (base64 encoded), got {}",
+                key_type,
+                WIREGUARD_KEY_BASE64_LEN,
+                key.len()
+            ),
+        ));
     }
 
     // Validate base64 and length
     match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, key) {
         Ok(decoded) => {
             if decoded.len() != WIREGUARD_KEY_BYTES {
-                return Err(ConnectionError::InvalidPrivateKey(format!(
-                    "{} must decode to {} bytes, got {}",
+                return Err(invalid_wireguard_key(
                     key_type,
-                    WIREGUARD_KEY_BYTES,
-                    decoded.len()
-                )));
+                    format!(
+                        "{} must decode to {} bytes, got {}",
+                        key_type,
+                        WIREGUARD_KEY_BYTES,
+                        decoded.len()
+                    ),
+                ));
             }
             Ok(())
         }
-        Err(e) => Err(ConnectionError::InvalidPrivateKey(format!(
-            "{} is not valid base64: {}",
-            key_type, e
-        ))),
+        Err(e) => Err(invalid_wireguard_key(
+            key_type,
+            format!("{} is not valid base64: {}", key_type, e),
+        )),
+    }
+}
+
+fn invalid_wireguard_key(key_type: &str, message: String) -> ConnectionError {
+    if key_type.to_ascii_lowercase().contains("public key") {
+        ConnectionError::InvalidPublicKey(message)
+    } else {
+        ConnectionError::InvalidPrivateKey(message)
     }
 }
 
@@ -312,28 +326,7 @@ fn validate_wireguard_peer(peer: &WireGuardPeer) -> Result<(), ConnectionError> 
     validate_wireguard_key(&peer.public_key, "Peer public key")?;
 
     // Validate gateway (should be host:port)
-    if peer.gateway.is_empty() {
-        return Err(ConnectionError::InvalidGateway(
-            "Peer gateway cannot be empty".to_string(),
-        ));
-    }
-
-    if !peer.gateway.contains(':') {
-        return Err(ConnectionError::InvalidGateway(format!(
-            "Peer gateway must be in 'host:port' format, got '{}'",
-            peer.gateway
-        )));
-    }
-
-    // Validate port number
-    if let Some(port_str) = peer.gateway.split(':').next_back()
-        && port_str.parse::<u16>().is_err()
-    {
-        return Err(ConnectionError::InvalidGateway(format!(
-            "Invalid port number in gateway '{}'",
-            peer.gateway
-        )));
-    }
+    validate_wireguard_gateway(&peer.gateway, "Peer")?;
 
     // Validate allowed IPs
     if peer.allowed_ips.is_empty() {
@@ -364,6 +357,47 @@ fn validate_wireguard_peer(peer: &WireGuardPeer) -> Result<(), ConnectionError> 
                 keepalive
             )));
         }
+    }
+
+    Ok(())
+}
+
+fn validate_wireguard_gateway(gateway: &str, label: &str) -> Result<(), ConnectionError> {
+    if gateway.trim().is_empty() {
+        return Err(ConnectionError::InvalidGateway(format!(
+            "{label} gateway cannot be empty"
+        )));
+    }
+
+    let (host, port_str) = gateway.rsplit_once(':').ok_or_else(|| {
+        ConnectionError::InvalidGateway(format!(
+            "{label} gateway must be in 'host:port' format, got '{gateway}'"
+        ))
+    })?;
+    if host.trim().is_empty() {
+        return Err(ConnectionError::InvalidGateway(format!(
+            "{label} gateway host cannot be empty"
+        )));
+    }
+    if host.contains(':')
+        && !(host.starts_with('[')
+            && host.ends_with(']')
+            && host[1..host.len() - 1]
+                .parse::<std::net::Ipv6Addr>()
+                .is_ok())
+    {
+        return Err(ConnectionError::InvalidGateway(format!(
+            "{label} IPv6 gateway must use '[address]:port' format, got '{gateway}'"
+        )));
+    }
+
+    let port = port_str.parse::<u16>().map_err(|_| {
+        ConnectionError::InvalidGateway(format!("Invalid port number in gateway '{gateway}'"))
+    })?;
+    if port == 0 {
+        return Err(ConnectionError::InvalidGateway(format!(
+            "Port number in gateway '{gateway}' cannot be 0"
+        )));
     }
 
     Ok(())
@@ -406,8 +440,7 @@ fn validate_cidr(cidr: &str) -> Result<(), ConnectionError> {
                 prefix_num
             )));
         }
-        // Basic IPv6 validation (contains colons and hex digits)
-        if !address.chars().all(|c| c.is_ascii_hexdigit() || c == ':') {
+        if address.parse::<std::net::Ipv6Addr>().is_err() {
             return Err(ConnectionError::InvalidAddress(format!(
                 "Invalid IPv6 address '{}'",
                 address
@@ -464,28 +497,7 @@ pub fn validate_vpn_credentials(creds: &VpnCredentials) -> Result<(), Connection
     validate_connection_name(&creds.name)?;
 
     // Validate gateway
-    if creds.gateway.is_empty() {
-        return Err(ConnectionError::InvalidGateway(
-            "VPN gateway cannot be empty".to_string(),
-        ));
-    }
-
-    if !creds.gateway.contains(':') {
-        return Err(ConnectionError::InvalidGateway(format!(
-            "VPN gateway must be in 'host:port' format, got '{}'",
-            creds.gateway
-        )));
-    }
-
-    // Validate port number
-    if let Some(port_str) = creds.gateway.split(':').next_back()
-        && port_str.parse::<u16>().is_err()
-    {
-        return Err(ConnectionError::InvalidGateway(format!(
-            "Invalid port number in gateway '{}'",
-            creds.gateway
-        )));
-    }
+    validate_wireguard_gateway(&creds.gateway, "VPN")?;
 
     // Validate private key
     validate_wireguard_key(&creds.private_key, "Private key")?;
@@ -545,7 +557,7 @@ fn validate_ip_address(ip: &str) -> Result<(), ConnectionError> {
     }
 
     if ip.contains(':') {
-        if !ip.chars().all(|c| c.is_ascii_hexdigit() || c == ':') {
+        if ip.parse::<std::net::Ipv6Addr>().is_err() {
             return Err(ConnectionError::InvalidAddress(format!(
                 "Invalid IPv6 address '{}'",
                 ip
@@ -608,7 +620,7 @@ pub fn validate_openvpn_config(config: &OpenVpnConfig) -> Result<(), ConnectionE
     if let Some(ref auth_type) = config.auth_type {
         match auth_type {
             OpenVpnAuthType::Password => {
-                if config.username.as_deref().unwrap_or("").is_empty() {
+                if config.username.as_deref().unwrap_or("").trim().is_empty() {
                     return Err(ConnectionError::InvalidAddress(
                         "Username is required for password authentication".to_string(),
                     ));
@@ -618,7 +630,7 @@ pub fn validate_openvpn_config(config: &OpenVpnConfig) -> Result<(), ConnectionE
                 validate_openvpn_cert_paths(config)?;
             }
             OpenVpnAuthType::PasswordTls => {
-                if config.username.as_deref().unwrap_or("").is_empty() {
+                if config.username.as_deref().unwrap_or("").trim().is_empty() {
                     return Err(ConnectionError::InvalidAddress(
                         "Username is required for password+TLS authentication".to_string(),
                     ));
@@ -663,6 +675,12 @@ pub fn validate_openvpn_config(config: &OpenVpnConfig) -> Result<(), ConnectionE
             return Err(ConnectionError::InvalidAddress(
                 "OpenVPN route destination cannot be empty".to_string(),
             ));
+        }
+        if route.dest.parse::<std::net::Ipv4Addr>().is_err() {
+            return Err(ConnectionError::InvalidAddress(format!(
+                "Invalid OpenVPN route destination '{}'",
+                route.dest
+            )));
         }
         if route.prefix > 32 {
             return Err(ConnectionError::InvalidAddress(format!(
@@ -802,7 +820,37 @@ pub fn validate_bssid(bssid: &str) -> Result<(), ConnectionError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::models::{EapMethod, EapOptions, Phase2};
+    use crate::api::models::{EapMethod, EapOptions, Phase2, VpnKind, VpnRoute};
+
+    macro_rules! assert_error_message {
+        ($result:expr, $variant:ident, $expected:expr) => {
+            match $result {
+                Err(ConnectionError::$variant(message)) => assert_eq!(message, $expected),
+                other => panic!(
+                    "expected {}::{}, got {other:?}",
+                    stringify!(ConnectionError),
+                    stringify!($variant)
+                ),
+            }
+        };
+    }
+
+    const VALID_WIREGUARD_KEY: &str = "YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=";
+
+    fn base_vpn_credentials() -> VpnCredentials {
+        VpnCredentials::new(
+            VpnKind::WireGuard,
+            "WireGuard",
+            "vpn.example.com:51820",
+            VALID_WIREGUARD_KEY,
+            "10.0.0.2/24",
+            vec![WireGuardPeer::new(
+                VALID_WIREGUARD_KEY,
+                "vpn.example.com:51820",
+                vec!["0.0.0.0/0".into()],
+            )],
+        )
+    }
 
     #[test]
     fn test_validate_ssid_valid() {
@@ -814,14 +862,37 @@ mod tests {
 
     #[test]
     fn test_validate_ssid_empty() {
-        assert!(validate_ssid("").is_err());
-        assert!(validate_ssid("   ").is_err());
+        assert_error_message!(validate_ssid(""), InvalidAddress, "SSID cannot be empty");
+        assert_error_message!(
+            validate_ssid("   "),
+            InvalidAddress,
+            "SSID cannot be only whitespace"
+        );
     }
 
     #[test]
     fn test_validate_ssid_too_long() {
         let long_ssid = "123456789012345678901234567890123"; // 33 bytes
-        assert!(validate_ssid(long_ssid).is_err());
+        assert_error_message!(
+            validate_ssid(long_ssid),
+            InvalidAddress,
+            "SSID too long: 33 bytes (max 32 bytes)"
+        );
+    }
+
+    #[test]
+    fn test_validate_ssid_uses_utf8_byte_boundary() {
+        let max_multibyte_ssid = "é".repeat(16);
+        assert_eq!(max_multibyte_ssid.len(), 32);
+        assert!(validate_ssid(&max_multibyte_ssid).is_ok());
+
+        let too_long_multibyte_ssid = "é".repeat(17);
+        assert_eq!(too_long_multibyte_ssid.len(), 34);
+        assert_error_message!(
+            validate_ssid(&too_long_multibyte_ssid),
+            InvalidAddress,
+            "SSID too long: 34 bytes (max 32 bytes)"
+        );
     }
 
     #[test]
@@ -836,7 +907,26 @@ mod tests {
     #[test]
     fn test_validate_connection_name_too_long() {
         let long_name = "a".repeat(256);
-        assert!(validate_connection_name(&long_name).is_err());
+        assert_error_message!(
+            validate_connection_name(&long_name),
+            InvalidAddress,
+            "Connection name too long: 256 bytes (max 255 bytes)"
+        );
+    }
+
+    #[test]
+    fn test_validate_connection_name_uses_utf8_byte_boundary() {
+        let max_multibyte_name = format!("a{}", "é".repeat(127));
+        assert_eq!(max_multibyte_name.len(), 255);
+        assert!(validate_connection_name(&max_multibyte_name).is_ok());
+
+        let too_long_multibyte_name = "é".repeat(128);
+        assert_eq!(too_long_multibyte_name.len(), 256);
+        assert_error_message!(
+            validate_connection_name(&too_long_multibyte_name),
+            InvalidAddress,
+            "Connection name too long: 256 bytes (max 255 bytes)"
+        );
     }
 
     #[test]
@@ -866,7 +956,11 @@ mod tests {
         let psk = WifiSecurity::WpaPsk {
             psk: "short".to_string(),
         };
-        assert!(validate_wifi_security(&psk).is_err());
+        assert_error_message!(
+            validate_wifi_security(&psk),
+            InvalidAddress,
+            "WPA-PSK password too short: 5 characters (minimum 8 characters)"
+        );
     }
 
     #[test]
@@ -874,7 +968,11 @@ mod tests {
         let psk = WifiSecurity::WpaPsk {
             psk: "a".repeat(64),
         };
-        assert!(validate_wifi_security(&psk).is_err());
+        assert_error_message!(
+            validate_wifi_security(&psk),
+            InvalidAddress,
+            "WPA-PSK password too long: 64 characters (maximum 63 characters)"
+        );
     }
 
     #[test]
@@ -920,7 +1018,11 @@ mod tests {
                 client_cert_blob: None,
             },
         };
-        assert!(validate_wifi_security(&eap).is_err());
+        assert_error_message!(
+            validate_wifi_security(&eap),
+            InvalidAddress,
+            "EAP identity cannot be empty"
+        );
     }
 
     #[test]
@@ -943,7 +1045,11 @@ mod tests {
                 client_cert_blob: None,
             },
         };
-        assert!(validate_wifi_security(&eap).is_err());
+        assert_error_message!(
+            validate_wifi_security(&eap),
+            InvalidAddress,
+            "EAP CA certificate path must start with 'file://'"
+        );
     }
 
     #[test]
@@ -966,7 +1072,11 @@ mod tests {
                 client_cert_blob: None,
             },
         };
-        assert!(validate_wifi_security(&eap).is_err());
+        assert_error_message!(
+            validate_wifi_security(&eap),
+            InvalidAddress,
+            "WPA3-EAP 192bit requires authentication method TLS"
+        );
     }
 
     #[test]
@@ -1035,7 +1145,11 @@ mod tests {
                 client_cert_blob: Some(b"client_cert_blob".to_vec()),
             },
         };
-        assert!(validate_wifi_security(&eap).is_err());
+        assert_error_message!(
+            validate_wifi_security(&eap),
+            InvalidAddress,
+            "EAP private key path and blob cannot be provided at the same time"
+        );
     }
 
     #[test]
@@ -1058,7 +1172,11 @@ mod tests {
                 client_cert_blob: None,
             },
         };
-        assert!(validate_wifi_security(&eap).is_err());
+        assert_error_message!(
+            validate_wifi_security(&eap),
+            InvalidAddress,
+            "EAP private key path must start with 'file://'"
+        );
     }
 
     #[test]
@@ -1081,7 +1199,11 @@ mod tests {
                 client_cert_blob: None,
             },
         };
-        assert!(validate_wifi_security(&eap).is_err());
+        assert_error_message!(
+            validate_wifi_security(&eap),
+            InvalidAddress,
+            "EAP client certificate path must start with 'file://'"
+        );
     }
 
     #[test]
@@ -1104,7 +1226,11 @@ mod tests {
                 client_cert_blob: None,
             },
         };
-        assert!(validate_wifi_security(&eap).is_err());
+        assert_error_message!(
+            validate_wifi_security(&eap),
+            InvalidAddress,
+            "EAP private key must be provided"
+        );
     }
 
     #[test]
@@ -1127,7 +1253,44 @@ mod tests {
                 client_cert_blob: None,
             },
         };
-        assert!(validate_wifi_security(&eap).is_err());
+        assert_error_message!(
+            validate_wifi_security(&eap),
+            InvalidAddress,
+            "EAP client certificate must be provided"
+        );
+    }
+
+    #[test]
+    fn eap_password_and_optional_identity_fields_have_exact_errors() {
+        let base = EapOptions::new("user@example.com", "password").with_system_ca_certs(true);
+
+        let mut empty_password = base.clone();
+        empty_password.password.clear();
+        assert_error_message!(
+            validate_wifi_security(&WifiSecurity::WpaEap {
+                opts: empty_password
+            }),
+            InvalidAddress,
+            "EAP password cannot be empty"
+        );
+
+        let mut empty_anonymous = base.clone();
+        empty_anonymous.anonymous_identity = Some("   ".into());
+        assert_error_message!(
+            validate_wifi_security(&WifiSecurity::WpaEap {
+                opts: empty_anonymous
+            }),
+            InvalidAddress,
+            "EAP anonymous identity cannot be empty if provided"
+        );
+
+        let mut empty_domain = base;
+        empty_domain.domain_suffix_match = Some("\t".into());
+        assert_error_message!(
+            validate_wifi_security(&WifiSecurity::WpaEap { opts: empty_domain }),
+            InvalidAddress,
+            "EAP domain suffix match cannot be empty if provided"
+        );
     }
 
     #[test]
@@ -1145,10 +1308,34 @@ mod tests {
 
     #[test]
     fn test_validate_cidr_invalid() {
-        assert!(validate_cidr("10.0.0.0").is_err()); // Missing prefix
-        assert!(validate_cidr("10.0.0.0/33").is_err()); // Invalid prefix
-        assert!(validate_cidr("256.0.0.0/24").is_err()); // Invalid octet
-        assert!(validate_cidr("10.0.0/24").is_err()); // Wrong number of octets
+        for (cidr, expected) in [
+            (
+                "10.0.0.0",
+                "Invalid CIDR notation '10.0.0.0' (must be 'address/prefix')",
+            ),
+            ("10.0.0.0/33", "IPv4 prefix length 33 is too large (max 32)"),
+            ("256.0.0.0/24", "IPv4 octet 256 is too large (max 255)"),
+            (
+                "10.0.0/24",
+                "Invalid IPv4 address '10.0.0' (must have 4 octets)",
+            ),
+        ] {
+            assert_error_message!(validate_cidr(cidr), InvalidAddress, expected);
+        }
+    }
+
+    #[test]
+    fn malformed_ipv6_cidr_is_rejected() {
+        assert_error_message!(
+            validate_cidr("2001:::1/64"),
+            InvalidAddress,
+            "Invalid IPv6 address '2001:::1'"
+        );
+        assert_error_message!(
+            validate_cidr("2001:db8::/129"),
+            InvalidAddress,
+            "IPv6 prefix length 129 is too large (max 128)"
+        );
     }
 
     #[test]
@@ -1160,9 +1347,33 @@ mod tests {
 
     #[test]
     fn test_validate_ip_address_ipv4_invalid() {
-        assert!(validate_ip_address("256.1.1.1").is_err());
-        assert!(validate_ip_address("192.168.1").is_err());
-        assert!(validate_ip_address("192.168.1.1.1").is_err());
+        for (address, expected) in [
+            (
+                "256.1.1.1",
+                "IPv4 octet 256 is too large (max 255) in address '256.1.1.1'",
+            ),
+            (
+                "192.168.1",
+                "Invalid IPv4 address '192.168.1' (must have 4 octets)",
+            ),
+            (
+                "192.168.1.1.1",
+                "Invalid IPv4 address '192.168.1.1.1' (must have 4 octets)",
+            ),
+        ] {
+            assert_error_message!(validate_ip_address(address), InvalidAddress, expected);
+        }
+    }
+
+    #[test]
+    fn malformed_ipv6_addresses_are_rejected() {
+        for address in [":::1", "2001:db8:::1", "gggg::1"] {
+            assert_error_message!(
+                validate_ip_address(address),
+                InvalidAddress,
+                format!("Invalid IPv6 address '{address}'")
+            );
+        }
     }
 
     #[test]
@@ -1175,13 +1386,211 @@ mod tests {
     #[test]
     fn test_validate_wireguard_key_invalid_length() {
         let key = "tooshort";
-        assert!(validate_wireguard_key(key, "Test key").is_err());
+        assert_error_message!(
+            validate_wireguard_key(key, "Test key"),
+            InvalidPrivateKey,
+            "Test key must be 44 characters (base64 encoded), got 8"
+        );
     }
 
     #[test]
     fn test_validate_wireguard_key_invalid_base64() {
-        let key = "!!!invalid-base64-characters-here!!!";
-        assert!(validate_wireguard_key(key, "Test key").is_err());
+        let key = "!".repeat(WIREGUARD_KEY_BASE64_LEN);
+        match validate_wireguard_key(&key, "Test key") {
+            Err(ConnectionError::InvalidPrivateKey(message)) => {
+                assert!(message.starts_with("Test key is not valid base64:"));
+            }
+            other => panic!("expected InvalidPrivateKey base64 error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_wireguard_key_invalid_decoded_length() {
+        let key = "A".repeat(WIREGUARD_KEY_BASE64_LEN);
+        assert_error_message!(
+            validate_wireguard_key(&key, "Private key"),
+            InvalidPrivateKey,
+            "Private key must decode to 32 bytes, got 33"
+        );
+    }
+
+    #[test]
+    fn public_key_errors_use_public_key_variant() {
+        assert_error_message!(
+            validate_wireguard_key("short", "Peer public key"),
+            InvalidPublicKey,
+            "Peer public key must be 44 characters (base64 encoded), got 5"
+        );
+    }
+
+    #[test]
+    fn vpn_credentials_valid_happy_path() {
+        assert!(validate_vpn_credentials(&base_vpn_credentials()).is_ok());
+    }
+
+    #[test]
+    fn vpn_credentials_validate_gateway_before_key_material() {
+        let mut credentials = base_vpn_credentials();
+        credentials.gateway.clear();
+        assert_error_message!(
+            validate_vpn_credentials(&credentials),
+            InvalidGateway,
+            "VPN gateway cannot be empty"
+        );
+
+        credentials.gateway = "vpn.example.com".into();
+        assert_error_message!(
+            validate_vpn_credentials(&credentials),
+            InvalidGateway,
+            "VPN gateway must be in 'host:port' format, got 'vpn.example.com'"
+        );
+
+        credentials.gateway = "vpn.example.com:not-a-port".into();
+        assert_error_message!(
+            validate_vpn_credentials(&credentials),
+            InvalidGateway,
+            "Invalid port number in gateway 'vpn.example.com:not-a-port'"
+        );
+
+        credentials.gateway = "vpn.example.com:0".into();
+        assert_error_message!(
+            validate_vpn_credentials(&credentials),
+            InvalidGateway,
+            "Port number in gateway 'vpn.example.com:0' cannot be 0"
+        );
+
+        credentials.gateway = ":51820".into();
+        assert_error_message!(
+            validate_vpn_credentials(&credentials),
+            InvalidGateway,
+            "VPN gateway host cannot be empty"
+        );
+
+        credentials.gateway = "2001:db8::1:51820".into();
+        assert_error_message!(
+            validate_vpn_credentials(&credentials),
+            InvalidGateway,
+            "VPN IPv6 gateway must use '[address]:port' format, got '2001:db8::1:51820'"
+        );
+
+        credentials.gateway = "[2001:db8::1]:51820".into();
+        assert!(validate_vpn_credentials(&credentials).is_ok());
+    }
+
+    #[test]
+    fn vpn_credentials_validate_private_key_address_and_peer_presence() {
+        let mut credentials = base_vpn_credentials();
+        credentials.private_key = "short".into();
+        assert_error_message!(
+            validate_vpn_credentials(&credentials),
+            InvalidPrivateKey,
+            "Private key must be 44 characters (base64 encoded), got 5"
+        );
+
+        credentials.private_key = VALID_WIREGUARD_KEY.into();
+        credentials.address = "10.0.0.2".into();
+        assert_error_message!(
+            validate_vpn_credentials(&credentials),
+            InvalidAddress,
+            "Invalid CIDR notation '10.0.0.2' (must be 'address/prefix')"
+        );
+
+        credentials.address = "10.0.0.2/24".into();
+        credentials.peers.clear();
+        assert_error_message!(
+            validate_vpn_credentials(&credentials),
+            InvalidPeers,
+            "VPN must have at least one peer configured"
+        );
+    }
+
+    #[test]
+    fn vpn_credentials_prefix_peer_errors_with_index() {
+        let mut credentials = base_vpn_credentials();
+        credentials.peers[0].public_key = "short".into();
+        assert_error_message!(
+            validate_vpn_credentials(&credentials),
+            InvalidPublicKey,
+            "Peer 0: Peer public key must be 44 characters (base64 encoded), got 5"
+        );
+
+        credentials.peers[0].public_key = VALID_WIREGUARD_KEY.into();
+        credentials.peers[0].gateway.clear();
+        assert_error_message!(
+            validate_vpn_credentials(&credentials),
+            InvalidGateway,
+            "Peer 0: Peer gateway cannot be empty"
+        );
+
+        credentials.peers[0].gateway = "vpn.example.com:0".into();
+        assert_error_message!(
+            validate_vpn_credentials(&credentials),
+            InvalidGateway,
+            "Peer 0: Port number in gateway 'vpn.example.com:0' cannot be 0"
+        );
+
+        credentials.peers[0].gateway = "2001:db8::1:51820".into();
+        assert_error_message!(
+            validate_vpn_credentials(&credentials),
+            InvalidGateway,
+            "Peer 0: Peer IPv6 gateway must use '[address]:port' format, got '2001:db8::1:51820'"
+        );
+
+        credentials.peers[0].gateway = "[2001:db8::1]:51820".into();
+        credentials.peers[0].allowed_ips.clear();
+        assert_error_message!(
+            validate_vpn_credentials(&credentials),
+            InvalidPeers,
+            "Peer 0: Peer must have at least one allowed IP range"
+        );
+
+        credentials.peers[0].allowed_ips = vec!["0.0.0.0/0".into()];
+        credentials.peers[0].persistent_keepalive = Some(0);
+        assert_error_message!(
+            validate_vpn_credentials(&credentials),
+            InvalidPeers,
+            "Peer 0: Persistent keepalive must be greater than 0 if specified"
+        );
+
+        credentials.peers[0].persistent_keepalive = Some(65_536);
+        assert_error_message!(
+            validate_vpn_credentials(&credentials),
+            InvalidPeers,
+            "Peer 0: Persistent keepalive too large: 65536 (max 65535)"
+        );
+    }
+
+    #[test]
+    fn vpn_credentials_validate_optional_dns_and_mtu() {
+        let mut credentials = base_vpn_credentials();
+        credentials.dns = Some(Vec::new());
+        assert_error_message!(
+            validate_vpn_credentials(&credentials),
+            InvalidAddress,
+            "DNS server list cannot be empty if provided"
+        );
+
+        credentials.dns = Some(vec!["not-an-ip".into()]);
+        assert_error_message!(
+            validate_vpn_credentials(&credentials),
+            InvalidAddress,
+            "Invalid IPv4 address 'not-an-ip' (must have 4 octets)"
+        );
+
+        credentials.dns = Some(vec!["1.1.1.1".into(), "2001:4860:4860::8888".into()]);
+        credentials.mtu = Some(575);
+        assert_error_message!(
+            validate_vpn_credentials(&credentials),
+            InvalidAddress,
+            "MTU too small: 575 (minimum 576)"
+        );
+
+        credentials.mtu = Some(9001);
+        assert_error_message!(
+            validate_vpn_credentials(&credentials),
+            InvalidAddress,
+            "MTU too large: 9001 (maximum 9000)"
+        );
     }
 
     #[test]
@@ -1193,22 +1602,43 @@ mod tests {
 
     #[test]
     fn test_validate_bluetooth_address_invalid_format() {
-        assert!(validate_bluetooth_address("00-1A-7D-DA-71-13").is_err());
-        assert!(validate_bluetooth_address("001A7DDA7113").is_err());
-        assert!(validate_bluetooth_address("00:1A:7D:DA:711:3").is_err());
+        for address in ["00-1A-7D-DA-71-13", "001A7DDA7113"] {
+            assert_error_message!(
+                validate_bluetooth_address(address),
+                InvalidAddress,
+                format!("Invalid Bluetooth Address '{address}' (must have 6 segments)")
+            );
+        }
+        assert_error_message!(
+            validate_bluetooth_address("00:1A:7D:DA:711:3"),
+            InvalidAddress,
+            "Invalid segment '711' in Bluetooth Address '00:1A:7D:DA:711:3' (must be 2 characters)"
+        );
     }
 
     #[test]
     fn test_validate_bluetooth_address_invalid_char() {
-        assert!(validate_bluetooth_address("00:1A:7D:DA:71:GG").is_err());
-        assert!(validate_bluetooth_address("00:1A:7D:DA:71:!!").is_err());
+        for segment in ["GG", "!!"] {
+            let address = format!("00:1A:7D:DA:71:{segment}");
+            assert_error_message!(
+                validate_bluetooth_address(&address),
+                InvalidAddress,
+                format!(
+                    "Invalid segment '{segment}' in Bluetooth Address '{address}' (must be hex digits)"
+                )
+            );
+        }
     }
 
     #[test]
     fn test_validate_bluetooth_address_invalid_length() {
-        assert!(validate_bluetooth_address("00:1A:7D").is_err());
-        assert!(validate_bluetooth_address("00:1A:7D:DA:71:13:FF").is_err());
-        assert!(validate_bluetooth_address("").is_err());
+        for address in ["00:1A:7D", "00:1A:7D:DA:71:13:FF", ""] {
+            assert_error_message!(
+                validate_bluetooth_address(address),
+                InvalidAddress,
+                format!("Invalid Bluetooth Address '{address}' (must have 6 segments)")
+            );
+        }
     }
 
     fn base_openvpn_config() -> OpenVpnConfig {
@@ -1223,31 +1653,63 @@ mod tests {
     #[test]
     fn test_validate_openvpn_empty_name() {
         let config = OpenVpnConfig::new("", "vpn.example.com", 1194, false);
-        assert!(validate_openvpn_config(&config).is_err());
+        assert_error_message!(
+            validate_openvpn_config(&config),
+            InvalidAddress,
+            "Connection name cannot be empty"
+        );
     }
 
     #[test]
     fn test_validate_openvpn_whitespace_name() {
         let config = OpenVpnConfig::new("   ", "vpn.example.com", 1194, false);
-        assert!(validate_openvpn_config(&config).is_err());
+        assert_error_message!(
+            validate_openvpn_config(&config),
+            InvalidAddress,
+            "Connection name cannot be only whitespace"
+        );
     }
 
     #[test]
     fn test_validate_openvpn_empty_remote() {
         let config = OpenVpnConfig::new("MyVPN", "", 1194, false);
-        assert!(validate_openvpn_config(&config).is_err());
+        assert_error_message!(
+            validate_openvpn_config(&config),
+            InvalidGateway,
+            "OpenVPN remote server cannot be empty"
+        );
     }
 
     #[test]
     fn test_validate_openvpn_whitespace_remote() {
         let config = OpenVpnConfig::new("MyVPN", "   ", 1194, false);
-        assert!(validate_openvpn_config(&config).is_err());
+        assert_error_message!(
+            validate_openvpn_config(&config),
+            InvalidGateway,
+            "OpenVPN remote server cannot be empty"
+        );
     }
 
     #[test]
     fn test_validate_openvpn_password_auth_missing_username() {
         let config = base_openvpn_config().with_auth_type(OpenVpnAuthType::Password);
-        assert!(validate_openvpn_config(&config).is_err());
+        assert_error_message!(
+            validate_openvpn_config(&config),
+            InvalidAddress,
+            "Username is required for password authentication"
+        );
+    }
+
+    #[test]
+    fn test_validate_openvpn_password_auth_rejects_whitespace_username() {
+        let config = base_openvpn_config()
+            .with_auth_type(OpenVpnAuthType::Password)
+            .with_username("   ");
+        assert_error_message!(
+            validate_openvpn_config(&config),
+            InvalidAddress,
+            "Username is required for password authentication"
+        );
     }
 
     #[test]
@@ -1261,7 +1723,11 @@ mod tests {
     #[test]
     fn test_validate_openvpn_tls_auth_missing_certs() {
         let config = base_openvpn_config().with_auth_type(OpenVpnAuthType::Tls);
-        assert!(validate_openvpn_config(&config).is_err());
+        assert_error_message!(
+            validate_openvpn_config(&config),
+            InvalidAddress,
+            "CA certificate path is required for TLS authentication"
+        );
     }
 
     #[test]
@@ -1269,7 +1735,11 @@ mod tests {
         let config = base_openvpn_config()
             .with_auth_type(OpenVpnAuthType::Tls)
             .with_ca_cert("/path/to/ca.crt");
-        assert!(validate_openvpn_config(&config).is_err());
+        assert_error_message!(
+            validate_openvpn_config(&config),
+            InvalidAddress,
+            "Client certificate path is required for TLS authentication"
+        );
     }
 
     #[test]
@@ -1289,7 +1759,11 @@ mod tests {
             .with_ca_cert("/path/to/ca.crt")
             .with_client_cert("/path/to/client.crt")
             .with_client_key("/path/to/client.key");
-        assert!(validate_openvpn_config(&config).is_err());
+        assert_error_message!(
+            validate_openvpn_config(&config),
+            InvalidAddress,
+            "Username is required for password+TLS authentication"
+        );
     }
 
     #[test]
@@ -1297,7 +1771,11 @@ mod tests {
         let config = base_openvpn_config()
             .with_auth_type(OpenVpnAuthType::PasswordTls)
             .with_username("user");
-        assert!(validate_openvpn_config(&config).is_err());
+        assert_error_message!(
+            validate_openvpn_config(&config),
+            InvalidAddress,
+            "CA certificate path is required for TLS authentication"
+        );
     }
 
     #[test]
@@ -1320,13 +1798,21 @@ mod tests {
     #[test]
     fn test_validate_openvpn_empty_cert_path_provided() {
         let config = base_openvpn_config().with_ca_cert("");
-        assert!(validate_openvpn_config(&config).is_err());
+        assert_error_message!(
+            validate_openvpn_config(&config),
+            InvalidAddress,
+            "CA certificate path cannot be empty if provided"
+        );
     }
 
     #[test]
     fn test_validate_openvpn_whitespace_cert_path() {
         let config = base_openvpn_config().with_client_cert("   ");
-        assert!(validate_openvpn_config(&config).is_err());
+        assert_error_message!(
+            validate_openvpn_config(&config),
+            InvalidAddress,
+            "Client certificate path cannot be empty if provided"
+        );
     }
 
     #[test]
@@ -1338,25 +1824,41 @@ mod tests {
     #[test]
     fn test_validate_openvpn_empty_dns_list() {
         let config = base_openvpn_config().with_dns(vec![]);
-        assert!(validate_openvpn_config(&config).is_err());
+        assert_error_message!(
+            validate_openvpn_config(&config),
+            InvalidAddress,
+            "DNS server list cannot be empty if provided"
+        );
     }
 
     #[test]
     fn test_validate_openvpn_invalid_dns() {
         let config = base_openvpn_config().with_dns(vec!["not-an-ip".into()]);
-        assert!(validate_openvpn_config(&config).is_err());
+        assert_error_message!(
+            validate_openvpn_config(&config),
+            InvalidAddress,
+            "Invalid IPv4 address 'not-an-ip' (must have 4 octets)"
+        );
     }
 
     #[test]
     fn test_validate_openvpn_mtu_too_small() {
         let config = base_openvpn_config().with_mtu(100);
-        assert!(validate_openvpn_config(&config).is_err());
+        assert_error_message!(
+            validate_openvpn_config(&config),
+            InvalidAddress,
+            "MTU too small: 100 (minimum 576)"
+        );
     }
 
     #[test]
     fn test_validate_openvpn_mtu_too_large() {
         let config = base_openvpn_config().with_mtu(10000);
-        assert!(validate_openvpn_config(&config).is_err());
+        assert_error_message!(
+            validate_openvpn_config(&config),
+            InvalidAddress,
+            "MTU too large: 10000 (maximum 9000)"
+        );
     }
 
     #[test]
@@ -1386,7 +1888,11 @@ mod tests {
             password: None,
             retry: false,
         });
-        assert!(validate_openvpn_config(&config).is_err());
+        assert_error_message!(
+            validate_openvpn_config(&config),
+            InvalidAddress,
+            "Proxy server address cannot be empty"
+        );
     }
 
     #[test]
@@ -1408,7 +1914,80 @@ mod tests {
             port: 1080,
             retry: false,
         });
-        assert!(validate_openvpn_config(&config).is_err());
+        assert_error_message!(
+            validate_openvpn_config(&config),
+            InvalidAddress,
+            "Proxy server address cannot be empty"
+        );
+    }
+
+    #[test]
+    fn openvpn_routes_validate_destination_prefix_and_next_hop() {
+        let empty = base_openvpn_config().with_routes(vec![VpnRoute::new("", 24)]);
+        assert_error_message!(
+            validate_openvpn_config(&empty),
+            InvalidAddress,
+            "OpenVPN route destination cannot be empty"
+        );
+
+        let malformed = base_openvpn_config().with_routes(vec![VpnRoute::new("not-an-ip", 24)]);
+        assert_error_message!(
+            validate_openvpn_config(&malformed),
+            InvalidAddress,
+            "Invalid OpenVPN route destination 'not-an-ip'"
+        );
+
+        let prefix = base_openvpn_config().with_routes(vec![VpnRoute::new("10.0.0.0", 33)]);
+        assert_error_message!(
+            validate_openvpn_config(&prefix),
+            InvalidAddress,
+            "OpenVPN route prefix must be at most 32, got 33"
+        );
+
+        let next_hop = base_openvpn_config()
+            .with_routes(vec![VpnRoute::new("10.0.0.0", 24).next_hop("bad-gateway")]);
+        assert_error_message!(
+            validate_openvpn_config(&next_hop),
+            InvalidAddress,
+            "Invalid IPv4 address 'bad-gateway' (must have 4 octets)"
+        );
+
+        let valid = base_openvpn_config().with_routes(vec![
+            VpnRoute::new("10.0.0.0", 24)
+                .next_hop("192.168.1.1")
+                .metric(10),
+        ]);
+        assert!(validate_openvpn_config(&valid).is_ok());
+    }
+
+    #[test]
+    fn openvpn_timers_reject_zero_with_directive_specific_error() {
+        let cases = [
+            ("ping", base_openvpn_config().with_ping(0)),
+            ("ping-exit", base_openvpn_config().with_ping_exit(0)),
+            ("ping-restart", base_openvpn_config().with_ping_restart(0)),
+            ("reneg-sec", base_openvpn_config().with_reneg_seconds(0)),
+            (
+                "connect-timeout",
+                base_openvpn_config().with_connect_timeout(0),
+            ),
+        ];
+
+        for (label, config) in cases {
+            assert_error_message!(
+                validate_openvpn_config(&config),
+                InvalidAddress,
+                format!("{label} must be greater than 0 if set")
+            );
+        }
+
+        let valid = base_openvpn_config()
+            .with_ping(1)
+            .with_ping_exit(1)
+            .with_ping_restart(1)
+            .with_reneg_seconds(1)
+            .with_connect_timeout(1);
+        assert!(validate_openvpn_config(&valid).is_ok());
     }
 
     #[test]
@@ -1445,21 +2024,33 @@ mod tests {
 
     #[test]
     fn test_validate_bssid_too_short() {
-        assert!(validate_bssid("AA:BB:CC:DD:EE").is_err());
+        assert_error_message!(
+            validate_bssid("AA:BB:CC:DD:EE"),
+            InvalidBssid,
+            "AA:BB:CC:DD:EE"
+        );
     }
 
     #[test]
     fn test_validate_bssid_empty() {
-        assert!(validate_bssid("").is_err());
+        assert_error_message!(validate_bssid(""), InvalidBssid, "");
     }
 
     #[test]
     fn test_validate_bssid_unicode() {
-        assert!(validate_bssid("AA:BB:CC:DD:EE:ÀÀ").is_err());
+        assert_error_message!(
+            validate_bssid("AA:BB:CC:DD:EE:ÀÀ"),
+            InvalidBssid,
+            "AA:BB:CC:DD:EE:ÀÀ"
+        );
     }
 
     #[test]
     fn test_validate_bssid_invalid_segment() {
-        assert!(validate_bssid("GG:BB:CC:DD:EE:FF").is_err());
+        assert_error_message!(
+            validate_bssid("GG:BB:CC:DD:EE:FF"),
+            InvalidBssid,
+            "GG:BB:CC:DD:EE:FF"
+        );
     }
 }

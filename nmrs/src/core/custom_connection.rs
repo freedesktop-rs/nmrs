@@ -190,6 +190,30 @@ mod tests {
         settings
     }
 
+    fn sample_bluetooth_settings(
+        bdaddr: Option<Value<'static>>,
+    ) -> HashMap<&'static str, HashMap<&'static str, Value<'static>>> {
+        let mut connection = HashMap::new();
+        connection.insert("type", Value::from("bluetooth"));
+
+        let mut bluetooth = HashMap::new();
+        if let Some(bdaddr) = bdaddr {
+            bluetooth.insert("bdaddr", bdaddr);
+        }
+
+        HashMap::from([("connection", connection), ("bluetooth", bluetooth)])
+    }
+
+    fn assert_invalid_input(error: ConnectionError, expected_field: &str, expected_reason: &str) {
+        match error {
+            ConnectionError::InvalidInput { field, reason } => {
+                assert_eq!(field, expected_field);
+                assert_eq!(reason, expected_reason);
+            }
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
+    }
+
     #[test]
     fn connection_type_from_settings_reads_type_field() {
         let settings = sample_wifi_settings();
@@ -200,10 +224,80 @@ mod tests {
     }
 
     #[test]
-    fn connection_type_from_settings_requires_type_field() {
-        let settings = HashMap::new();
-        let err = connection_type_from_settings(&settings).unwrap_err();
-        assert!(matches!(err, ConnectionError::InvalidInput { .. }));
+    fn connection_type_from_settings_rejects_every_missing_or_wrong_type_shape() {
+        let no_connection = HashMap::new();
+        assert_invalid_input(
+            connection_type_from_settings(&no_connection).unwrap_err(),
+            "connection.type",
+            "settings dictionary is missing connection.type",
+        );
+
+        let no_type = HashMap::from([("connection", HashMap::new())]);
+        assert_invalid_input(
+            connection_type_from_settings(&no_type).unwrap_err(),
+            "connection.type",
+            "settings dictionary is missing connection.type",
+        );
+
+        let wrong_type =
+            HashMap::from([("connection", HashMap::from([("type", Value::from(42u32))]))]);
+        assert_invalid_input(
+            connection_type_from_settings(&wrong_type).unwrap_err(),
+            "connection.type",
+            "settings dictionary is missing connection.type",
+        );
+    }
+
+    #[test]
+    fn expected_device_type_maps_supported_and_virtual_connection_types() {
+        assert_eq!(
+            expected_device_type("802-11-wireless"),
+            Some(device_type::WIFI)
+        );
+        assert_eq!(
+            expected_device_type("802-3-ethernet"),
+            Some(device_type::ETHERNET)
+        );
+        assert_eq!(
+            expected_device_type("bluetooth"),
+            Some(device_type::BLUETOOTH)
+        );
+        assert_eq!(expected_device_type("vpn"), None);
+        assert_eq!(expected_device_type("wireguard"), None);
+        assert_eq!(expected_device_type("unknown"), None);
+    }
+
+    #[test]
+    fn bluetooth_bdaddr_from_settings_reads_address() {
+        let settings = sample_bluetooth_settings(Some(Value::from("00:1A:7D:DA:71:13")));
+        assert_eq!(
+            bluetooth_bdaddr_from_settings(&settings).unwrap(),
+            "00:1A:7D:DA:71:13"
+        );
+    }
+
+    #[test]
+    fn bluetooth_bdaddr_from_settings_rejects_missing_and_wrong_type_values() {
+        let no_section = sample_wifi_settings();
+        assert_invalid_input(
+            bluetooth_bdaddr_from_settings(&no_section).unwrap_err(),
+            "bluetooth.bdaddr",
+            "bluetooth settings are missing bdaddr",
+        );
+
+        let no_address = sample_bluetooth_settings(None);
+        assert_invalid_input(
+            bluetooth_bdaddr_from_settings(&no_address).unwrap_err(),
+            "bluetooth.bdaddr",
+            "bluetooth settings are missing bdaddr",
+        );
+
+        let wrong_type = sample_bluetooth_settings(Some(Value::from(42u32)));
+        assert_invalid_input(
+            bluetooth_bdaddr_from_settings(&wrong_type).unwrap_err(),
+            "bluetooth.bdaddr",
+            "bluetooth settings are missing bdaddr",
+        );
     }
 
     #[test]
@@ -220,5 +314,40 @@ mod tests {
             resolve_specific_object(&settings, Some("/org/freedesktop/NetworkManager/Devices/3"))
                 .unwrap();
         assert_eq!(path.as_str(), "/org/freedesktop/NetworkManager/Devices/3");
+    }
+
+    #[test]
+    fn resolve_specific_object_rejects_invalid_explicit_path() {
+        let settings = sample_wifi_settings();
+        let error = resolve_specific_object(&settings, Some("not/an/object/path")).unwrap_err();
+
+        match error {
+            ConnectionError::InvalidInput { field, reason } => {
+                assert_eq!(field, "specific_object");
+                assert!(
+                    !reason.is_empty(),
+                    "zvariant should explain the invalid path"
+                );
+            }
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_specific_object_derives_bluez_device_path() {
+        let settings = sample_bluetooth_settings(Some(Value::from("00:1A:7D:DA:71:13")));
+        let path = resolve_specific_object(&settings, None).unwrap();
+
+        assert_eq!(path.as_str(), "/org/bluez/hci0/dev_00_1A_7D_DA_71_13");
+    }
+
+    #[test]
+    fn resolve_specific_object_requires_bluetooth_address() {
+        let settings = sample_bluetooth_settings(None);
+        assert_invalid_input(
+            resolve_specific_object(&settings, None).unwrap_err(),
+            "bluetooth.bdaddr",
+            "bluetooth settings are missing bdaddr",
+        );
     }
 }

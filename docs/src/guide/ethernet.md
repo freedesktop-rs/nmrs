@@ -1,6 +1,6 @@
 # Ethernet Management
 
-nmrs supports wired (Ethernet) connections through NetworkManager. Ethernet connections are simpler than Wi-Fi since they don't require authentication in most cases.
+nmrs supports wired (Ethernet) connections through NetworkManager. Ethernet connections are simpler than Wi-Fi since they don't require authentication in most cases. NetworkManager `veth` devices are included in these wired APIs and treated as Ethernet devices.
 
 ## Connecting
 

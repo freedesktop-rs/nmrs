@@ -702,21 +702,54 @@ mod tests {
             .username("user")
     }
 
+    fn assert_stored_material(
+        path: Option<String>,
+        connection_name: &str,
+        filename: &str,
+        expected: &str,
+    ) {
+        let path = std::path::PathBuf::from(path.expect("stored material path"));
+        assert!(path.is_absolute());
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some(filename)
+        );
+        assert_eq!(
+            path.parent()
+                .and_then(std::path::Path::file_name)
+                .and_then(|name| name.to_str()),
+            Some(connection_name)
+        );
+        assert_eq!(std::fs::read_to_string(path).unwrap(), expected);
+    }
+
     #[test]
     fn builds_tls_connection() {
-        let config = tls_builder().build();
-        assert!(config.is_ok());
-        let config = config.unwrap();
+        let config = tls_builder().build().unwrap();
         assert_eq!(config.name, "TestVPN");
         assert_eq!(config.remote, "vpn.example.com");
         assert_eq!(config.port, 1194);
         assert!(!config.tcp);
+        assert_eq!(config.auth_type, Some(OpenVpnAuthType::Tls));
+        assert_eq!(config.ca_cert.as_deref(), Some("/etc/openvpn/ca.crt"));
+        assert_eq!(
+            config.client_cert.as_deref(),
+            Some("/etc/openvpn/client.crt")
+        );
+        assert_eq!(
+            config.client_key.as_deref(),
+            Some("/etc/openvpn/client.key")
+        );
     }
 
     #[test]
     fn builds_password_connection() {
-        let config = password_builder().build();
-        assert!(config.is_ok());
+        let config = password_builder().build().unwrap();
+        assert_eq!(config.auth_type, Some(OpenVpnAuthType::Password));
+        assert_eq!(config.username.as_deref(), Some("user"));
+        assert!(config.ca_cert.is_none());
+        assert!(config.client_cert.is_none());
+        assert!(config.client_key.is_none());
     }
 
     #[test]
@@ -728,8 +761,19 @@ mod tests {
             .ca_cert("/etc/openvpn/ca.crt")
             .client_cert("/etc/openvpn/client.crt")
             .client_key("/etc/openvpn/client.key")
-            .build();
-        assert!(config.is_ok());
+            .build()
+            .unwrap();
+        assert_eq!(config.auth_type, Some(OpenVpnAuthType::PasswordTls));
+        assert_eq!(config.username.as_deref(), Some("user"));
+        assert_eq!(config.ca_cert.as_deref(), Some("/etc/openvpn/ca.crt"));
+        assert_eq!(
+            config.client_cert.as_deref(),
+            Some("/etc/openvpn/client.crt")
+        );
+        assert_eq!(
+            config.client_key.as_deref(),
+            Some("/etc/openvpn/client.key")
+        );
     }
 
     #[test]
@@ -738,7 +782,11 @@ mod tests {
             .remote("vpn.example.com")
             .auth_type(OpenVpnAuthType::StaticKey)
             .build();
-        assert!(matches!(result.unwrap_err(), ConnectionError::VpnFailed(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            ConnectionError::VpnFailed(message)
+                if message == "StaticKey auth validation is not yet implemented"
+        ));
     }
 
     #[test]
@@ -765,7 +813,7 @@ mod tests {
         assert_eq!(config.auth, Some("SHA256".into()));
         assert_eq!(config.cipher, Some("AES-256-GCM".into()));
         assert_eq!(config.mtu, Some(1400));
-        assert!(config.dns.is_some());
+        assert_eq!(config.dns, Some(vec!["1.1.1.1".to_string()]));
     }
 
     #[test]
@@ -789,7 +837,16 @@ mod tests {
             })
             .build()
             .unwrap();
-        assert!(config.proxy.is_some());
+        assert_eq!(
+            config.proxy,
+            Some(OpenVpnProxy::Http {
+                server: "proxy.example.com".into(),
+                port: 8080,
+                username: None,
+                password: None,
+                retry: false,
+            })
+        );
     }
 
     #[test]
@@ -801,7 +858,11 @@ mod tests {
             .client_cert("/etc/openvpn/client.crt")
             .client_key("/etc/openvpn/client.key")
             .build();
-        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ConnectionError::InvalidAddress(message)
+                if message == "Connection name cannot be empty"
+        ));
     }
 
     #[test]
@@ -814,7 +875,7 @@ mod tests {
             .build();
         assert!(matches!(
             result.unwrap_err(),
-            ConnectionError::InvalidGateway(_)
+            ConnectionError::InvalidGateway(message) if message == "remote must be set"
         ));
     }
 
@@ -829,7 +890,7 @@ mod tests {
             .build();
         assert!(matches!(
             result.unwrap_err(),
-            ConnectionError::InvalidGateway(_)
+            ConnectionError::InvalidGateway(message) if message == "remote must not be empty"
         ));
     }
 
@@ -838,7 +899,8 @@ mod tests {
         let result = tls_builder().port(0).build();
         assert!(matches!(
             result.unwrap_err(),
-            ConnectionError::InvalidGateway(_)
+            ConnectionError::InvalidGateway(message)
+                if message == "port must be between 1 and 65535"
         ));
     }
 
@@ -847,7 +909,10 @@ mod tests {
         let result = OpenVpnBuilder::new("TestVPN")
             .remote("vpn.example.com")
             .build();
-        assert!(matches!(result.unwrap_err(), ConnectionError::VpnFailed(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            ConnectionError::VpnFailed(message) if message == "auth_type must be set"
+        ));
     }
 
     #[test]
@@ -856,7 +921,11 @@ mod tests {
             .remote("vpn.example.com")
             .auth_type(OpenVpnAuthType::Password)
             .build();
-        assert!(matches!(result.unwrap_err(), ConnectionError::VpnFailed(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            ConnectionError::VpnFailed(message)
+                if message == "username is required for Password and PasswordTls auth"
+        ));
     }
 
     #[test]
@@ -868,7 +937,11 @@ mod tests {
             .client_cert("/etc/openvpn/client.crt")
             .client_key("/etc/openvpn/client.key")
             .build();
-        assert!(matches!(result.unwrap_err(), ConnectionError::VpnFailed(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            ConnectionError::VpnFailed(message)
+                if message == "username is required for Password and PasswordTls auth"
+        ));
     }
 
     #[test]
@@ -879,7 +952,11 @@ mod tests {
             .client_cert("/etc/openvpn/client.crt")
             .client_key("/etc/openvpn/client.key")
             .build();
-        assert!(matches!(result.unwrap_err(), ConnectionError::VpnFailed(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            ConnectionError::VpnFailed(message)
+                if message == "ca_cert is required for Tls and PasswordTls auth"
+        ));
     }
 
     #[test]
@@ -890,7 +967,11 @@ mod tests {
             .ca_cert("/etc/openvpn/ca.crt")
             .client_key("/etc/openvpn/client.key")
             .build();
-        assert!(matches!(result.unwrap_err(), ConnectionError::VpnFailed(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            ConnectionError::VpnFailed(message)
+                if message == "client_cert is required for Tls and PasswordTls auth"
+        ));
     }
 
     #[test]
@@ -901,7 +982,11 @@ mod tests {
             .ca_cert("/etc/openvpn/ca.crt")
             .client_cert("/etc/openvpn/client.crt")
             .build();
-        assert!(matches!(result.unwrap_err(), ConnectionError::VpnFailed(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            ConnectionError::VpnFailed(message)
+                if message == "client_key is required for Tls and PasswordTls auth"
+        ));
     }
 
     // --- from_ovpn_str tests ---
@@ -963,14 +1048,24 @@ FAKEKEY
             let builder = OpenVpnBuilder::from_ovpn_str(ovpn, "inline-test").unwrap();
             let config = builder.build().unwrap();
             assert_eq!(config.auth_type, Some(OpenVpnAuthType::Tls));
-
-            let ca = config.ca_cert.unwrap();
-            assert!(
-                std::path::Path::new(&ca).exists(),
-                "CA cert should be written to disk: {ca}"
+            assert_stored_material(
+                config.ca_cert,
+                "inline-test",
+                "ca.pem",
+                "-----BEGIN CERTIFICATE-----\nFAKECA\n-----END CERTIFICATE-----\n",
             );
-            assert!(config.client_cert.is_some());
-            assert!(config.client_key.is_some());
+            assert_stored_material(
+                config.client_cert,
+                "inline-test",
+                "cert.pem",
+                "-----BEGIN CERTIFICATE-----\nFAKECERT\n-----END CERTIFICATE-----\n",
+            );
+            assert_stored_material(
+                config.client_key,
+                "inline-test",
+                "key.pem",
+                "-----BEGIN PRIVATE KEY-----\nFAKEKEY\n-----END PRIVATE KEY-----\n",
+            );
         });
     }
 
@@ -1006,7 +1101,12 @@ FAKEKEY
 ";
             let builder = OpenVpnBuilder::from_ovpn_str(ovpn, "inline-ta").unwrap();
             let config = builder.build().unwrap();
-            assert!(config.tls_auth_key.is_some());
+            assert_stored_material(
+                config.tls_auth_key,
+                "inline-ta",
+                "ta.key",
+                "-----BEGIN OpenVPN Static key V1-----\nFAKEKEY\n-----END OpenVPN Static key V1-----\n",
+            );
             assert_eq!(config.tls_auth_direction, Some(0));
         });
     }
@@ -1058,7 +1158,7 @@ key /etc/openvpn/client.key
             .unwrap();
         assert_eq!(config.port, 443);
         assert!(config.tcp);
-        assert!(config.dns.is_some());
+        assert_eq!(config.dns, Some(vec!["1.1.1.1".to_string()]));
     }
 
     #[test]
@@ -1067,7 +1167,7 @@ key /etc/openvpn/client.key
         let result = OpenVpnBuilder::from_ovpn_str(ovpn, "test-fail");
         assert!(matches!(
             result.unwrap_err(),
-            ConnectionError::InvalidGateway(_)
+            ConnectionError::InvalidGateway(message) if message == "no remote in .ovpn file"
         ));
     }
 

@@ -187,6 +187,9 @@ pub fn build_openvpn_connection(
     if let Some(p) = opts.autoconnect_priority {
         connection.insert("autoconnect-priority", Value::from(p));
     }
+    if let Some(retries) = opts.autoconnect_retries {
+        connection.insert("autoconnect-retries", Value::from(retries));
+    }
 
     let mut vpn_data: Vec<(String, String)> = Vec::new();
 
@@ -363,8 +366,7 @@ pub fn build_openvpn_connection(
         ipv4.insert("route-data", Value::from(route_data));
     }
     if let Some(dns) = &config.dns {
-        let dns_array: Vec<Value> = dns.iter().map(|s| Value::from(s.clone())).collect();
-        ipv4.insert("dns", Value::from(dns_array));
+        ipv4.insert("dns-data", Value::from(dns.clone()));
     }
 
     let mut ipv6: HashMap<&'static str, Value<'static>> = HashMap::new();
@@ -409,19 +411,34 @@ mod tests {
         ConnectionOptions::new(false)
     }
 
-    #[test]
-    fn builds_wireguard_connection() {
-        let creds = create_test_credentials();
-        let opts = create_test_options();
+    fn address_data(address: &str, prefix: u32) -> Value<'static> {
+        let mut entry = HashMap::new();
+        entry.insert("address".to_string(), Value::from(address.to_string()));
+        entry.insert("prefix".to_string(), Value::from(prefix));
+        Value::from(vec![entry])
+    }
 
-        let settings = build_wireguard_connection(&creds, &opts);
-        assert!(settings.is_ok());
-
-        let settings = settings.unwrap();
-        assert!(settings.contains_key("connection"));
-        assert!(settings.contains_key("wireguard"));
-        assert!(settings.contains_key("ipv4"));
-        assert!(settings.contains_key("ipv6"));
+    fn peer_string_array(peer: &Dict<'_, '_>, key: &str) -> Vec<String> {
+        let value = peer
+            .iter()
+            .find_map(|(candidate, value)| {
+                matches!(candidate, Value::Str(candidate) if candidate.as_str() == key)
+                    .then_some(value)
+            })
+            .unwrap_or_else(|| panic!("missing peer property {key}"));
+        let Value::Value(value) = value else {
+            panic!("peer property {key} must be stored as a variant");
+        };
+        let Value::Array(values) = value.as_ref() else {
+            panic!("peer property {key} must be an array");
+        };
+        values
+            .iter()
+            .map(|value| match value {
+                Value::Str(value) => value.as_str().to_string(),
+                _ => panic!("peer property {key} entries must be strings"),
+            })
+            .collect()
     }
 
     #[test]
@@ -478,55 +495,22 @@ mod tests {
     }
 
     #[test]
-    fn rejects_empty_peers() {
-        let mut creds = create_test_credentials();
-        creds.peers = vec![];
-        let opts = create_test_options();
-
-        let result = build_wireguard_connection(&creds, &opts);
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ConnectionError::InvalidPeers(_)
-        ));
-    }
-
-    #[test]
-    fn rejects_invalid_address_format() {
-        let mut creds = create_test_credentials();
-        creds.address = "invalid".into();
-        let opts = create_test_options();
-
-        let result = build_wireguard_connection(&creds, &opts);
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ConnectionError::InvalidAddress(_)
-        ));
-    }
-
-    #[test]
-    fn rejects_address_without_cidr() {
-        let mut creds = create_test_credentials();
-        creds.address = "10.0.0.2".into();
-        let opts = create_test_options();
-
-        let result = build_wireguard_connection(&creds, &opts);
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ConnectionError::InvalidAddress(_)
-        ));
-    }
-
-    #[test]
     fn accepts_ipv6_address() {
         let mut creds = create_test_credentials();
         creds.address = "fd00::2/64".into();
         let opts = create_test_options();
 
-        let result = build_wireguard_connection(&creds, &opts);
-        assert!(result.is_ok());
+        let settings = build_wireguard_connection(&creds, &opts).unwrap();
+        assert_eq!(
+            settings["ipv4"].get("method"),
+            Some(&Value::from("disabled"))
+        );
+        assert!(!settings["ipv4"].contains_key("address-data"));
+        assert_eq!(settings["ipv6"].get("method"), Some(&Value::from("manual")));
+        assert_eq!(
+            settings["ipv6"].get("address-data"),
+            Some(&address_data("fd00::2", 64))
+        );
     }
 
     #[test]
@@ -542,8 +526,85 @@ mod tests {
         creds.peers.push(extra_peer);
         let opts = create_test_options();
 
-        let result = build_wireguard_connection(&creds, &opts);
-        assert!(result.is_ok());
+        let settings = build_wireguard_connection(&creds, &opts).unwrap();
+        let peers = settings["wireguard"].get("peers").unwrap();
+        assert_eq!(peers.value_signature().to_string(), "aa{sv}");
+        let Value::Array(peers) = peers else {
+            panic!("wireguard.peers must be an array");
+        };
+        let peers = peers.iter().collect::<Vec<_>>();
+        assert_eq!(peers.len(), 2);
+        assert_eq!(peers[0].value_signature().to_string(), "a{sv}");
+        assert_eq!(peers[1].value_signature().to_string(), "a{sv}");
+
+        let Value::Dict(first) = peers[0] else {
+            panic!("first wireguard peer must be a dictionary");
+        };
+        assert_eq!(
+            first
+                .get::<Value, String>(&Value::from("public-key"))
+                .unwrap()
+                .as_deref(),
+            Some("HIgo9xNzJMWLKAShlKl6/bUT1VI9Q0SDBXGtLXkPFXc=")
+        );
+        assert_eq!(
+            first
+                .get::<Value, String>(&Value::from("endpoint"))
+                .unwrap()
+                .as_deref(),
+            Some("vpn.example.com:51820")
+        );
+        assert_eq!(
+            peer_string_array(first, "allowed-ips"),
+            vec!["0.0.0.0/0".to_string()]
+        );
+        assert!(
+            first
+                .get::<Value, String>(&Value::from("preshared-key"))
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            first
+                .get::<Value, u32>(&Value::from("persistent-keepalive"))
+                .unwrap(),
+            Some(25)
+        );
+
+        let Value::Dict(second) = peers[1] else {
+            panic!("second wireguard peer must be a dictionary");
+        };
+        assert_eq!(
+            second
+                .get::<Value, String>(&Value::from("public-key"))
+                .unwrap()
+                .as_deref(),
+            Some("xScVkH3fUGUVRvGLFcjkx+GGD7cf5eBVyN3Gh4FLjmI=")
+        );
+        assert_eq!(
+            second
+                .get::<Value, String>(&Value::from("endpoint"))
+                .unwrap()
+                .as_deref(),
+            Some("peer2.example.com:51821")
+        );
+        assert_eq!(
+            peer_string_array(second, "allowed-ips"),
+            vec!["192.168.0.0/16".to_string()]
+        );
+        assert_eq!(
+            second
+                .get::<Value, String>(&Value::from("preshared-key"))
+                .unwrap()
+                .as_deref(),
+            Some("PSKABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklm=")
+        );
+        assert!(
+            second
+                .get::<Value, u32>(&Value::from("persistent-keepalive"))
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -552,8 +613,9 @@ mod tests {
         creds.dns = None;
         let opts = create_test_options();
 
-        let result = build_wireguard_connection(&creds, &opts);
-        assert!(result.is_ok());
+        let settings = build_wireguard_connection(&creds, &opts).unwrap();
+        assert!(!settings["ipv4"].contains_key("dns"));
+        assert!(!settings["ipv6"].contains_key("dns"));
     }
 
     #[test]
@@ -562,8 +624,8 @@ mod tests {
         creds.mtu = None;
         let opts = create_test_options();
 
-        let result = build_wireguard_connection(&creds, &opts);
-        assert!(result.is_ok());
+        let settings = build_wireguard_connection(&creds, &opts).unwrap();
+        assert!(!settings["wireguard"].contains_key("mtu"));
     }
 
     #[test]
@@ -574,7 +636,14 @@ mod tests {
         let settings = build_wireguard_connection(&creds, &opts).unwrap();
         let ipv4 = settings.get("ipv4").unwrap();
 
-        assert!(ipv4.contains_key("dns"));
+        assert_eq!(
+            ipv4.get("dns"),
+            Some(&Value::from(vec![
+                u32::from(std::net::Ipv4Addr::new(1, 1, 1, 1)),
+                u32::from(std::net::Ipv4Addr::new(8, 8, 8, 8)),
+            ]))
+        );
+        assert_eq!(ipv4["dns"].value_signature().to_string(), "au");
     }
 
     #[test]
@@ -583,9 +652,11 @@ mod tests {
         let opts = create_test_options();
 
         let settings = build_wireguard_connection(&creds, &opts).unwrap();
-        let ipv4 = settings.get("ipv4").unwrap();
-
-        assert!(ipv4.contains_key("mtu"));
+        assert_eq!(
+            settings["wireguard"].get("mtu"),
+            Some(&Value::from(1420u32))
+        );
+        assert!(!settings["ipv4"].contains_key("mtu"));
     }
 
     #[test]
@@ -610,7 +681,10 @@ mod tests {
         let settings = build_wireguard_connection(&creds, &opts).unwrap();
         let connection = settings.get("connection").unwrap();
 
-        assert!(connection.contains_key("autoconnect-priority"));
+        assert_eq!(
+            connection.get("autoconnect-priority"),
+            Some(&Value::from(10i32))
+        );
     }
 
     #[test]
@@ -644,8 +718,19 @@ mod tests {
         creds.peers[0].preshared_key = Some("PSKABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklm=".into());
         let opts = create_test_options();
 
-        let result = build_wireguard_connection(&creds, &opts);
-        assert!(result.is_ok());
+        let settings = build_wireguard_connection(&creds, &opts).unwrap();
+        let Value::Array(peers) = &settings["wireguard"]["peers"] else {
+            panic!("wireguard.peers must be an array");
+        };
+        let Value::Dict(peer) = peers.iter().next().unwrap() else {
+            panic!("wireguard peer must be a dictionary");
+        };
+        assert_eq!(
+            peer.get::<Value, String>(&Value::from("preshared-key"))
+                .unwrap()
+                .as_deref(),
+            Some("PSKABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklm=")
+        );
     }
 
     #[test]
@@ -654,8 +739,18 @@ mod tests {
         creds.peers[0].persistent_keepalive = None;
         let opts = create_test_options();
 
-        let result = build_wireguard_connection(&creds, &opts);
-        assert!(result.is_ok());
+        let settings = build_wireguard_connection(&creds, &opts).unwrap();
+        let Value::Array(peers) = &settings["wireguard"]["peers"] else {
+            panic!("wireguard.peers must be an array");
+        };
+        let Value::Dict(peer) = peers.iter().next().unwrap() else {
+            panic!("wireguard peer must be a dictionary");
+        };
+        assert!(
+            peer.get::<Value, u32>(&Value::from("persistent-keepalive"))
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -665,167 +760,46 @@ mod tests {
             vec!["0.0.0.0/0".into(), "::/0".into(), "192.168.1.0/24".into()];
         let opts = create_test_options();
 
-        let result = build_wireguard_connection(&creds, &opts);
-        assert!(result.is_ok());
-    }
-
-    // Validation tests
-
-    #[test]
-    fn rejects_empty_private_key() {
-        let mut creds = create_test_credentials();
-        creds.private_key = "".into();
-        let opts = create_test_options();
-
-        let result = build_wireguard_connection(&creds, &opts);
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ConnectionError::InvalidPrivateKey(_)
-        ));
-    }
-
-    #[test]
-    fn rejects_short_private_key() {
-        let mut creds = create_test_credentials();
-        creds.private_key = "tooshort".into();
-        let opts = create_test_options();
-
-        let result = build_wireguard_connection(&creds, &opts);
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ConnectionError::InvalidPrivateKey(_)
-        ));
+        let settings = build_wireguard_connection(&creds, &opts).unwrap();
+        let Value::Array(peers) = &settings["wireguard"]["peers"] else {
+            panic!("wireguard.peers must be an array");
+        };
+        let Value::Dict(peer) = peers.iter().next().unwrap() else {
+            panic!("wireguard peer must be a dictionary");
+        };
+        let allowed_ips = peer
+            .iter()
+            .find_map(|(key, value)| {
+                matches!(key, Value::Str(key) if key.as_str() == "allowed-ips").then_some(value)
+            })
+            .expect("allowed-ips peer property");
+        let Value::Value(allowed_ips) = allowed_ips else {
+            panic!("allowed-ips must be stored as a variant");
+        };
+        let Value::Array(allowed_ips) = allowed_ips.as_ref() else {
+            panic!("allowed-ips must be an array");
+        };
+        let allowed_ips = allowed_ips
+            .iter()
+            .map(|value| match value {
+                Value::Str(value) => value.as_str(),
+                _ => panic!("allowed-ips entries must be strings"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(allowed_ips, vec!["0.0.0.0/0", "::/0", "192.168.1.0/24"]);
     }
 
     #[test]
-    fn rejects_invalid_private_key_characters() {
+    fn legacy_builder_propagates_wireguard_validation_errors() {
         let mut creds = create_test_credentials();
-        creds.private_key = "this is not base64 encoded!!!!!!!!!!!!!!!!!!".into();
+        creds.peers[0].public_key = "!".repeat(44);
         let opts = create_test_options();
 
         let result = build_wireguard_connection(&creds, &opts);
-        assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            ConnectionError::InvalidPrivateKey(_)
-        ));
-    }
-
-    // Gateway validation tests for peer gateways
-    // These test that validation is properly delegated to WireGuardBuilder
-
-    #[test]
-    fn rejects_peer_with_empty_gateway() {
-        let mut creds = create_test_credentials();
-        creds.peers[0].gateway = "".into();
-        let opts = create_test_options();
-
-        let result = build_wireguard_connection(&creds, &opts);
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ConnectionError::InvalidGateway(_)
-        ));
-    }
-
-    #[test]
-    fn rejects_peer_gateway_without_port() {
-        let mut creds = create_test_credentials();
-        creds.peers[0].gateway = "vpn.example.com".into();
-        let opts = create_test_options();
-
-        let result = build_wireguard_connection(&creds, &opts);
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ConnectionError::InvalidGateway(_)
-        ));
-    }
-
-    #[test]
-    fn rejects_peer_gateway_with_invalid_port() {
-        let mut creds = create_test_credentials();
-        creds.peers[0].gateway = "vpn.example.com:99999".into();
-        let opts = create_test_options();
-
-        let result = build_wireguard_connection(&creds, &opts);
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ConnectionError::InvalidGateway(_)
-        ));
-    }
-
-    #[test]
-    fn rejects_peer_gateway_with_zero_port() {
-        let mut creds = create_test_credentials();
-        creds.peers[0].gateway = "vpn.example.com:0".into();
-        let opts = create_test_options();
-
-        let result = build_wireguard_connection(&creds, &opts);
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ConnectionError::InvalidGateway(_)
-        ));
-    }
-
-    #[test]
-    fn rejects_invalid_ipv4_address() {
-        let mut creds = create_test_credentials();
-        creds.address = "999.999.999.999/24".into();
-        let opts = create_test_options();
-
-        let result = build_wireguard_connection(&creds, &opts);
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ConnectionError::InvalidAddress(_)
-        ));
-    }
-
-    #[test]
-    fn rejects_ipv4_with_invalid_prefix() {
-        let mut creds = create_test_credentials();
-        creds.address = "10.0.0.2/999".into();
-        let opts = create_test_options();
-
-        let result = build_wireguard_connection(&creds, &opts);
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ConnectionError::InvalidAddress(_)
-        ));
-    }
-
-    #[test]
-    fn rejects_peer_with_empty_allowed_ips() {
-        let mut creds = create_test_credentials();
-        creds.peers[0].allowed_ips = vec![];
-        let opts = create_test_options();
-
-        let result = build_wireguard_connection(&creds, &opts);
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ConnectionError::InvalidPeers(_)
-        ));
-    }
-
-    #[test]
-    fn rejects_peer_with_invalid_public_key() {
-        let mut creds = create_test_credentials();
-        creds.peers[0].public_key = "invalid!@#$key".into();
-        let opts = create_test_options();
-
-        let result = build_wireguard_connection(&creds, &opts);
-        assert!(result.is_err());
-        // Should get InvalidPrivateKey error (we use same validation for both)
-        assert!(matches!(
-            result.unwrap_err(),
-            ConnectionError::InvalidPrivateKey(_)
+            ConnectionError::InvalidPublicKey(message)
+                if message == "Peer 0 public key contains invalid base64 characters"
         ));
     }
 
@@ -843,11 +817,12 @@ mod tests {
             creds.address = address.into();
             let opts = create_test_options();
 
-            let result = build_wireguard_connection(&creds, &opts);
-            assert!(
-                result.is_ok(),
-                "Should accept valid IPv4 address: {}",
-                address
+            let settings = build_wireguard_connection(&creds, &opts)
+                .unwrap_or_else(|error| panic!("valid address {address} failed: {error}"));
+            let (ip, prefix) = address.split_once('/').unwrap();
+            assert_eq!(
+                settings["ipv4"].get("address-data"),
+                Some(&address_data(ip, prefix.parse().unwrap()))
             );
         }
     }
@@ -862,11 +837,23 @@ mod tests {
 
         for gateway in test_cases {
             let mut creds = create_test_credentials();
-            creds.gateway = gateway.into();
+            creds.peers[0].gateway = gateway.into();
             let opts = create_test_options();
 
-            let result = build_wireguard_connection(&creds, &opts);
-            assert!(result.is_ok(), "Should accept valid gateway: {}", gateway);
+            let settings = build_wireguard_connection(&creds, &opts)
+                .unwrap_or_else(|error| panic!("valid gateway {gateway} failed: {error}"));
+            let Value::Array(peers) = &settings["wireguard"]["peers"] else {
+                panic!("wireguard.peers must be an array");
+            };
+            let Value::Dict(peer) = peers.iter().next().unwrap() else {
+                panic!("wireguard peer must be a dictionary");
+            };
+            assert_eq!(
+                peer.get::<Value, String>(&Value::from("endpoint"))
+                    .unwrap()
+                    .as_deref(),
+                Some(gateway)
+            );
         }
     }
 
@@ -876,19 +863,6 @@ mod tests {
             .with_ca_cert("/etc/openvpn/ca.crt")
             .with_client_cert("/etc/openvpn/client.crt")
             .with_client_key("/etc/openvpn/client.key")
-    }
-
-    #[test]
-    fn builds_openvpn_connection() {
-        let config = create_openvpn_config();
-        let opts = create_test_options();
-        let result = build_openvpn_connection(&config, &opts);
-        assert!(result.is_ok());
-        let settings = result.unwrap();
-        assert!(settings.contains_key("connection"));
-        assert!(settings.contains_key("vpn"));
-        assert!(settings.contains_key("ipv4"));
-        assert!(settings.contains_key("ipv6"));
     }
 
     #[test]
@@ -920,46 +894,31 @@ mod tests {
         let result = build_openvpn_connection(&config, &opts);
         assert!(matches!(
             result.unwrap_err(),
-            ConnectionError::InvalidGateway(_)
+            ConnectionError::InvalidGateway(message)
+                if message == "OpenVPN remote must not be empty"
         ));
     }
 
-    #[test]
-    fn openvpn_compression_no() {
-        let config = create_openvpn_config().with_compression(OpenVpnCompression::No);
-        let opts = create_test_options();
-        let settings = build_openvpn_connection(&config, &opts).unwrap();
-        let vpn = settings.get("vpn").unwrap();
-        // vpn.data is packed — just assert the section exists and no error
-        assert!(vpn.contains_key("data"));
-    }
     #[allow(deprecated)]
     #[test]
-    fn openvpn_compression_lzo() {
-        let config = create_openvpn_config().with_compression(OpenVpnCompression::Lzo);
-        let opts = create_test_options();
-        assert!(build_openvpn_connection(&config, &opts).is_ok());
-    }
+    fn openvpn_serializes_each_compression_mode() {
+        let cases = [
+            (OpenVpnCompression::No, "compress", "no"),
+            (OpenVpnCompression::Lzo, "comp-lzo", "yes"),
+            (OpenVpnCompression::Lz4, "compress", "lz4"),
+            (OpenVpnCompression::Lz4V2, "compress", "lz4-v2"),
+            (OpenVpnCompression::Yes, "compress", "yes"),
+        ];
 
-    #[test]
-    fn openvpn_compression_lz4() {
-        let config = create_openvpn_config().with_compression(OpenVpnCompression::Lz4);
-        let opts = create_test_options();
-        assert!(build_openvpn_connection(&config, &opts).is_ok());
-    }
-
-    #[test]
-    fn openvpn_compression_lz4v2() {
-        let config = create_openvpn_config().with_compression(OpenVpnCompression::Lz4V2);
-        let opts = create_test_options();
-        assert!(build_openvpn_connection(&config, &opts).is_ok());
-    }
-
-    #[test]
-    fn openvpn_compression_yes() {
-        let config = create_openvpn_config().with_compression(OpenVpnCompression::Yes);
-        let opts = create_test_options();
-        assert!(build_openvpn_connection(&config, &opts).is_ok());
+        for (compression, key, expected) in cases {
+            let config = create_openvpn_config().with_compression(compression.clone());
+            let settings = build_openvpn_connection(&config, &create_test_options()).unwrap();
+            assert_eq!(
+                get_vpn_data_value(&settings, key).as_deref(),
+                Some(expected),
+                "wrong serialized value for {compression:?}"
+            );
+        }
     }
 
     #[test]
@@ -971,8 +930,32 @@ mod tests {
             password: Some("pass".into()),
             retry: true,
         });
-        let opts = create_test_options();
-        assert!(build_openvpn_connection(&config, &opts).is_ok());
+        let settings = build_openvpn_connection(&config, &create_test_options()).unwrap();
+
+        assert_eq!(
+            get_vpn_data_value(&settings, "proxy-type").as_deref(),
+            Some("http")
+        );
+        assert_eq!(
+            get_vpn_data_value(&settings, "proxy-server").as_deref(),
+            Some("proxy.example.com")
+        );
+        assert_eq!(
+            get_vpn_data_value(&settings, "proxy-port").as_deref(),
+            Some("8080")
+        );
+        assert_eq!(
+            get_vpn_data_value(&settings, "proxy-retry").as_deref(),
+            Some("yes")
+        );
+        assert_eq!(
+            get_vpn_data_value(&settings, "http-proxy-username").as_deref(),
+            Some("user")
+        );
+        assert_eq!(
+            get_vpn_data_value(&settings, "http-proxy-password").as_deref(),
+            Some("pass")
+        );
     }
 
     #[test]
@@ -984,8 +967,22 @@ mod tests {
             password: None,
             retry: false,
         });
-        let opts = create_test_options();
-        assert!(build_openvpn_connection(&config, &opts).is_ok());
+        let settings = build_openvpn_connection(&config, &create_test_options()).unwrap();
+
+        assert_eq!(
+            get_vpn_data_value(&settings, "proxy-type").as_deref(),
+            Some("http")
+        );
+        assert_eq!(
+            get_vpn_data_value(&settings, "proxy-port").as_deref(),
+            Some("3128")
+        );
+        assert_eq!(
+            get_vpn_data_value(&settings, "proxy-retry").as_deref(),
+            Some("no")
+        );
+        assert!(get_vpn_data_value(&settings, "http-proxy-username").is_none());
+        assert!(get_vpn_data_value(&settings, "http-proxy-password").is_none());
     }
 
     #[test]
@@ -995,8 +992,24 @@ mod tests {
             port: 1080,
             retry: false,
         });
-        let opts = create_test_options();
-        assert!(build_openvpn_connection(&config, &opts).is_ok());
+        let settings = build_openvpn_connection(&config, &create_test_options()).unwrap();
+
+        assert_eq!(
+            get_vpn_data_value(&settings, "proxy-type").as_deref(),
+            Some("socks")
+        );
+        assert_eq!(
+            get_vpn_data_value(&settings, "proxy-server").as_deref(),
+            Some("socks.example.com")
+        );
+        assert_eq!(
+            get_vpn_data_value(&settings, "proxy-port").as_deref(),
+            Some("1080")
+        );
+        assert_eq!(
+            get_vpn_data_value(&settings, "proxy-retry").as_deref(),
+            Some("no")
+        );
     }
 
     #[test]
@@ -1011,7 +1024,8 @@ mod tests {
         let opts = create_test_options();
         assert!(matches!(
             build_openvpn_connection(&config, &opts).unwrap_err(),
-            ConnectionError::InvalidAddress(_)
+            ConnectionError::InvalidAddress(message)
+                if message == "proxy port must not be zero"
         ));
     }
 
@@ -1025,7 +1039,8 @@ mod tests {
         let opts = create_test_options();
         assert!(matches!(
             build_openvpn_connection(&config, &opts).unwrap_err(),
-            ConnectionError::InvalidAddress(_)
+            ConnectionError::InvalidAddress(message)
+                if message == "proxy port must not be zero"
         ));
     }
 
@@ -1035,7 +1050,12 @@ mod tests {
         let opts = create_test_options();
         let settings = build_openvpn_connection(&config, &opts).unwrap();
         let ipv4 = settings.get("ipv4").unwrap();
-        assert!(ipv4.contains_key("dns"));
+        let dns = ipv4.get("dns-data").unwrap();
+        assert_eq!(dns.value_signature().to_string(), "as");
+        assert_eq!(
+            dns,
+            &Value::from(vec!["1.1.1.1".to_string(), "8.8.8.8".to_string()])
+        );
     }
 
     #[test]
@@ -1043,8 +1063,29 @@ mod tests {
         let config = OpenVpnConfig::new("TcpVPN", "vpn.example.com", 443, true);
         let opts = create_test_options();
         let settings = build_openvpn_connection(&config, &opts).unwrap();
-        let vpn = settings.get("vpn").unwrap();
-        assert!(vpn.contains_key("data"));
+        assert_eq!(
+            get_vpn_data_value(&settings, "proto-tcp").as_deref(),
+            Some("yes")
+        );
+    }
+
+    #[test]
+    fn openvpn_serializes_all_autoconnect_options() {
+        let opts = ConnectionOptions::new(true)
+            .with_priority(12)
+            .with_retries(7);
+        let settings = build_openvpn_connection(&create_openvpn_config(), &opts).unwrap();
+        let connection = settings.get("connection").unwrap();
+
+        assert_eq!(connection.get("autoconnect"), Some(&Value::from(true)));
+        assert_eq!(
+            connection.get("autoconnect-priority"),
+            Some(&Value::from(12i32))
+        );
+        assert_eq!(
+            connection.get("autoconnect-retries"),
+            Some(&Value::from(7i32))
+        );
     }
 
     #[test]
@@ -1282,16 +1323,25 @@ mod tests {
     #[test]
     fn openvpn_ipv4_route_data() {
         use crate::api::models::VpnRoute;
-        let config = create_openvpn_config()
-            .with_routes(vec![VpnRoute::new("10.0.0.0", 24).next_hop("192.168.1.1")]);
+        let config = create_openvpn_config().with_routes(vec![
+            VpnRoute::new("10.0.0.0", 24)
+                .next_hop("192.168.1.1")
+                .metric(75),
+        ]);
         let opts = create_test_options();
         let settings = build_openvpn_connection(&config, &opts).unwrap();
         let ipv4 = settings.get("ipv4").unwrap();
         let rd = ipv4.get("route-data").unwrap();
-        let Value::Array(arr) = rd else {
-            panic!("route-data must be an array");
-        };
-        assert_eq!(arr.iter().count(), 1, "expected one static route");
+        assert_eq!(rd.value_signature().to_string(), "aa{sv}");
+        let mut expected = HashMap::new();
+        expected.insert("dest".to_string(), Value::from("10.0.0.0".to_string()));
+        expected.insert("prefix".to_string(), Value::from(24u32));
+        expected.insert(
+            "next-hop".to_string(),
+            Value::from("192.168.1.1".to_string()),
+        );
+        expected.insert("metric".to_string(), Value::from(75u32));
+        assert_eq!(rd, &Value::from(vec![expected]));
     }
 
     #[test]

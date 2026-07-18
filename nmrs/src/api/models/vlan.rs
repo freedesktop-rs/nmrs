@@ -305,30 +305,40 @@ mod tests {
     #[test]
     fn validate_rejects_zero_id() {
         let config = VlanConfig::new("eth0", 0);
-        assert!(config.validate().is_err());
+        assert!(matches!(
+            config.validate().unwrap_err(),
+            ConnectionError::InvalidVlanId { id: 0 }
+        ));
     }
 
     #[test]
     fn validate_rejects_id_over_4094() {
         let config = VlanConfig::new("eth0", 4095);
-        assert!(config.validate().is_err());
+        assert!(matches!(
+            config.validate().unwrap_err(),
+            ConnectionError::InvalidVlanId { id: 4095 }
+        ));
     }
 
     #[test]
     fn validate_rejects_empty_parent() {
         let config = VlanConfig::new("", 100);
-        assert!(config.validate().is_err());
+        assert!(matches!(
+            config.validate().unwrap_err(),
+            ConnectionError::InvalidInput { field, reason }
+                if field == "parent" && reason == "parent interface name cannot be empty"
+        ));
     }
 
     #[test]
     fn validate_accepts_valid_config() {
         let config = VlanConfig::new("eth0", 100);
-        assert!(config.validate().is_ok());
+        config.validate().unwrap();
 
         let config = VlanConfig::new("eth0", 1);
-        assert!(config.validate().is_ok());
+        config.validate().unwrap();
 
         let config = VlanConfig::new("eth0", 4094);
-        assert!(config.validate().is_ok());
+        config.validate().unwrap();
     }
 }

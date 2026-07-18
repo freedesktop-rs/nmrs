@@ -323,8 +323,8 @@ impl SecretResponder {
             .reply_tx
             .take()
             .ok_or(ConnectionError::AgentNotRegistered)?;
-        let _ = tx.send(reply);
-        Ok(())
+        tx.send(reply)
+            .map_err(|_| ConnectionError::AgentNotRegistered)
     }
 }
 
@@ -415,6 +415,19 @@ pub(crate) fn extract_existing_secrets(
 mod tests {
     use super::*;
 
+    fn responder() -> (
+        SecretResponder,
+        futures::channel::oneshot::Receiver<SecretReply>,
+    ) {
+        let (tx, rx) = futures::channel::oneshot::channel();
+        (SecretResponder::new(tx, "requested-setting".into()), rx)
+    }
+
+    fn string_value<'a>(dict: &'a HashMap<String, OwnedValue>, key: &str) -> &'a str {
+        <&str>::try_from(dict.get(key).expect("missing secret value"))
+            .expect("secret value should be a string")
+    }
+
     #[test]
     fn flags_from_bits() {
         let flags = SecretAgentFlags::from_bits_truncate(0x5);
@@ -431,16 +444,63 @@ mod tests {
 
     #[test]
     fn parse_wifi_psk_setting() {
-        let connection = HashMap::new();
+        let mut wireless = HashMap::new();
+        wireless.insert(
+            "ssid".to_owned(),
+            OwnedValue::try_from(zvariant::Array::from(vec![b'n', b'm', b'r', b's']))
+                .expect("owned byte array"),
+        );
+        let mut connection = HashMap::new();
+        connection.insert("802-11-wireless".to_owned(), wireless);
         let setting = parse_secret_setting(&connection, "802-11-wireless-security");
-        assert!(matches!(setting, SecretSetting::WifiPsk { .. }));
+
+        match setting {
+            SecretSetting::WifiPsk { ssid } => assert_eq!(ssid, "nmrs"),
+            other => panic!("expected Wi-Fi PSK setting, got {other:?}"),
+        }
     }
 
     #[test]
-    fn parse_vpn_setting() {
-        let connection = HashMap::new();
-        let setting = parse_secret_setting(&connection, "vpn");
-        assert!(matches!(setting, SecretSetting::Vpn { .. }));
+    fn parse_eap_setting_preserves_context() {
+        let mut eap = HashMap::new();
+        eap.insert(
+            "identity".to_owned(),
+            OwnedValue::from(Str::from("alice@example.com")),
+        );
+        eap.insert("eap".to_owned(), OwnedValue::from(Str::from("peap")));
+        let mut connection = HashMap::new();
+        connection.insert("802-1x".to_owned(), eap);
+
+        match parse_secret_setting(&connection, "802-1x") {
+            SecretSetting::WifiEap { identity, method } => {
+                assert_eq!(identity.as_deref(), Some("alice@example.com"));
+                assert_eq!(method.as_deref(), Some("peap"));
+            }
+            other => panic!("expected Wi-Fi EAP setting, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_vpn_setting_preserves_context() {
+        let mut vpn = HashMap::new();
+        vpn.insert(
+            "service-type".to_owned(),
+            OwnedValue::from(Str::from("org.freedesktop.NetworkManager.openvpn")),
+        );
+        vpn.insert("user-name".to_owned(), OwnedValue::from(Str::from("alice")));
+        let mut connection = HashMap::new();
+        connection.insert("vpn".to_owned(), vpn);
+
+        match parse_secret_setting(&connection, "vpn") {
+            SecretSetting::Vpn {
+                service_type,
+                user_name,
+            } => {
+                assert_eq!(service_type, "org.freedesktop.NetworkManager.openvpn");
+                assert_eq!(user_name.as_deref(), Some("alice"));
+            }
+            other => panic!("expected VPN setting, got {other:?}"),
+        }
     }
 
     #[test]
@@ -448,6 +508,50 @@ mod tests {
         let connection = HashMap::new();
         let setting = parse_secret_setting(&connection, "some-custom-thing");
         assert!(matches!(setting, SecretSetting::Other(s) if s == "some-custom-thing"));
+    }
+
+    #[test]
+    fn parse_simple_secret_settings_maps_each_networkmanager_name() {
+        let connection = ConnectionDict::new();
+
+        assert!(matches!(
+            parse_secret_setting(&connection, "gsm"),
+            SecretSetting::Gsm
+        ));
+        assert!(matches!(
+            parse_secret_setting(&connection, "cdma"),
+            SecretSetting::Cdma
+        ));
+        assert!(matches!(
+            parse_secret_setting(&connection, "pppoe"),
+            SecretSetting::Pppoe
+        ));
+    }
+
+    #[test]
+    fn extract_ssid_accepts_string_fallback_and_lossy_byte_arrays() {
+        let mut connection = ConnectionDict::new();
+        connection.insert(
+            "802-11-wireless".into(),
+            HashMap::from([(
+                "ssid".into(),
+                OwnedValue::from(Str::from("legacy-string-ssid")),
+            )]),
+        );
+        assert_eq!(
+            extract_ssid(&connection).as_deref(),
+            Some("legacy-string-ssid")
+        );
+
+        connection.insert(
+            "802-11-wireless".into(),
+            HashMap::from([(
+                "ssid".into(),
+                OwnedValue::try_from(zvariant::Array::from(vec![b'n', 0xff, b'm']))
+                    .expect("owned byte array"),
+            )]),
+        );
+        assert_eq!(extract_ssid(&connection).as_deref(), Some("n\u{fffd}m"));
     }
 
     #[test]
@@ -508,5 +612,104 @@ mod tests {
         let reply = rx.try_recv().expect("should have received a reply");
         assert!(reply.is_some(), "drop should have sent a reply");
         assert!(matches!(reply.unwrap(), SecretReply::NoSecrets));
+    }
+
+    #[tokio::test]
+    async fn responder_wifi_psk_sends_expected_dictionary() {
+        let (responder, rx) = responder();
+
+        responder.wifi_psk("correct horse").await.unwrap();
+        let SecretReply::Secrets(settings) = rx.await.expect("reply channel closed") else {
+            panic!("expected secrets reply");
+        };
+        let security = settings
+            .get("802-11-wireless-security")
+            .expect("missing wireless security setting");
+        assert_eq!(string_value(security, "psk"), "correct horse");
+    }
+
+    #[tokio::test]
+    async fn responder_wifi_eap_includes_optional_identity() {
+        let (responder, rx) = responder();
+
+        responder
+            .wifi_eap(Some("alice".into()), "secret".into())
+            .await
+            .unwrap();
+        let SecretReply::Secrets(settings) = rx.await.expect("reply channel closed") else {
+            panic!("expected secrets reply");
+        };
+        let eap = settings.get("802-1x").expect("missing 802.1X setting");
+        assert_eq!(string_value(eap, "identity"), "alice");
+        assert_eq!(string_value(eap, "password"), "secret");
+    }
+
+    #[tokio::test]
+    async fn responder_wifi_eap_omits_absent_identity() {
+        let (responder, rx) = responder();
+
+        responder.wifi_eap(None, "secret".into()).await.unwrap();
+        let SecretReply::Secrets(settings) = rx.await.expect("reply channel closed") else {
+            panic!("expected secrets reply");
+        };
+        let eap = settings.get("802-1x").expect("missing 802.1X setting");
+        assert!(!eap.contains_key("identity"));
+        assert_eq!(string_value(eap, "password"), "secret");
+    }
+
+    #[tokio::test]
+    async fn responder_vpn_secrets_nests_plugin_dictionary() {
+        let (responder, rx) = responder();
+        let secrets = HashMap::from([
+            ("password".to_owned(), "hunter2".to_owned()),
+            ("otp".to_owned(), "123456".to_owned()),
+        ]);
+
+        responder.vpn_secrets(secrets.clone()).await.unwrap();
+        let SecretReply::Secrets(settings) = rx.await.expect("reply channel closed") else {
+            panic!("expected secrets reply");
+        };
+        let nested = settings
+            .get("vpn")
+            .and_then(|vpn| vpn.get("secrets"))
+            .cloned()
+            .and_then(|value| HashMap::<String, String>::try_from(value).ok())
+            .expect("missing VPN secrets dictionary");
+        assert_eq!(nested, secrets);
+    }
+
+    #[tokio::test]
+    async fn responder_raw_preserves_setting_and_values() {
+        let (responder, rx) = responder();
+        let data = HashMap::from([("pin".to_owned(), OwnedValue::from(Str::from("1234")))]);
+
+        responder.raw("gsm", data).await.unwrap();
+        let SecretReply::Secrets(settings) = rx.await.expect("reply channel closed") else {
+            panic!("expected secrets reply");
+        };
+        assert_eq!(string_value(settings.get("gsm").unwrap(), "pin"), "1234");
+    }
+
+    #[tokio::test]
+    async fn responder_cancel_sends_user_canceled() {
+        let (responder, rx) = responder();
+        responder.cancel().await.unwrap();
+        assert!(matches!(rx.await.unwrap(), SecretReply::UserCanceled));
+    }
+
+    #[tokio::test]
+    async fn responder_no_secrets_sends_no_secrets() {
+        let (responder, rx) = responder();
+        responder.no_secrets().await.unwrap();
+        assert!(matches!(rx.await.unwrap(), SecretReply::NoSecrets));
+    }
+
+    #[tokio::test]
+    async fn responder_reports_closed_reply_channel() {
+        let (responder, rx) = responder();
+        drop(rx);
+
+        let result = responder.wifi_psk("secret").await;
+        assert!(matches!(result, Err(ConnectionError::AgentNotRegistered)));
     }
 }

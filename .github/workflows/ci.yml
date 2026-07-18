@@ -97,7 +97,7 @@ jobs:
         run: cargo test --locked --doc --all-features --workspace
 
   integration:
-    name: NetworkManager WiFi Integration
+    name: NetworkManager Integration
     runs-on: [self-hosted, linux, x64]
     # Pull requests wait for a maintainer to approve this environment.
     environment:
@@ -111,6 +111,52 @@ jobs:
           sudo -n modprobe -r mac80211_hwsim || true
           sudo -n modprobe mac80211_hwsim radios=2
           udevadm settle --timeout=10
+
+      - name: Release virtual WiFi radios from host NetworkManager
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+
+          diagnose() {
+            echo "Host hwsim/NetworkManager diagnostics:" >&2
+            iw dev >&2 || true
+            nmcli device status >&2 || true
+            sudo -n journalctl -u NetworkManager --no-pager -n 100 >&2 || true
+          }
+          trap diagnose ERR
+
+          if ! command -v ethtool >/dev/null 2>&1; then
+            echo "ethtool is required to identify mac80211_hwsim interfaces" >&2
+            exit 1
+          fi
+
+          mapfile -t hwsim_interfaces < <(
+            iw dev | awk '$1 == "Interface" { print $2 }' |
+              while read -r interface; do
+                if ethtool -i "${interface}" 2>/dev/null |
+                    grep --fixed-strings --quiet 'driver: mac80211_hwsim'; then
+                  printf '%s\n' "${interface}"
+                fi
+              done | sort
+          )
+          if (( ${#hwsim_interfaces[@]} != 2 )); then
+            echo "Expected exactly two host mac80211_hwsim interfaces, found ${#hwsim_interfaces[@]}" >&2
+            exit 1
+          fi
+
+          for interface in "${hwsim_interfaces[@]}"; do
+            sudo -n nmcli device set "${interface}" managed no
+          done
+          for interface in "${hwsim_interfaces[@]}"; do
+            managed="$(sudo -n nmcli --get-values GENERAL.NM-MANAGED device show "${interface}")"
+            if [[ "${managed}" != "no" ]]; then
+              echo "Host NetworkManager still manages ${interface}: NM-MANAGED=${managed}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Run integration tests with NetworkManager and virtual Ethernet
+        run: docker compose run --build --rm test-integration
 
       - name: Run integration tests with NetworkManager and virtual WiFi
         run: docker compose run --build --rm test-wifi-integration
