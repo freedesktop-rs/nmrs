@@ -38,6 +38,20 @@ services:
       - RUST_BACKTRACE=1
     command: bash scripts/ci/run-networkmanager-tests.sh integration
 
+  test-wifi-integration:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    privileged: true
+    network_mode: host
+    volumes:
+      - .:/app
+      - cargo-cache:/root/.cargo/registry
+      - target-cache:/app/target
+    environment:
+      - RUST_BACKTRACE=1
+    command: bash scripts/ci/run-networkmanager-tests.sh wifi-integration
+
   shell:
     build:
       context: .

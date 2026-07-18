@@ -37,6 +37,7 @@ cargo test -p nmrs --lib --all-features                   # unit tests only
 cargo test --doc --all-features --workspace               # doc tests
 cargo test --all-features --workspace                     # unit + integration (needs NM + wifi hardware)
 cargo test --test integration_test --all-features         # integration only
+docker compose run --build --rm test-wifi-integration     # CI-equivalent virtual WiFi tests (Linux)
 ```
 
 Integration tests require wifi hardware or `mac80211_hwsim`:
@@ -81,4 +82,3 @@ Sections: `Added`, `Changed`, `Fixed`. Link PRs/issues in parentheses.
 ## Things to watch out for
 
 - The `VpnCredentials` type is deprecated — prefer `WireGuardConfig` for new WireGuard code.
-

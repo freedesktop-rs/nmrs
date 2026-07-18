@@ -115,6 +115,21 @@ This starts a private system D-Bus and NetworkManager instance, waits for it to
 be ready, and fails if tests cannot connect to the daemon. Wi-Fi-specific tests
 continue to skip until the test environment has a Wi-Fi device.
 
+### Virtual Wi-Fi Integration
+
+On a Linux host, the CI-equivalent test target creates two virtual radios with
+`mac80211_hwsim`. One radio advertises a WPA-PSK test network using `hostapd`;
+NetworkManager manages the other radio and scans for that access point.
+
+```bash
+sudo modprobe mac80211_hwsim radios=2
+docker compose run --build --rm test-wifi-integration
+sudo modprobe -r mac80211_hwsim
+```
+
+This service uses host networking and is therefore intended for Linux hosts and
+the GitHub Actions runner, not Docker Desktop.
+
 ## CI/CD
 
 Tests run automatically via GitHub Actions on every push and pull request. The CI workflow:

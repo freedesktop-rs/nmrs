@@ -6,6 +6,8 @@ RUN apt-get update && apt-get install -y \
     libdbus-1-dev \
     pkg-config \
     dbus \
+    hostapd \
+    iw \
     network-manager \
     && rm -rf /var/lib/apt/lists/*
 

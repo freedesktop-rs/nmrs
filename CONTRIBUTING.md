@@ -100,6 +100,14 @@ cargo test --test integration_test --all-features
 sudo modprobe -r mac80211_hwsim
 ```
 
+For the same virtual-radio setup used in CI, on a Linux host with Docker:
+
+```bash
+sudo modprobe mac80211_hwsim radios=2
+docker compose run --build --rm test-wifi-integration
+sudo modprobe -r mac80211_hwsim
+```
+
 > [!NOTE]
 >
 > This method only works on linux

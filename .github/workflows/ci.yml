@@ -97,14 +97,21 @@ jobs:
         run: cargo test --locked --doc --all-features --workspace
 
   integration:
-    name: NetworkManager Integration
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    name: NetworkManager WiFi Integration
+    runs-on: self-hosted
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 
-      - name: Run integration tests with NetworkManager
-        run: docker compose run --build --rm test-integration
+      - name: Load virtual WiFi radios
+        run: sudo modprobe mac80211_hwsim radios=2
+
+      - name: Run integration tests with NetworkManager and virtual WiFi
+        run: docker compose run --build --rm test-wifi-integration
+
+      - name: Unload virtual WiFi radios
+        if: always()
+        run: sudo modprobe -r mac80211_hwsim || true
 
   semver:
     name: Semantic Versioning Check
