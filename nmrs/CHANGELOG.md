@@ -32,6 +32,8 @@ All notable changes to the `nmrs` crate will be documented in this file.
   NetworkManager failure reasons instead of reporting false timeouts. ([#505](https://github.com/freedesktop-rs/nmrs/pull/505))
 - Keep active-connection snapshots usable when NetworkManager removes an
   enumerated connection object while its properties are being read. ([#505](https://github.com/freedesktop-rs/nmrs/pull/505))
+- Retain the discovering interface on inactive Wi-Fi scan results, matching
+  the documented `Network::device` contract. ([#505](https://github.com/freedesktop-rs/nmrs/pull/505))
 - Map secret-agent registration conflicts to the documented typed errors and
   handle concurrent same-key requests, cancellation, closed responders, and
   bounded-queue backpressure without false cancellation or hangs. ([#505](https://github.com/freedesktop-rs/nmrs/pull/505))
