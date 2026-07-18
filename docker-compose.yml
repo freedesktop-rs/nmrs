@@ -46,6 +46,7 @@ services:
     network_mode: host
     volumes:
       - .:/app
+      - /run/udev:/run/udev:ro
       - cargo-cache:/root/.cargo/registry
       - target-cache:/app/target
     environment:

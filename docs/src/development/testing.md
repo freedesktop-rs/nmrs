@@ -130,6 +130,9 @@ sudo modprobe -r mac80211_hwsim
 This service uses host networking and is therefore intended for Linux hosts and
 the GitHub Actions runner, not Docker Desktop.
 
+It also mounts the host's `/run/udev` read-only so NetworkManager can manage
+the newly created hwsim links.
+
 The self-hosted runner service account needs passwordless `sudo` permission for
 `modprobe mac80211_hwsim radios=2` and `modprobe -r mac80211_hwsim`; CI invokes
 both commands with `sudo -n`.

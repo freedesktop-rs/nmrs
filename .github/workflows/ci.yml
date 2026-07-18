@@ -110,6 +110,7 @@ jobs:
         run: |
           sudo -n modprobe -r mac80211_hwsim || true
           sudo -n modprobe mac80211_hwsim radios=2
+          udevadm settle --timeout=10
 
       - name: Run integration tests with NetworkManager and virtual WiFi
         run: docker compose run --build --rm test-wifi-integration
