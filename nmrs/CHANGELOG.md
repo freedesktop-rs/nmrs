@@ -6,6 +6,11 @@ All notable changes to the `nmrs` crate will be documented in this file.
 
 ### Added
 
+- `AccessPoint::is_hidden()` and `NetworkSnapshot::hidden_access_points()`
+  expose access points for which NetworkManager did not report an SSID. ([#496](https://github.com/freedesktop-rs/nmrs/pull/496))
+- An isolated Docker-based NetworkManager integration harness, including
+  virtual WPA Wi-Fi coverage with `mac80211_hwsim`, keeps integration tests
+  separate from developer network profiles. ([#504](https://github.com/freedesktop-rs/nmrs/pull/504))
 - Isolated NetworkManager integration contracts now cover saved-profile events,
   secret-agent registration, wired DHCP activation, and virtual WPA Wi-Fi
   discovery/authentication/reconnection without touching developer profiles. ([#505](https://github.com/freedesktop-rs/nmrs/pull/505))
@@ -15,6 +20,8 @@ All notable changes to the `nmrs` crate will be documented in this file.
 
 ### Changed
 
+- `NetworkSnapshot::wifi_groups()` now omits hidden access points; use
+  `hidden_access_points()` when those individually reported APs are needed. ([#494](https://github.com/freedesktop-rs/nmrs/pull/494), [#496](https://github.com/freedesktop-rs/nmrs/pull/496))
 - Network, device, and settings monitors now return only after their initial
   D-Bus subscriptions are installed, so a mutation immediately after startup
   cannot race the subscription task. ([#505](https://github.com/freedesktop-rs/nmrs/pull/505))
@@ -24,6 +31,8 @@ All notable changes to the `nmrs` crate will be documented in this file.
 
 ### Fixed
 
+- Automatic Wi-Fi scans and readiness checks now skip unmanaged or unavailable
+  radios, selecting a usable managed device when one is present. ([#504](https://github.com/freedesktop-rs/nmrs/pull/504))
 - Preserve complete OpenVPN, VLAN, WireGuard, Bluetooth, Wi-Fi, and access-point
   settings when constructing or decoding NetworkManager payloads. ([#505](https://github.com/freedesktop-rs/nmrs/pull/505))
 - Preserve saved Wi-Fi profiles when stored-secret activation fails, while
