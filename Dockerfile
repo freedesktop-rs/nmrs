@@ -6,8 +6,10 @@ RUN apt-get update && apt-get install -y \
     libdbus-1-dev \
     pkg-config \
     dbus \
+    dnsmasq-base \
     ethtool \
     hostapd \
+    iproute2 \
     iw \
     network-manager \
     wpasupplicant \

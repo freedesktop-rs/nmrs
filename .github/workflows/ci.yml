@@ -97,7 +97,7 @@ jobs:
         run: cargo test --locked --doc --all-features --workspace
 
   integration:
-    name: NetworkManager WiFi Integration
+    name: NetworkManager Integration
     runs-on: [self-hosted, linux, x64]
     # Pull requests wait for a maintainer to approve this environment.
     environment:
@@ -108,9 +108,86 @@ jobs:
 
       - name: Load virtual WiFi radios
         run: |
+          set -euo pipefail
+
           sudo -n modprobe -r mac80211_hwsim || true
+          mapfile -t interfaces_before < <(
+            iw dev | awk '$1 == "Interface" { print $2 }' | sort -u
+          )
+
           sudo -n modprobe mac80211_hwsim radios=2
           udevadm settle --timeout=10
+
+          mapfile -t interfaces_after < <(
+            iw dev | awk '$1 == "Interface" { print $2 }' | sort -u
+          )
+          mapfile -t hwsim_interfaces < <(
+            comm -13 \
+              <(printf '%s\n' "${interfaces_before[@]}") \
+              <(printf '%s\n' "${interfaces_after[@]}")
+          )
+          if (( ${#hwsim_interfaces[@]} != 2 )); then
+            echo "Expected the hwsim module to create two interfaces, found ${#hwsim_interfaces[@]}" >&2
+            iw dev >&2 || true
+            exit 1
+          fi
+
+          printf 'NMRS_HOST_HWSIM_INTERFACES=%s\n' "${hwsim_interfaces[*]}" >> "${GITHUB_ENV}"
+
+      - name: Release virtual WiFi radios from host NetworkManager
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+
+          diagnose() {
+            echo "Host hwsim/NetworkManager diagnostics:" >&2
+            iw dev >&2 || true
+            nmcli device status >&2 || true
+            nmcli general permissions >&2 || true
+            journalctl -u NetworkManager --no-pager -n 100 >&2 || true
+          }
+          trap diagnose ERR
+
+          read -r -a hwsim_interfaces <<< "${NMRS_HOST_HWSIM_INTERFACES:?missing hwsim interface list}"
+          if (( ${#hwsim_interfaces[@]} != 2 )); then
+            echo "Expected exactly two recorded hwsim interfaces, found ${#hwsim_interfaces[@]}" >&2
+            exit 1
+          fi
+
+          if [[ ! -S /run/dbus/system_bus_socket ]]; then
+            echo "Host system D-Bus socket is unavailable" >&2
+            exit 1
+          fi
+
+          # The self-hosted runner can load hwsim but is not authorized by
+          # host polkit to control NetworkManager. Use the already-required
+          # privileged test image to make this narrowly scoped D-Bus change.
+          docker compose run --build --rm --no-deps \
+            -e NMRS_HOST_HWSIM_INTERFACES \
+            -v /run/dbus/system_bus_socket:/run/dbus/system_bus_socket:ro \
+            --entrypoint bash \
+            test-integration \
+            -euo pipefail -c '
+              read -r -a hwsim_interfaces <<< "${NMRS_HOST_HWSIM_INTERFACES:?missing hwsim interface list}"
+              if (( ${#hwsim_interfaces[@]} != 2 )); then
+                echo "Expected exactly two hwsim interfaces in the helper, found ${#hwsim_interfaces[@]}" >&2
+                exit 1
+              fi
+
+              for interface in "${hwsim_interfaces[@]}"; do
+                nmcli device set "${interface}" managed no
+              done
+              for interface in "${hwsim_interfaces[@]}"; do
+                managed="$(nmcli --get-values GENERAL.NM-MANAGED device show "${interface}")"
+                if [[ "${managed}" != "no" ]]; then
+                  echo "Host NetworkManager still manages ${interface}: NM-MANAGED=${managed}" >&2
+                  exit 1
+                fi
+              done
+            '
+
+      - name: Run integration tests with NetworkManager and virtual Ethernet
+        run: docker compose run --build --rm test-integration
 
       - name: Run integration tests with NetworkManager and virtual WiFi
         run: docker compose run --build --rm test-wifi-integration

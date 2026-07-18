@@ -46,17 +46,36 @@ fn detect_vpn_kind(
 /// Extracts a string from a `Dict` (vpn.data / vpn.secrets) by key.
 fn dict_str(dict: &zvariant::Dict<'_, '_>, key: &str) -> Option<String> {
     dict.iter().find_map(|(k, v)| match (k, v) {
-        (zvariant::Value::Str(k_str), zvariant::Value::Str(v_str)) if k_str.as_str() == key => {
-            Some(v_str.to_string())
+        (zvariant::Value::Str(k_str), value) if k_str.as_str() == key => {
+            match unbox_variant(value) {
+                zvariant::Value::Str(v_str) => Some(v_str.to_string()),
+                _ => None,
+            }
         }
         _ => None,
+    })
+}
+
+fn unbox_variant<'a, 'v>(mut value: &'a zvariant::Value<'v>) -> &'a zvariant::Value<'v> {
+    while let zvariant::Value::Value(inner) = value {
+        value = inner;
+    }
+    value
+}
+
+fn dict_value<'a, 'v>(
+    dict: &'a zvariant::Dict<'v, 'v>,
+    key: &str,
+) -> Option<&'a zvariant::Value<'v>> {
+    dict.iter().find_map(|(k, v)| {
+        matches!(k, zvariant::Value::Str(k_str) if k_str.as_str() == key).then(|| unbox_variant(v))
     })
 }
 
 /// Converts a full `Dict` to `HashMap<String, String>`.
 fn dict_to_map(dict: &zvariant::Dict<'_, '_>) -> HashMap<String, String> {
     dict.iter()
-        .filter_map(|(k, v)| match (k, v) {
+        .filter_map(|(k, v)| match (k, unbox_variant(v)) {
             (zvariant::Value::Str(k_str), zvariant::Value::Str(v_str)) => {
                 Some((k_str.to_string(), v_str.to_string()))
             }
@@ -129,13 +148,32 @@ fn decode_wg_first_peer(
             (pk, ep, ips, ka)
         }
         zvariant::Value::Array(arr) => {
-            if let Some(zvariant::Value::Dict(dict)) = arr.first() {
+            if let Some(first) = arr.first()
+                && let zvariant::Value::Dict(dict) = unbox_variant(first)
+            {
                 let pk = dict_str(dict, "public-key");
                 let ep = dict_str(dict, "endpoint");
-                let ips = dict_str(dict, "allowed-ips")
-                    .map(|s| s.split(';').map(|p| p.trim().to_string()).collect())
-                    .unwrap_or_default();
-                let ka = dict_str(dict, "persistent-keepalive").and_then(|s| s.parse().ok());
+                let ips = match dict_value(dict, "allowed-ips") {
+                    Some(zvariant::Value::Str(value)) => value
+                        .split(';')
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string)
+                        .collect(),
+                    Some(zvariant::Value::Array(values)) => values
+                        .iter()
+                        .filter_map(|value| match unbox_variant(value) {
+                            zvariant::Value::Str(value) => Some(value.to_string()),
+                            _ => None,
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                let ka = match dict_value(dict, "persistent-keepalive") {
+                    Some(zvariant::Value::U32(value)) => Some(*value),
+                    Some(zvariant::Value::Str(value)) => value.parse().ok(),
+                    _ => None,
+                };
                 return (pk, ep, ips, ka);
             }
             (None, None, vec![], None)
@@ -948,19 +986,7 @@ pub(crate) async fn get_vpn_info(conn: &Connection, name: &str) -> Result<VpnCon
             VpnKind::WireGuard => settings_map
                 .get("wireguard")
                 .and_then(|wg_sec| wg_sec.get("peers"))
-                .and_then(|v| match v {
-                    zvariant::Value::Str(s) => Some(s.as_str().to_string()),
-                    _ => None,
-                })
-                .and_then(|peers| {
-                    let first = peers.split(',').next()?.trim().to_string();
-                    for tok in first.split_whitespace() {
-                        if let Some(rest) = tok.strip_prefix("endpoint=") {
-                            return Some(rest.to_string());
-                        }
-                    }
-                    None
-                }),
+                .and_then(|peers| decode_wg_first_peer(peers).1),
             VpnKind::Plugin => extract_openvpn_gateway(&settings_map),
         };
 
@@ -1083,13 +1109,7 @@ fn extract_openvpn_details(
 ) -> Option<VpnDetails> {
     let remote_raw = extract_openvpn_data_value(settings_map, "remote")?;
 
-    let (remote, port) = if let Some(idx) = remote_raw.rfind(':') {
-        let host = remote_raw[..idx].to_string();
-        let port = remote_raw[idx + 1..].parse::<u16>().unwrap_or(1194);
-        (host, port)
-    } else {
-        (remote_raw, 1194)
-    };
+    let (remote, port) = parse_openvpn_remote(&remote_raw);
 
     let protocol =
         if extract_openvpn_data_value(settings_map, "proto-tcp").as_deref() == Some("yes") {
@@ -1114,31 +1134,47 @@ fn extract_openvpn_details(
     })
 }
 
+fn parse_openvpn_remote(remote: &str) -> (String, u16) {
+    const DEFAULT_PORT: u16 = 1194;
+
+    if let Some(bracketed) = remote.strip_prefix('[')
+        && let Some((host, suffix)) = bracketed.split_once(']')
+    {
+        let port = suffix
+            .strip_prefix(':')
+            .and_then(|value| value.parse::<u16>().ok())
+            .unwrap_or(DEFAULT_PORT);
+        return (host.to_string(), port);
+    }
+
+    if remote.matches(':').count() == 1
+        && let Some((host, raw_port)) = remote.rsplit_once(':')
+    {
+        return (
+            host.to_string(),
+            raw_port.parse::<u16>().unwrap_or(DEFAULT_PORT),
+        );
+    }
+
+    (remote.to_string(), DEFAULT_PORT)
+}
+
 fn extract_wireguard_details(
     settings_map: &HashMap<String, HashMap<String, zvariant::Value<'_>>>,
 ) -> Option<VpnDetails> {
     let wg_sec = settings_map.get("wireguard")?;
 
-    let public_key = wg_sec.get("public-key").and_then(|v| match v {
-        zvariant::Value::Str(s) => Some(s.to_string()),
-        _ => None,
-    });
-
-    let endpoint = wg_sec
+    let (peer_public_key, endpoint, _, _) = wg_sec
         .get("peers")
-        .and_then(|v| match v {
-            zvariant::Value::Str(s) => Some(s.as_str().to_string()),
+        .map(decode_wg_first_peer)
+        .unwrap_or((None, None, Vec::new(), None));
+    let public_key = wg_sec
+        .get("public-key")
+        .and_then(|value| match unbox_variant(value) {
+            zvariant::Value::Str(value) => Some(value.to_string()),
             _ => None,
         })
-        .and_then(|peers| {
-            let first = peers.split(',').next()?.trim().to_string();
-            for tok in first.split_whitespace() {
-                if let Some(rest) = tok.strip_prefix("endpoint=") {
-                    return Some(rest.to_string());
-                }
-            }
-            None
-        });
+        .or(peer_public_key);
 
     Some(VpnDetails::WireGuard {
         public_key,
@@ -1231,6 +1267,95 @@ mod tests {
             }
             _ => panic!("expected OpenVpn"),
         }
+    }
+
+    #[test]
+    fn decode_openconnect_prefers_data_username_and_preserves_flags() {
+        let data = HashMap::from([
+            ("gateway".to_string(), "vpn.example.com".to_string()),
+            ("username".to_string(), "data-user".to_string()),
+            ("protocol".to_string(), "anyconnect".to_string()),
+        ]);
+        let mut settings =
+            vpn_settings_with_service("org.freedesktop.NetworkManager.openconnect", data);
+        settings.get_mut("vpn").unwrap().insert(
+            "user-name".into(),
+            zvariant::Value::Str("section-user".into()),
+        );
+        settings
+            .get_mut("vpn")
+            .unwrap()
+            .insert("password-flags".into(), zvariant::Value::U32(1));
+
+        assert!(matches!(
+            vpn_type_from_settings(VpnKind::Plugin, &settings),
+            VpnType::OpenConnect {
+                gateway: Some(ref gateway),
+                user_name: Some(ref user),
+                protocol: Some(ref protocol),
+                password_flags,
+            } if gateway == "vpn.example.com"
+                && user == "data-user"
+                && protocol == "anyconnect"
+                && password_flags.agent_owned()
+        ));
+    }
+
+    #[test]
+    fn decode_pptp_falls_back_to_section_username() {
+        let data = HashMap::from([("gateway".to_string(), "pptp.example.com".to_string())]);
+        let mut settings = vpn_settings_with_service("org.freedesktop.NetworkManager.pptp", data);
+        settings.get_mut("vpn").unwrap().insert(
+            "user-name".into(),
+            zvariant::Value::Str("fallback-user".into()),
+        );
+
+        assert!(matches!(
+            vpn_type_from_settings(VpnKind::Plugin, &settings),
+            VpnType::Pptp {
+                gateway: Some(ref gateway),
+                user_name: Some(ref user),
+                password_flags: VpnSecretFlags(0),
+            } if gateway == "pptp.example.com" && user == "fallback-user"
+        ));
+    }
+
+    #[test]
+    fn decode_plugin_without_vpn_section_is_empty_generic() {
+        let settings = HashMap::new();
+        assert!(matches!(
+            vpn_type_from_settings(VpnKind::Plugin, &settings),
+            VpnType::Generic {
+                ref service_type,
+                ref data,
+                ref secrets,
+                user_name: None,
+                password_flags: VpnSecretFlags(0),
+            } if service_type.is_empty() && data.is_empty() && secrets.is_empty()
+        ));
+    }
+
+    #[test]
+    fn malformed_plugin_sections_fall_back_without_panicking() {
+        let vpn = HashMap::from([
+            ("service-type".into(), zvariant::Value::U32(7)),
+            ("data".into(), zvariant::Value::Str("not-a-dict".into())),
+            ("secrets".into(), zvariant::Value::U32(9)),
+            ("user-name".into(), zvariant::Value::Str("".into())),
+            ("password-flags".into(), zvariant::Value::Str("bad".into())),
+        ]);
+        let settings = HashMap::from([("vpn".into(), vpn)]);
+
+        assert!(matches!(
+            vpn_type_from_settings(VpnKind::Plugin, &settings),
+            VpnType::Generic {
+                ref service_type,
+                ref data,
+                ref secrets,
+                user_name: None,
+                password_flags: VpnSecretFlags(0),
+            } if service_type.is_empty() && data.is_empty() && secrets.is_empty()
+        ));
     }
 
     #[test]
@@ -1395,6 +1520,50 @@ mod tests {
         }
     }
 
+    #[test]
+    fn openvpn_remote_parser_handles_hosts_ports_and_ipv6() {
+        assert_eq!(
+            parse_openvpn_remote("vpn.example.com:443"),
+            ("vpn.example.com".into(), 443)
+        );
+        assert_eq!(
+            parse_openvpn_remote("vpn.example.com"),
+            ("vpn.example.com".into(), 1194)
+        );
+        assert_eq!(
+            parse_openvpn_remote("vpn.example.com:not-a-port"),
+            ("vpn.example.com".into(), 1194)
+        );
+        assert_eq!(
+            parse_openvpn_remote("vpn.example.com:70000"),
+            ("vpn.example.com".into(), 1194)
+        );
+        assert_eq!(
+            parse_openvpn_remote("[2001:db8::1]:443"),
+            ("2001:db8::1".into(), 443)
+        );
+        assert_eq!(
+            parse_openvpn_remote("2001:db8::1"),
+            ("2001:db8::1".into(), 1194)
+        );
+    }
+
+    #[test]
+    fn openvpn_details_uses_comp_lzo_fallback() {
+        let settings = openvpn_settings_with_data(HashMap::from([
+            ("remote".to_string(), "vpn.example.com".to_string()),
+            ("comp-lzo".to_string(), "yes".to_string()),
+        ]));
+        assert!(matches!(
+            extract_openvpn_details(&settings),
+            Some(VpnDetails::OpenVpn {
+                port: 1194,
+                compression: Some(ref compression),
+                ..
+            }) if compression == "lzo"
+        ));
+    }
+
     fn wireguard_settings(
         pairs: Vec<(&str, zvariant::Value<'static>)>,
     ) -> HashMap<String, HashMap<String, zvariant::Value<'static>>> {
@@ -1429,5 +1598,94 @@ mod tests {
             }
             _ => panic!("expected WireGuard variant"),
         }
+    }
+
+    #[test]
+    fn decode_wireguard_string_peer_representation() {
+        let settings = wireguard_settings(vec![
+            (
+                "private-key",
+                zvariant::Value::Str("private-key-material".into()),
+            ),
+            (
+                "peers",
+                zvariant::Value::Str(
+                    "public-key=peer-key endpoint=vpn.example.com:51820 \
+                     allowed-ips=0.0.0.0/0;::/0 persistent-keepalive=25, \
+                     public-key=second"
+                        .into(),
+                ),
+            ),
+        ]);
+
+        assert!(matches!(
+            vpn_type_from_settings(VpnKind::WireGuard, &settings),
+            VpnType::WireGuard {
+                private_key: Some(ref private_key),
+                peer_public_key: Some(ref public_key),
+                endpoint: Some(ref endpoint),
+                ref allowed_ips,
+                persistent_keepalive: Some(25),
+            } if private_key == "private-key-material"
+                && public_key == "peer-key"
+                && endpoint == "vpn.example.com:51820"
+                && allowed_ips == &["0.0.0.0/0".to_string(), "::/0".to_string()]
+        ));
+    }
+
+    #[test]
+    fn decode_wireguard_native_array_peer_representation() {
+        let peer: HashMap<String, zvariant::Value<'static>> = HashMap::from([
+            ("public-key".into(), zvariant::Value::Str("peer-key".into())),
+            (
+                "endpoint".into(),
+                zvariant::Value::Str("vpn.example.com:51820".into()),
+            ),
+            (
+                "allowed-ips".into(),
+                zvariant::Value::from(vec!["10.0.0.0/8".to_string(), "::/0".to_string()]),
+            ),
+            ("persistent-keepalive".into(), zvariant::Value::U32(30)),
+        ]);
+        let settings = wireguard_settings(vec![("peers", zvariant::Value::from(vec![peer]))]);
+
+        assert!(matches!(
+            vpn_type_from_settings(VpnKind::WireGuard, &settings),
+            VpnType::WireGuard {
+                private_key: None,
+                peer_public_key: Some(ref public_key),
+                endpoint: Some(ref endpoint),
+                ref allowed_ips,
+                persistent_keepalive: Some(30),
+            } if public_key == "peer-key"
+                && endpoint == "vpn.example.com:51820"
+                && allowed_ips == &["10.0.0.0/8".to_string(), "::/0".to_string()]
+        ));
+
+        assert!(matches!(
+            extract_wireguard_details(&settings),
+            Some(VpnDetails::WireGuard {
+                public_key: Some(ref public_key),
+                endpoint: Some(ref endpoint),
+            }) if public_key == "peer-key" && endpoint == "vpn.example.com:51820"
+        ));
+    }
+
+    #[test]
+    fn malformed_wireguard_fields_return_empty_details() {
+        let settings = wireguard_settings(vec![
+            ("private-key", zvariant::Value::U32(1)),
+            ("peers", zvariant::Value::U32(2)),
+        ]);
+        assert_eq!(
+            vpn_type_from_settings(VpnKind::WireGuard, &settings),
+            VpnType::WireGuard {
+                private_key: None,
+                peer_public_key: None,
+                endpoint: None,
+                allowed_ips: Vec::new(),
+                persistent_keepalive: None,
+            }
+        );
     }
 }

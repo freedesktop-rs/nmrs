@@ -126,6 +126,9 @@ builder output, prefer
 |--------|---------|-------------|
 | `connect_wired()` | `Result<()>` | Connect first available Ethernet device |
 
+For this method and the wired device-listing methods below, Ethernet includes
+devices that NetworkManager reports as `veth`.
+
 ## VPN Methods
 
 | Method | Returns | Description |

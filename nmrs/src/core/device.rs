@@ -19,6 +19,7 @@ use crate::dbus::{
     NMWiredProxy, NMWirelessProxy,
 };
 use crate::types::constants::device_type;
+use crate::types::device_type_registry;
 use crate::util::utils::get_ip_addresses_from_active_connection;
 
 /// Lists all network devices managed by NetworkManager.
@@ -146,7 +147,7 @@ pub(crate) async fn list_devices(conn: &Connection) -> Result<Vec<Device>> {
                 (None, None)
             };
 
-        let speed_mbps = if raw_type == device_type::ETHERNET {
+        let speed_mbps = if device_type_registry::is_wired(raw_type) {
             async {
                 let wired = NMWiredProxy::builder(conn).path(p.clone())?.build().await?;
                 wired.speed().await
@@ -192,7 +193,7 @@ pub(crate) async fn list_wired_device_details(conn: &Connection) -> Result<Vec<W
             .build()
             .await?;
 
-        if d_proxy.device_type().await? != device_type::ETHERNET {
+        if !device_type_registry::is_wired(d_proxy.device_type().await?) {
             continue;
         }
 
@@ -391,6 +392,8 @@ pub(crate) async fn wait_for_wifi_ready(conn: &Connection) -> Result<()> {
     let mut found_wifi_device = false;
 
     // Prefer a ready device. An unmanaged radio can appear before a usable one.
+    // A managed radio can temporarily be Unavailable while rfkill is lifted,
+    // so keep it as a wait candidate.
     for dev_path in devices {
         let dev = NMDeviceProxy::builder(conn)
             .path(dev_path.clone())?
@@ -413,9 +416,7 @@ pub(crate) async fn wait_for_wifi_ready(conn: &Connection) -> Result<()> {
             return Ok(());
         }
 
-        if !matches!(state, DeviceState::Unmanaged | DeviceState::Unavailable)
-            && pending_wifi_device.is_none()
-        {
+        if state != DeviceState::Unmanaged && pending_wifi_device.is_none() {
             pending_wifi_device = Some(dev_path);
         }
     }
@@ -430,39 +431,4 @@ pub(crate) async fn wait_for_wifi_ready(conn: &Connection) -> Result<()> {
     } else {
         Err(ConnectionError::NoWifiDevice)
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::models::BluetoothNetworkRole;
-
-    #[test]
-    fn test_default_bluetooth_address() {
-        // Test that the default address used for devices without hardware address is valid
-        let default_addr = "00:00:00:00:00:00";
-        assert_eq!(default_addr.len(), 17);
-        assert_eq!(default_addr.matches(':').count(), 5);
-    }
-
-    #[test]
-    fn test_bluetooth_device_construction() {
-        let panu = BluetoothNetworkRole::PanU as u32;
-        let device = BluetoothDevice::new(
-            "00:1A:7D:DA:71:13".into(),
-            Some("TestDevice".into()),
-            Some("Test".into()),
-            panu,
-            DeviceState::Activated,
-        );
-
-        assert_eq!(device.bdaddr, "00:1A:7D:DA:71:13");
-        assert_eq!(device.name, Some("TestDevice".into()));
-        assert_eq!(device.alias, Some("Test".into()));
-        assert!(matches!(device.bt_caps, _panu));
-        assert_eq!(device.state, DeviceState::Activated);
-    }
-
-    // Note: Most device listing functions require a real D-Bus connection
-    // and NetworkManager running, so they are better suited for integration tests.
 }

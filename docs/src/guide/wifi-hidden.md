@@ -29,9 +29,13 @@ async fn main() -> nmrs::Result<()> {
 
 When you call `connect()` with an SSID:
 
-1. nmrs first checks if there is a **saved connection profile** for that SSID — if so, it activates the saved profile directly
-2. If no saved profile exists, it searches the **visible access point list**
-3. If the network is not visible (hidden), NetworkManager creates a connection profile with the hidden flag set and performs a **directed probe request** for the specific SSID
+1. nmrs first checks if there is a **saved connection profile** for that SSID
+2. With a saved profile, `WifiSecurity::Open` or an empty PSK reuses it; a
+   non-empty PSK or EAP configuration builds a fresh profile with those credentials
+3. If no saved profile exists, nmrs searches the **visible access point list**
+4. If the network is not visible (hidden), NetworkManager creates a connection
+   profile with the hidden flag set and performs a **directed probe request** for
+   the specific SSID
 
 This means hidden networks work transparently. The first connection may take slightly longer as NetworkManager performs the directed scan.
 
@@ -56,7 +60,10 @@ nm.connect("HiddenCorpNet", None, WifiSecurity::WpaEap {
 
 ## Reconnecting
 
-After the first successful connection, NetworkManager saves the profile with the hidden flag. Subsequent connections to the same SSID will reconnect automatically using the saved profile, even though the network doesn't appear in scan results.
+After the first successful connection, NetworkManager saves the profile with the
+hidden flag. A later `WifiSecurity::Open` or empty-PSK request can reuse that
+profile even though the network does not appear in scan results. Explicit
+non-empty PSK or EAP credentials build a fresh profile instead.
 
 ## Considerations
 

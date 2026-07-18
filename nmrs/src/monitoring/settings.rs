@@ -2,7 +2,7 @@
 
 use std::pin::Pin;
 
-use futures::channel::mpsc;
+use futures::channel::{mpsc, oneshot};
 use futures::stream::{Stream, StreamExt};
 use log::{trace, warn};
 use zbus::Connection;
@@ -27,13 +27,18 @@ pub(crate) async fn settings_events(conn: &Connection) -> Result<SettingsEventSt
     NMSettingsProxy::new(conn).await?;
 
     let (tx, rx) = mpsc::unbounded();
+    let (ready_tx, ready_rx) = oneshot::channel();
     let conn = conn.clone();
 
     tokio::spawn(async move {
-        if let Err(err) = run_settings_events(conn, tx.clone()).await {
+        if let Err(err) = run_settings_events(conn, tx.clone(), ready_tx).await {
             let _ = tx.unbounded_send(Err(err));
         }
     });
+
+    ready_rx.await.map_err(|_| {
+        ConnectionError::Stuck("settings event task ended before becoming ready".into())
+    })??;
 
     Ok(Box::pin(rx))
 }
@@ -41,51 +46,63 @@ pub(crate) async fn settings_events(conn: &Connection) -> Result<SettingsEventSt
 async fn run_settings_events(
     conn: Connection,
     tx: mpsc::UnboundedSender<Result<SettingsChange>>,
+    ready_tx: oneshot::Sender<Result<()>>,
 ) -> Result<()> {
-    let settings = NMSettingsProxy::new(&conn).await?;
-    let mut streams: Vec<SettingsSignalStream> = Vec::new();
+    let setup: Result<_> = async {
+        let settings = NMSettingsProxy::new(&conn).await?;
+        let mut streams: Vec<SettingsSignalStream> = Vec::new();
 
-    let new_connection = settings.receive_new_connection().await?;
-    streams.push(Box::pin(new_connection.map(|signal| {
-        signal.args().map_or_else(
-            |_| SettingsSignal::Unknown,
-            |args| SettingsSignal::Added(args.connection().clone()),
-        )
-    })));
+        let new_connection = settings.receive_new_connection().await?;
+        streams.push(Box::pin(new_connection.map(|signal| {
+            signal.args().map_or_else(
+                |_| SettingsSignal::Unknown,
+                |args| SettingsSignal::Added(args.connection().clone()),
+            )
+        })));
 
-    let connection_removed = settings.receive_connection_removed().await?;
-    streams.push(Box::pin(connection_removed.map(|signal| {
-        signal.args().map_or_else(
-            |_| SettingsSignal::Unknown,
-            |args| SettingsSignal::Removed(args.connection().clone()),
-        )
-    })));
+        let connection_removed = settings.receive_connection_removed().await?;
+        streams.push(Box::pin(connection_removed.map(|signal| {
+            signal.args().map_or_else(
+                |_| SettingsSignal::Unknown,
+                |args| SettingsSignal::Removed(args.connection().clone()),
+            )
+        })));
 
-    streams.push(Box::pin(
-        settings
-            .receive_connections_changed()
-            .await
-            .skip(1)
-            .map(|_| SettingsSignal::Reloaded),
-    ));
+        streams.push(Box::pin(
+            settings
+                .receive_connections_changed()
+                .await
+                .skip(1)
+                .map(|_| SettingsSignal::Reloaded),
+        ));
 
-    for path in settings.list_connections().await? {
-        match connection_settings_streams(&conn, path.clone()).await {
-            Ok(connection_streams) => streams.extend(connection_streams),
-            Err(err) => warn!("failed to monitor settings connection {path}: {err}"),
+        for path in settings.list_connections().await? {
+            match connection_settings_streams(&conn, path.clone()).await {
+                Ok(connection_streams) => streams.extend(connection_streams),
+                Err(err) => warn!("failed to monitor settings connection {path}: {err}"),
+            }
         }
+
+        Ok((settings, streams))
+    }
+    .await;
+
+    let (_settings, streams) = match setup {
+        Ok(setup) => setup,
+        Err(error) => {
+            let _ = ready_tx.send(Err(error));
+            return Ok(());
+        }
+    };
+
+    if ready_tx.send(Ok(())).is_err() {
+        return Ok(());
     }
 
     let mut merged = futures::stream::select_all(streams);
     while let Some(signal) = merged.next().await {
         match signal {
             SettingsSignal::Added(path) => {
-                if !send_change(
-                    &tx,
-                    settings_signal_to_change(SettingsSignal::Added(path.clone())),
-                ) {
-                    return Ok(());
-                }
                 match connection_settings_streams(&conn, path.clone()).await {
                     Ok(connection_streams) => {
                         for stream in connection_streams {
@@ -93,6 +110,9 @@ async fn run_settings_events(
                         }
                     }
                     Err(err) => warn!("failed to monitor new settings connection {path}: {err}"),
+                }
+                if !send_change(&tx, settings_signal_to_change(SettingsSignal::Added(path))) {
+                    return Ok(());
                 }
             }
             signal => {
@@ -147,6 +167,8 @@ fn settings_signal_to_change(signal: SettingsSignal) -> SettingsChange {
 
 #[cfg(test)]
 mod tests {
+    use futures::StreamExt;
+
     use super::*;
 
     fn path(value: &str) -> OwnedObjectPath {
@@ -154,27 +176,50 @@ mod tests {
     }
 
     #[test]
-    fn settings_added_signal_maps_to_change() {
-        let change = settings_signal_to_change(SettingsSignal::Added(path(
-            "/org/freedesktop/NetworkManager/Settings/1",
-        )));
+    fn every_settings_signal_maps_to_the_exact_public_change() {
+        let added_path = path("/org/freedesktop/NetworkManager/Settings/1");
+        let removed_path = path("/org/freedesktop/NetworkManager/Settings/2");
+        let updated_path = path("/org/freedesktop/NetworkManager/Settings/3");
 
-        assert!(matches!(change, SettingsChange::Added { .. }));
+        match settings_signal_to_change(SettingsSignal::Added(added_path.clone())) {
+            SettingsChange::Added { path } => assert_eq!(path, added_path),
+            other => panic!("expected added change, got {other:?}"),
+        }
+        match settings_signal_to_change(SettingsSignal::Removed(removed_path.clone())) {
+            SettingsChange::Removed { path } => assert_eq!(path, removed_path),
+            other => panic!("expected removed change, got {other:?}"),
+        }
+        match settings_signal_to_change(SettingsSignal::Updated(updated_path.clone())) {
+            SettingsChange::Updated { path } => assert_eq!(path, updated_path),
+            other => panic!("expected updated change, got {other:?}"),
+        }
+        assert!(matches!(
+            settings_signal_to_change(SettingsSignal::Reloaded),
+            SettingsChange::Reloaded
+        ));
+        assert!(matches!(
+            settings_signal_to_change(SettingsSignal::Unknown),
+            SettingsChange::Unknown
+        ));
     }
 
-    #[test]
-    fn settings_updated_signal_maps_to_change() {
-        let change = settings_signal_to_change(SettingsSignal::Updated(path(
-            "/org/freedesktop/NetworkManager/Settings/2",
-        )));
+    #[tokio::test]
+    async fn send_change_delivers_the_value_and_reports_closed_consumer() {
+        let (tx, mut rx) = mpsc::unbounded();
+        let expected_path = path("/org/freedesktop/NetworkManager/Settings/9");
 
-        assert!(matches!(change, SettingsChange::Updated { .. }));
-    }
+        assert!(send_change(
+            &tx,
+            SettingsChange::Removed {
+                path: expected_path.clone(),
+            }
+        ));
+        match rx.next().await.expect("settings result").unwrap() {
+            SettingsChange::Removed { path } => assert_eq!(path, expected_path),
+            other => panic!("expected removed change, got {other:?}"),
+        }
 
-    #[test]
-    fn settings_reloaded_signal_maps_to_change() {
-        let change = settings_signal_to_change(SettingsSignal::Reloaded);
-
-        assert!(matches!(change, SettingsChange::Reloaded));
+        drop(rx);
+        assert!(!send_change(&tx, SettingsChange::Unknown));
     }
 }

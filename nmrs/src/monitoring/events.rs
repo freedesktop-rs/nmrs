@@ -2,9 +2,9 @@
 
 use std::pin::Pin;
 
-use futures::channel::mpsc;
+use futures::channel::{mpsc, oneshot};
 use futures::stream::{Stream, StreamExt};
-use log::{trace, warn};
+use log::trace;
 use zbus::Connection;
 use zvariant::OwnedObjectPath;
 
@@ -25,18 +25,41 @@ enum InternalEvent {
     DeviceRemoved,
 }
 
+enum InternalEventAction {
+    Event(NetworkEvent),
+    Error(ConnectionError),
+    MonitorAccessPoint(OwnedObjectPath),
+    MonitorDevice(OwnedObjectPath),
+}
+
+fn classify_internal_event(event: InternalEvent) -> InternalEventAction {
+    match event {
+        InternalEvent::Event(event) => InternalEventAction::Event(event),
+        InternalEvent::Error(error) => InternalEventAction::Error(error),
+        InternalEvent::AccessPointAdded(path) => InternalEventAction::MonitorAccessPoint(path),
+        InternalEvent::AccessPointRemoved => {
+            InternalEventAction::Event(NetworkEvent::AccessPointsChanged)
+        }
+        InternalEvent::DeviceAdded(path) => InternalEventAction::MonitorDevice(path),
+        InternalEvent::DeviceRemoved => InternalEventAction::Event(device_change_event(None)),
+    }
+}
+
 /// Creates a unified refresh-oriented stream of NetworkManager events.
 pub(crate) async fn network_events(conn: &Connection) -> Result<NetworkEventStream> {
-    NMProxy::new(conn).await?;
-
     let (tx, rx) = mpsc::unbounded();
+    let (ready_tx, ready_rx) = oneshot::channel();
     let conn = conn.clone();
 
     tokio::spawn(async move {
-        if let Err(err) = run_network_events(conn, tx.clone()).await {
+        if let Err(err) = run_network_events(conn, tx.clone(), ready_tx).await {
             let _ = tx.unbounded_send(Err(err));
         }
     });
+
+    ready_rx.await.map_err(|_| {
+        ConnectionError::Stuck("network event task ended before becoming ready".into())
+    })??;
 
     Ok(Box::pin(rx))
 }
@@ -44,43 +67,56 @@ pub(crate) async fn network_events(conn: &Connection) -> Result<NetworkEventStre
 async fn run_network_events(
     conn: Connection,
     tx: mpsc::UnboundedSender<Result<NetworkEvent>>,
+    ready_tx: oneshot::Sender<Result<()>>,
 ) -> Result<()> {
-    let nm = NMProxy::new(&conn).await?;
-    let dbus = zbus::fdo::DBusProxy::new(&conn).await?;
-    let mut streams = base_network_event_streams(&nm, &dbus).await?;
-
-    match settings::settings_events(&conn).await {
-        Ok(settings_stream) => {
-            streams.push(Box::pin(settings_stream.map(|item| match item {
-                Ok(change) => InternalEvent::Event(settings_change_event(change)),
-                Err(err) => InternalEvent::Error(err),
-            })));
-        }
-        Err(err) => warn!("failed to subscribe to settings events: {err}"),
+    macro_rules! setup_or_report {
+        ($future:expr) => {
+            match $future.await {
+                Ok(value) => value,
+                Err(error) => {
+                    let _ = ready_tx.send(Err(error.into()));
+                    return Ok(());
+                }
+            }
+        };
     }
 
-    for stream in device_state_streams(&conn, &nm).await? {
+    let nm = setup_or_report!(NMProxy::new(&conn));
+    let dbus = setup_or_report!(zbus::fdo::DBusProxy::new(&conn));
+    let mut streams = setup_or_report!(base_network_event_streams(&nm, &dbus));
+
+    let settings_stream = setup_or_report!(settings::settings_events(&conn));
+    streams.push(Box::pin(settings_stream.map(|item| match item {
+        Ok(change) => InternalEvent::Event(settings_change_event(change)),
+        Err(err) => InternalEvent::Error(err),
+    })));
+
+    for stream in setup_or_report!(device_state_streams(&conn, &nm)) {
         streams.push(stream);
     }
 
-    for stream in access_point_streams(&conn, &nm).await? {
+    for stream in setup_or_report!(access_point_streams(&conn, &nm)) {
         streams.push(stream);
+    }
+
+    if ready_tx.send(Ok(())).is_err() {
+        return Ok(());
     }
 
     let mut merged = futures::stream::select_all(streams);
     while let Some(internal) = merged.next().await {
-        match internal {
-            InternalEvent::Event(event) => {
+        match classify_internal_event(internal) {
+            InternalEventAction::Event(event) => {
                 if !send_event(&tx, event) {
                     return Ok(());
                 }
             }
-            InternalEvent::Error(err) => {
+            InternalEventAction::Error(err) => {
                 if !send_error(&tx, err) {
                     return Ok(());
                 }
             }
-            InternalEvent::AccessPointAdded(path) => {
+            InternalEventAction::MonitorAccessPoint(path) => {
                 if !send_event(&tx, NetworkEvent::AccessPointsChanged) {
                     return Ok(());
                 }
@@ -89,12 +125,7 @@ async fn run_network_events(
                     Err(err) => trace!("failed to monitor access point {path}: {err}"),
                 }
             }
-            InternalEvent::AccessPointRemoved => {
-                if !send_event(&tx, NetworkEvent::AccessPointsChanged) {
-                    return Ok(());
-                }
-            }
-            InternalEvent::DeviceAdded(path) => {
+            InternalEventAction::MonitorDevice(path) => {
                 let event = device_changed_for_path(&conn, &path).await;
                 if !send_event(&tx, event) {
                     return Ok(());
@@ -110,11 +141,6 @@ async fn run_network_events(
                         }
                     }
                     Err(err) => trace!("failed to monitor wireless device {path}: {err}"),
-                }
-            }
-            InternalEvent::DeviceRemoved => {
-                if !send_event(&tx, device_change_event(None)) {
-                    return Ok(());
                 }
             }
         }
@@ -335,27 +361,114 @@ fn send_error(tx: &mpsc::UnboundedSender<Result<NetworkEvent>>, err: ConnectionE
 
 #[cfg(test)]
 mod tests {
+    use futures::StreamExt;
+
     use super::*;
 
-    #[test]
-    fn settings_change_maps_to_network_event() {
-        let event = settings_change_event(SettingsChange::Reloaded);
+    fn path(value: &str) -> OwnedObjectPath {
+        OwnedObjectPath::try_from(value).expect("valid object path")
+    }
 
+    #[test]
+    fn internal_event_classifier_preserves_every_event_kind() {
         assert!(matches!(
-            event,
-            NetworkEvent::SettingsChanged(SettingsChange::Reloaded)
+            classify_internal_event(InternalEvent::Event(NetworkEvent::ConnectivityChanged)),
+            InternalEventAction::Event(NetworkEvent::ConnectivityChanged)
+        ));
+        assert!(matches!(
+            classify_internal_event(InternalEvent::Error(ConnectionError::Stuck(
+                "stream failed".into()
+            ))),
+            InternalEventAction::Error(ConnectionError::Stuck(message))
+                if message == "stream failed"
+        ));
+
+        let access_point = path("/org/freedesktop/NetworkManager/AccessPoint/4");
+        match classify_internal_event(InternalEvent::AccessPointAdded(access_point.clone())) {
+            InternalEventAction::MonitorAccessPoint(actual) => {
+                assert_eq!(actual, access_point);
+            }
+            _ => panic!("expected access-point monitoring action"),
+        }
+        assert!(matches!(
+            classify_internal_event(InternalEvent::AccessPointRemoved),
+            InternalEventAction::Event(NetworkEvent::AccessPointsChanged)
+        ));
+
+        let device = path("/org/freedesktop/NetworkManager/Devices/2");
+        match classify_internal_event(InternalEvent::DeviceAdded(device.clone())) {
+            InternalEventAction::MonitorDevice(actual) => assert_eq!(actual, device),
+            _ => panic!("expected device monitoring action"),
+        }
+        assert!(matches!(
+            classify_internal_event(InternalEvent::DeviceRemoved),
+            InternalEventAction::Event(NetworkEvent::DeviceChanged { interface: None })
         ));
     }
 
     #[test]
-    fn device_change_keeps_interface_name() {
+    fn settings_change_preserves_variant_and_path() {
+        let expected = path("/org/freedesktop/NetworkManager/Settings/17");
+        let event = settings_change_event(SettingsChange::Updated {
+            path: expected.clone(),
+        });
+
+        match event {
+            NetworkEvent::SettingsChanged(SettingsChange::Updated { path }) => {
+                assert_eq!(path, expected)
+            }
+            other => panic!("expected updated settings event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_change_preserves_known_and_unknown_interfaces() {
         let event = device_change_event(Some("wlan0".into()));
 
         match event {
             NetworkEvent::DeviceChanged { interface } => {
                 assert_eq!(interface.as_deref(), Some("wlan0"));
             }
-            _ => panic!("unexpected event"),
+            other => panic!("expected device event, got {other:?}"),
         }
+
+        assert!(matches!(
+            device_change_event(None),
+            NetworkEvent::DeviceChanged { interface: None }
+        ));
+    }
+
+    #[tokio::test]
+    async fn send_event_delivers_value_and_reports_closed_consumer() {
+        let (tx, mut rx) = mpsc::unbounded();
+
+        assert!(send_event(&tx, NetworkEvent::ConnectivityChanged));
+        assert!(matches!(
+            rx.next().await.expect("network event").unwrap(),
+            NetworkEvent::ConnectivityChanged
+        ));
+
+        drop(rx);
+        assert!(!send_event(&tx, NetworkEvent::AccessPointsChanged));
+    }
+
+    #[tokio::test]
+    async fn send_error_delivers_error_and_reports_closed_consumer() {
+        let (tx, mut rx) = mpsc::unbounded();
+
+        assert!(send_error(
+            &tx,
+            ConnectionError::Stuck("signal ended".into())
+        ));
+        assert!(matches!(
+            rx.next().await.expect("network error"),
+            Err(ConnectionError::Stuck(message)) if message == "signal ended"
+        ));
+
+        drop(rx);
+        assert!(!send_error(
+            &tx,
+            ConnectionError::Stuck("consumer gone".into())
+        ));
     }
 }

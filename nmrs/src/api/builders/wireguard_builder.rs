@@ -4,7 +4,7 @@
 //! with comprehensive validation of keys, addresses, and peer configurations.
 
 use std::collections::HashMap;
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use uuid::Uuid;
 use zvariant::Value;
 
@@ -276,35 +276,42 @@ impl WireGuardBuilder {
 
         self.inner = self.inner.with_section("wireguard", wireguard);
 
-        // Configure IPv4 with manual addressing
-        self.inner = self.inner.ipv4_manual(vec![IpConfig::new(ip, prefix)]);
-
-        // Add DNS if configured
-        if let Some(dns) = self.dns {
-            let dns_addrs: Result<Vec<Ipv4Addr>, _> =
-                dns.iter().map(|s| s.parse::<Ipv4Addr>()).collect();
-
-            match dns_addrs {
-                Ok(addrs) => {
-                    self.inner = self.inner.ipv4_dns(addrs);
-                }
-                Err(_) => {
-                    return Err(ConnectionError::VpnFailed(
-                        "Invalid DNS server address".into(),
-                    ));
-                }
+        match ip {
+            IpAddr::V4(ip) => {
+                self.inner = self
+                    .inner
+                    .ipv4_manual(vec![IpConfig::new(ip.to_string(), prefix)])
+                    .ipv6_ignore();
+            }
+            IpAddr::V6(ip) => {
+                self.inner = self
+                    .inner
+                    .ipv4_disabled()
+                    .ipv6_manual(vec![IpConfig::new(ip.to_string(), prefix)]);
             }
         }
 
-        // Add MTU to IPv4 if configured
-        if let Some(mtu) = self.mtu {
-            self.inner = self.inner.update_section("ipv4", |ipv4| {
-                ipv4.insert("mtu", Value::from(mtu));
-            });
+        if let Some(dns) = self.dns {
+            let mut ipv4_dns = Vec::<Ipv4Addr>::new();
+            let mut ipv6_dns = Vec::<Ipv6Addr>::new();
+            for server in dns {
+                match server.parse::<IpAddr>() {
+                    Ok(IpAddr::V4(address)) => ipv4_dns.push(address),
+                    Ok(IpAddr::V6(address)) => ipv6_dns.push(address),
+                    Err(_) => {
+                        return Err(ConnectionError::VpnFailed(format!(
+                            "Invalid DNS server address: {server}"
+                        )));
+                    }
+                }
+            }
+            if !ipv4_dns.is_empty() {
+                self.inner = self.inner.ipv4_dns(ipv4_dns);
+            }
+            if !ipv6_dns.is_empty() {
+                self.inner = self.inner.ipv6_dns(ipv6_dns);
+            }
         }
-
-        // Set IPv6 to ignore
-        self.inner = self.inner.ipv6_ignore();
 
         Ok(self.inner.build())
     }
@@ -314,18 +321,21 @@ impl WireGuardBuilder {
 
 fn validate_wireguard_key(key: &str, key_type: &str) -> Result<(), ConnectionError> {
     if key.trim().is_empty() {
-        return Err(ConnectionError::InvalidPrivateKey(format!(
-            "{} cannot be empty",
-            key_type
-        )));
+        return Err(invalid_wireguard_key(
+            key_type,
+            format!("{} cannot be empty", key_type),
+        ));
     }
 
     let len = key.trim().len();
     if !(40..=50).contains(&len) {
-        return Err(ConnectionError::InvalidPrivateKey(format!(
-            "{} has invalid length: {} (expected ~44 characters)",
-            key_type, len
-        )));
+        return Err(invalid_wireguard_key(
+            key_type,
+            format!(
+                "{} has invalid length: {} (expected ~44 characters)",
+                key_type, len
+            ),
+        ));
     }
 
     let is_valid_base64 = key
@@ -334,16 +344,24 @@ fn validate_wireguard_key(key: &str, key_type: &str) -> Result<(), ConnectionErr
         .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=');
 
     if !is_valid_base64 {
-        return Err(ConnectionError::InvalidPrivateKey(format!(
-            "{} contains invalid base64 characters",
-            key_type
-        )));
+        return Err(invalid_wireguard_key(
+            key_type,
+            format!("{} contains invalid base64 characters", key_type),
+        ));
     }
 
     Ok(())
 }
 
-fn validate_address(address: &str) -> Result<(String, u32), ConnectionError> {
+fn invalid_wireguard_key(key_type: &str, message: String) -> ConnectionError {
+    if key_type.contains("public key") {
+        ConnectionError::InvalidPublicKey(message)
+    } else {
+        ConnectionError::InvalidPrivateKey(message)
+    }
+}
+
+fn validate_address(address: &str) -> Result<(IpAddr, u32), ConnectionError> {
     let (ip, prefix) = address.split_once('/').ok_or_else(|| {
         ConnectionError::InvalidAddress(format!(
             "missing CIDR prefix (e.g., '10.0.0.2/24'): {}",
@@ -351,54 +369,22 @@ fn validate_address(address: &str) -> Result<(String, u32), ConnectionError> {
         ))
     })?;
 
-    if ip.trim().is_empty() {
-        return Err(ConnectionError::InvalidAddress(
-            "IP address cannot be empty".into(),
-        ));
-    }
+    let ip = ip.trim().parse::<IpAddr>().map_err(|_| {
+        ConnectionError::InvalidAddress(format!("invalid IP address: {}", ip.trim()))
+    })?;
 
     let prefix: u32 = prefix
         .parse()
         .map_err(|_| ConnectionError::InvalidAddress(format!("invalid CIDR prefix: {}", prefix)))?;
 
-    if prefix > 128 {
+    let max_prefix = if ip.is_ipv4() { 32 } else { 128 };
+    if prefix > max_prefix {
         return Err(ConnectionError::InvalidAddress(format!(
-            "CIDR prefix too large: {} (max 128)",
-            prefix
+            "CIDR prefix too large: {prefix} (max {max_prefix})"
         )));
     }
 
-    // Basic IPv4 validation
-    if ip.contains('.') {
-        let octets: Vec<&str> = ip.split('.').collect();
-        if octets.len() != 4 {
-            return Err(ConnectionError::InvalidAddress(format!(
-                "invalid IPv4 address: {}",
-                ip
-            )));
-        }
-
-        for octet in octets {
-            let num: u32 = octet.parse().map_err(|_| {
-                ConnectionError::InvalidAddress(format!("invalid IPv4 octet: {}", octet))
-            })?;
-            if num > 255 {
-                return Err(ConnectionError::InvalidAddress(format!(
-                    "IPv4 octet out of range: {}",
-                    num
-                )));
-            }
-        }
-
-        if prefix > 32 {
-            return Err(ConnectionError::InvalidAddress(format!(
-                "IPv4 CIDR prefix too large: {} (max 32)",
-                prefix
-            )));
-        }
-    }
-
-    Ok((ip.to_string(), prefix))
+    Ok((ip, prefix))
 }
 
 fn validate_gateway(gateway: &str) -> Result<(), ConnectionError> {
@@ -408,25 +394,27 @@ fn validate_gateway(gateway: &str) -> Result<(), ConnectionError> {
         ));
     }
 
-    if !gateway.contains(':') {
-        return Err(ConnectionError::InvalidGateway(format!(
-            "gateway must be in 'host:port' format: {}",
-            gateway
-        )));
-    }
-
-    let parts: Vec<&str> = gateway.rsplitn(2, ':').collect();
-    if parts.len() != 2 {
-        return Err(ConnectionError::InvalidGateway(format!(
-            "invalid gateway format: {}",
-            gateway
-        )));
-    }
-
-    let port_str = parts[0];
-    let port: u16 = port_str.parse().map_err(|_| {
-        ConnectionError::InvalidGateway(format!("invalid port number: {}", port_str))
+    let (host, port_str) = gateway.rsplit_once(':').ok_or_else(|| {
+        ConnectionError::InvalidGateway(format!("gateway must be in 'host:port' format: {gateway}"))
     })?;
+    if host.trim().is_empty() {
+        return Err(ConnectionError::InvalidGateway(
+            "gateway host cannot be empty".into(),
+        ));
+    }
+    if host.contains(':')
+        && !(host.starts_with('[')
+            && host.ends_with(']')
+            && host[1..host.len() - 1].parse::<Ipv6Addr>().is_ok())
+    {
+        return Err(ConnectionError::InvalidGateway(format!(
+            "IPv6 gateway must use '[address]:port' format: {gateway}"
+        )));
+    }
+
+    let port: u16 = port_str
+        .parse()
+        .map_err(|_| ConnectionError::InvalidGateway(format!("invalid port number: {port_str}")))?;
 
     if port == 0 {
         return Err(ConnectionError::InvalidGateway("port cannot be 0".into()));
@@ -439,9 +427,42 @@ fn validate_gateway(gateway: &str) -> Result<(), ConnectionError> {
 mod tests {
     use super::*;
 
+    const PRIVATE_KEY: &str = "YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=";
+    const PUBLIC_KEY: &str = "HIgo9xNzJMWLKAShlKl6/bUT1VI9Q0SDBXGtLXkPFXc=";
+
+    fn address_data(address: &str, prefix: u32) -> Value<'static> {
+        let mut entry = HashMap::new();
+        entry.insert("address".to_string(), Value::from(address.to_string()));
+        entry.insert("prefix".to_string(), Value::from(prefix));
+        Value::from(vec![entry])
+    }
+
+    fn peer_string_array(peer: &zvariant::Dict<'_, '_>, key: &str) -> Vec<String> {
+        let value = peer
+            .iter()
+            .find_map(|(candidate, value)| {
+                matches!(candidate, Value::Str(candidate) if candidate.as_str() == key)
+                    .then_some(value)
+            })
+            .unwrap_or_else(|| panic!("missing peer property {key}"));
+        let Value::Value(value) = value else {
+            panic!("peer property {key} must be stored as a variant");
+        };
+        let Value::Array(values) = value.as_ref() else {
+            panic!("peer property {key} must be an array");
+        };
+        values
+            .iter()
+            .map(|value| match value {
+                Value::Str(value) => value.as_str().to_string(),
+                _ => panic!("peer property {key} entries must be strings"),
+            })
+            .collect()
+    }
+
     fn create_test_peer() -> WireGuardPeer {
         WireGuardPeer {
-            public_key: "HIgo9xNzJMWLKAShlKl6/bUT1VI9Q0SDBXGtLXkPFXc=".into(),
+            public_key: PUBLIC_KEY.into(),
             gateway: "vpn.example.com:51820".into(),
             allowed_ips: vec!["0.0.0.0/0".into()],
             preshared_key: None,
@@ -449,23 +470,95 @@ mod tests {
         }
     }
 
-    #[test]
-    fn builds_basic_wireguard_connection() {
-        let settings = WireGuardBuilder::new("TestVPN")
-            .private_key("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=")
-            .address("10.0.0.2/24")
+    fn build_test_connection(
+        address: &str,
+    ) -> HashMap<&'static str, HashMap<&'static str, Value<'static>>> {
+        WireGuardBuilder::new("TestVPN")
+            .private_key(PRIVATE_KEY)
+            .address(address)
             .add_peer(create_test_peer())
             .autoconnect(false)
             .build()
-            .expect("Failed to build");
+            .expect("valid WireGuard settings")
+    }
 
-        assert!(settings.contains_key("connection"));
-        assert!(settings.contains_key("wireguard"));
-        assert!(settings.contains_key("ipv4"));
-        assert!(settings.contains_key("ipv6"));
+    #[test]
+    fn builds_basic_wireguard_connection() {
+        let settings = build_test_connection("10.0.0.2/24");
 
         let conn = settings.get("connection").unwrap();
         assert_eq!(conn.get("type"), Some(&Value::from("wireguard")));
+        assert_eq!(conn.get("id"), Some(&Value::from("TestVPN")));
+        assert_eq!(conn.get("interface-name"), Some(&Value::from("wg-testvpn")));
+        assert_eq!(conn.get("autoconnect"), Some(&Value::from(false)));
+        assert_eq!(
+            conn.get("uuid"),
+            Some(&Value::from(
+                Uuid::new_v5(&Uuid::NAMESPACE_DNS, b"wg:TestVPN").to_string()
+            ))
+        );
+
+        let ipv4 = settings.get("ipv4").unwrap();
+        assert_eq!(ipv4.get("method"), Some(&Value::from("manual")));
+        assert_eq!(
+            ipv4.get("address-data"),
+            Some(&address_data("10.0.0.2", 24))
+        );
+        assert_eq!(settings["ipv6"].get("method"), Some(&Value::from("ignore")));
+    }
+
+    #[test]
+    fn serializes_complete_peer_payload() {
+        let peer =
+            create_test_peer().with_preshared_key("PSKABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklm=");
+        let settings = WireGuardBuilder::new("TestVPN")
+            .private_key(PRIVATE_KEY)
+            .address("10.0.0.2/24")
+            .add_peer(peer)
+            .build()
+            .unwrap();
+
+        let wireguard = settings.get("wireguard").unwrap();
+        assert_eq!(
+            wireguard.get("private-key"),
+            Some(&Value::from(PRIVATE_KEY))
+        );
+        let peers = wireguard.get("peers").unwrap();
+        assert_eq!(peers.value_signature().to_string(), "aa{sv}");
+        let Value::Array(peers) = peers else {
+            panic!("wireguard.peers must be an array");
+        };
+        assert_eq!(peers.iter().count(), 1);
+        let Value::Dict(peer) = peers.iter().next().unwrap() else {
+            panic!("each wireguard peer must be a dictionary");
+        };
+        assert_eq!(
+            peer.get::<Value, String>(&Value::from("public-key"))
+                .unwrap()
+                .as_deref(),
+            Some(PUBLIC_KEY)
+        );
+        assert_eq!(
+            peer.get::<Value, String>(&Value::from("endpoint"))
+                .unwrap()
+                .as_deref(),
+            Some("vpn.example.com:51820")
+        );
+        assert_eq!(
+            peer_string_array(peer, "allowed-ips"),
+            vec!["0.0.0.0/0".to_string()]
+        );
+        assert_eq!(
+            peer.get::<Value, String>(&Value::from("preshared-key"))
+                .unwrap()
+                .as_deref(),
+            Some("PSKABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklm=")
+        );
+        assert_eq!(
+            peer.get::<Value, u32>(&Value::from("persistent-keepalive"))
+                .unwrap(),
+            Some(25)
+        );
     }
 
     #[test]
@@ -475,59 +568,69 @@ mod tests {
             .add_peer(create_test_peer())
             .build();
 
-        assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            ConnectionError::InvalidPrivateKey(_)
+            ConnectionError::InvalidPrivateKey(message) if message == "Private key not set"
         ));
     }
 
     #[test]
     fn requires_address() {
         let result = WireGuardBuilder::new("TestVPN")
-            .private_key("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=")
+            .private_key(PRIVATE_KEY)
             .add_peer(create_test_peer())
             .build();
 
-        assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            ConnectionError::InvalidAddress(_)
+            ConnectionError::InvalidAddress(message) if message == "Address not set"
         ));
     }
 
     #[test]
     fn requires_at_least_one_peer() {
         let result = WireGuardBuilder::new("TestVPN")
-            .private_key("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=")
+            .private_key(PRIVATE_KEY)
             .address("10.0.0.2/24")
             .build();
 
-        assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            ConnectionError::InvalidPeers(_)
+            ConnectionError::InvalidPeers(message) if message == "No peers configured"
         ));
     }
 
     #[test]
     fn adds_dns_servers() {
         let settings = WireGuardBuilder::new("TestVPN")
-            .private_key("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=")
+            .private_key(PRIVATE_KEY)
             .address("10.0.0.2/24")
             .add_peer(create_test_peer())
-            .dns(vec!["1.1.1.1".into(), "8.8.8.8".into()])
+            .dns(vec!["1.1.1.1".into(), "2001:4860:4860::8888".into()])
             .build()
-            .expect("Failed to build");
+            .expect("valid mixed-family DNS settings");
 
         let ipv4 = settings.get("ipv4").unwrap();
-        assert!(ipv4.contains_key("dns"));
+        assert_eq!(
+            ipv4.get("dns"),
+            Some(&Value::from(vec![u32::from(Ipv4Addr::new(1, 1, 1, 1))]))
+        );
+        assert_eq!(ipv4["dns"].value_signature().to_string(), "au");
+
+        let ipv6 = settings.get("ipv6").unwrap();
+        let expected_v6 = "2001:4860:4860::8888"
+            .parse::<Ipv6Addr>()
+            .unwrap()
+            .octets()
+            .to_vec();
+        assert_eq!(ipv6.get("dns"), Some(&Value::from(vec![expected_v6])));
+        assert_eq!(ipv6["dns"].value_signature().to_string(), "aay");
     }
 
     #[test]
     fn sets_mtu() {
         let settings = WireGuardBuilder::new("TestVPN")
-            .private_key("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=")
+            .private_key(PRIVATE_KEY)
             .address("10.0.0.2/24")
             .add_peer(create_test_peer())
             .mtu(1420)
@@ -536,6 +639,7 @@ mod tests {
 
         let wireguard = settings.get("wireguard").unwrap();
         assert_eq!(wireguard.get("mtu"), Some(&Value::from(1420u32)));
+        assert!(!settings["ipv4"].contains_key("mtu"));
     }
 
     #[test]
@@ -550,12 +654,187 @@ mod tests {
         };
 
         let settings = WireGuardBuilder::new("TestVPN")
-            .private_key("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=")
+            .private_key(PRIVATE_KEY)
             .address("10.0.0.2/24")
             .add_peers(vec![peer1, peer2])
             .build()
             .expect("Failed to build");
 
-        assert!(settings.contains_key("wireguard"));
+        let Value::Array(peers) = &settings["wireguard"]["peers"] else {
+            panic!("wireguard.peers must be an array");
+        };
+        assert_eq!(peers.signature().to_string(), "aa{sv}");
+        let peers = peers.iter().collect::<Vec<_>>();
+        assert_eq!(peers.len(), 2);
+        assert_eq!(peers[0].value_signature().to_string(), "a{sv}");
+        assert_eq!(peers[1].value_signature().to_string(), "a{sv}");
+
+        let Value::Dict(first) = peers[0] else {
+            panic!("first wireguard peer must be a dictionary");
+        };
+        assert_eq!(
+            first
+                .get::<Value, String>(&Value::from("public-key"))
+                .unwrap()
+                .as_deref(),
+            Some(PUBLIC_KEY)
+        );
+        assert_eq!(
+            first
+                .get::<Value, String>(&Value::from("endpoint"))
+                .unwrap()
+                .as_deref(),
+            Some("vpn.example.com:51820")
+        );
+        assert_eq!(
+            peer_string_array(first, "allowed-ips"),
+            vec!["0.0.0.0/0".to_string()]
+        );
+        assert_eq!(
+            first
+                .get::<Value, u32>(&Value::from("persistent-keepalive"))
+                .unwrap(),
+            Some(25)
+        );
+
+        let Value::Dict(second) = peers[1] else {
+            panic!("second wireguard peer must be a dictionary");
+        };
+        assert_eq!(
+            second
+                .get::<Value, String>(&Value::from("public-key"))
+                .unwrap()
+                .as_deref(),
+            Some("xScVkH3fUGUVRvGLFcjkx+GGD7cf5eBVyN3Gh4FLjmI=")
+        );
+        assert_eq!(
+            second
+                .get::<Value, String>(&Value::from("endpoint"))
+                .unwrap()
+                .as_deref(),
+            Some("peer2.example.com:51821")
+        );
+        assert_eq!(
+            peer_string_array(second, "allowed-ips"),
+            vec!["192.168.0.0/16".to_string()]
+        );
+        assert!(
+            second
+                .get::<Value, String>(&Value::from("preshared-key"))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            second
+                .get::<Value, u32>(&Value::from("persistent-keepalive"))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn serializes_ipv6_address_in_ipv6_section() {
+        let settings = build_test_connection("fd00::2/64");
+
+        assert_eq!(
+            settings["ipv4"].get("method"),
+            Some(&Value::from("disabled"))
+        );
+        assert!(!settings["ipv4"].contains_key("address-data"));
+        assert_eq!(settings["ipv6"].get("method"), Some(&Value::from("manual")));
+        assert_eq!(
+            settings["ipv6"].get("address-data"),
+            Some(&address_data("fd00::2", 64))
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_ip_and_dns_addresses() {
+        let invalid_address = WireGuardBuilder::new("TestVPN")
+            .private_key(PRIVATE_KEY)
+            .address("fd00::xyz/64")
+            .add_peer(create_test_peer())
+            .build();
+        assert!(matches!(
+            invalid_address.unwrap_err(),
+            ConnectionError::InvalidAddress(message)
+                if message == "invalid IP address: fd00::xyz"
+        ));
+
+        let invalid_dns = WireGuardBuilder::new("TestVPN")
+            .private_key(PRIVATE_KEY)
+            .address("10.0.0.2/24")
+            .add_peer(create_test_peer())
+            .dns(vec!["not-an-address".into()])
+            .build();
+        assert!(matches!(
+            invalid_dns.unwrap_err(),
+            ConnectionError::VpnFailed(message)
+                if message == "Invalid DNS server address: not-an-address"
+        ));
+    }
+
+    #[test]
+    fn validates_gateway_host_and_ipv6_brackets() {
+        for (gateway, expected) in [
+            (":51820", "gateway host cannot be empty"),
+            (
+                "2001:db8::1:51820",
+                "IPv6 gateway must use '[address]:port' format: 2001:db8::1:51820",
+            ),
+        ] {
+            let mut peer = create_test_peer();
+            peer.gateway = gateway.into();
+            let result = WireGuardBuilder::new("TestVPN")
+                .private_key(PRIVATE_KEY)
+                .address("10.0.0.2/24")
+                .add_peer(peer)
+                .build();
+            assert!(
+                matches!(
+                    result.unwrap_err(),
+                    ConnectionError::InvalidGateway(message) if message == expected
+                ),
+                "gateway {gateway} should be rejected"
+            );
+        }
+
+        let mut peer = create_test_peer();
+        peer.public_key = "!".repeat(44);
+        let result = WireGuardBuilder::new("TestVPN")
+            .private_key(PRIVATE_KEY)
+            .address("10.0.0.2/24")
+            .add_peer(peer)
+            .build();
+        assert!(matches!(
+            result.unwrap_err(),
+            ConnectionError::InvalidPublicKey(message)
+                if message == "Peer 0 public key contains invalid base64 characters"
+        ));
+
+        let mut peer = create_test_peer();
+        peer.allowed_ips.clear();
+        let result = WireGuardBuilder::new("TestVPN")
+            .private_key(PRIVATE_KEY)
+            .address("10.0.0.2/24")
+            .add_peer(peer)
+            .build();
+        assert!(matches!(
+            result.unwrap_err(),
+            ConnectionError::InvalidPeers(message) if message == "Peer 0 has no allowed IPs"
+        ));
+
+        let mut peer = create_test_peer();
+        peer.gateway = "[2001:db8::1]:51820".into();
+        let settings = WireGuardBuilder::new("TestVPN")
+            .private_key(PRIVATE_KEY)
+            .address("fd00::2/64")
+            .add_peer(peer)
+            .build()
+            .unwrap();
+        assert_eq!(
+            settings["ipv6"].get("address-data"),
+            Some(&address_data("fd00::2", 64))
+        );
     }
 }

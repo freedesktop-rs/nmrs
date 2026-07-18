@@ -189,6 +189,15 @@ If something is missing that you'd like to see, please file a PR or issue, addin
 
 Contributions are welcome. Please read [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
 
+Environmental tests are opt-in and ignored by a normal `cargo test`, so local
+test runs never probe the host NetworkManager implicitly. Use
+`docker compose run --build --rm test-integration` for isolated settings,
+NetworkManager-routed secrets, native WireGuard activation, and veth-backed
+wired DHCP lifecycles, or
+`test-wifi-integration` with two `mac80211_hwsim` radios for the deterministic
+WPA/DHCP and callback-monitor lifecycle. See the contributing guide for the
+exact commands.
+
 ## Requirements
 
 - **Rust**: 1.90.0+

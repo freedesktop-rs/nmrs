@@ -52,11 +52,19 @@ if nm.has_saved_connection("HomeWiFi").await? {
 
 ## How Saved Profiles Affect Connection
 
-When you call `connect()` with an SSID that has a saved profile, nmrs activates the saved profile directly. This means:
+When you call `connect()` with an SSID that has a saved profile, the supplied
+`WifiSecurity` selects reuse or a fresh credential path:
 
-- **Credentials are already stored** — the `WifiSecurity` value you pass is ignored
-- **Connection is faster** — no need to create a new profile
-- **Settings are preserved** — autoconnect, priority, and IP configuration are retained
+- `WifiSecurity::Open` activates the saved profile.
+- `WifiSecurity::WpaPsk` with an empty PSK activates the saved profile using its
+  stored secret.
+- `WifiSecurity::WpaPsk` with a non-empty PSK builds a fresh profile using that
+  password.
+- `WifiSecurity::WpaEap` and `WifiSecurity::Wpa3Eap192bit` build a fresh profile
+  using the supplied EAP configuration.
+
+Reusing a profile preserves its autoconnect, priority, IP configuration, and
+other saved settings. Explicit fresh credentials are never silently ignored.
 
 ```rust
 let nm = NetworkManager::new().await?;
@@ -66,9 +74,16 @@ nm.connect("HomeWiFi", None, WifiSecurity::WpaPsk {
     psk: "password".into(),
 }).await?;
 
-// Later reconnection — saved profile is used, security parameter is ignored
-nm.connect("HomeWiFi", None, WifiSecurity::Open).await?;
+// Later reconnection — request the PSK stored in the saved profile
+nm.connect("HomeWiFi", None, WifiSecurity::WpaPsk {
+    psk: String::new(),
+}).await?;
 ```
+
+If activation with an empty-PSK stored-secret request fails, nmrs returns the
+activation error without deleting the saved profile. The caller can retry,
+inspect the profile, supply a non-empty replacement PSK, or remove it explicitly
+with `forget()`.
 
 If a saved profile is missing or has stale secrets, NetworkManager may ask a
 registered secret agent for credentials during activation. GUI apps should
@@ -237,9 +252,10 @@ if let Some(path) = nm.get_saved_connection_path("HomeWiFi").await? {
 
 1. **Created** — when you first connect to a network, NetworkManager creates a profile
 2. **Persisted** — profiles are saved to `/etc/NetworkManager/system-connections/`
-3. **Reused** — subsequent connections to the same SSID use the saved profile
-4. **Updated** — if you connect with different credentials, the profile may be updated
-5. **Deleted** — calling `forget()`, `forget_vpn()`, or `forget_bluetooth()` removes it
+3. **Reused** — `WifiSecurity::Open` or an empty PSK activates the saved profile
+4. **Rebuilt** — a non-empty PSK or EAP configuration creates a fresh profile
+5. **Preserved on stored-secret failure** — a failed empty-PSK activation does not delete the saved profile
+6. **Deleted** — calling `forget()`, `forget_vpn()`, or `forget_bluetooth()` removes it
 
 ## Next Steps
 

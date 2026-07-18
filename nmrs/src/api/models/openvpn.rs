@@ -766,11 +766,13 @@ mod tests {
     fn try_from_inline_cert_returns_error() {
         let input = ovpn_with_remote("<cert>\nCERTPEM\n</cert>\n<key>\nKEYPEM\n</key>");
         let ovpn = parse_ovpn(&input).unwrap();
-        let result = OpenVpnConfig::try_from(ovpn);
-        assert!(
-            result.is_err(),
-            "inline certs should be rejected by TryFrom"
-        );
+        let error = OpenVpnConfig::try_from(ovpn).unwrap_err();
+        assert!(matches!(
+            error,
+            ConnectionError::VpnFailed(message)
+                if message.contains("inline <cert> blocks")
+                    && message.contains("TryFrom<OvpnFile> cannot handle inline certs")
+        ));
     }
 
     #[test]

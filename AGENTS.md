@@ -27,7 +27,8 @@ Internal modules (`core`, `dbus`, `monitoring`, `types`, `util`) are not part of
 
 ## Build and test
 
-Requires a running NetworkManager instance (or use the provided Dockerfile).
+Library and documentation tests do not require NetworkManager. Environmental
+tests must use the isolated Docker harness or an explicit opt-in.
 
 ```bash
 cargo check                                               # quick compile check
@@ -35,17 +36,31 @@ cargo fmt --all -- --check                                # formatting (default 
 cargo clippy --all-targets --all-features -- -D warnings  # lints (warnings are errors in CI)
 cargo test -p nmrs --lib --all-features                   # unit tests only
 cargo test --doc --all-features --workspace               # doc tests
-cargo test --all-features --workspace                     # unit + integration (needs NM + wifi hardware)
-cargo test --test integration_test --all-features         # integration only
+cargo test --all-features --workspace                     # unit/docs; environmental tests stay ignored
+docker compose run --build --rm test-integration          # isolated NM settings/agent/WireGuard/wired lifecycle
 docker compose run --build --rm test-wifi-integration     # CI-equivalent virtual WiFi tests (Linux)
 ```
 
-Integration tests require wifi hardware or `mac80211_hwsim`:
+Integration tests are `#[ignore]` so normal test commands never touch the host
+NetworkManager. The WiFi harness requires two `mac80211_hwsim` radios:
 ```bash
 sudo modprobe mac80211_hwsim radios=2
-cargo test --test integration_test --all-features
+docker compose run --build --rm test-wifi-integration
 sudo modprobe -r mac80211_hwsim
 ```
+
+For a deliberately selected local NetworkManager, the NM-only opt-in is:
+```bash
+NMRS_REQUIRE_NETWORKMANAGER=1 \
+  cargo test --test integration_test --all-features \
+  networkmanager_ -- --ignored --test-threads=1
+```
+
+Those tests create, update, and delete saved profiles; exercise a real
+NetworkManager-to-agent secret exchange; and activate a native WireGuard
+connection. The Docker harness additionally creates an isolated veth pair and
+validates wired DHCP activation. Once a capability flag is set, missing
+facilities, timeouts, and unexpected errors must fail rather than skip.
 
 ## Toolchain
 

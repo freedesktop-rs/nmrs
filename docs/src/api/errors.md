@@ -95,7 +95,7 @@ These indicate issues the user can fix:
 |-------|------------|
 | `NotFound` | Move closer to the network or check SSID spelling |
 | `AuthFailed` | Check password or credentials |
-| `MissingPassword` | Provide a non-empty password |
+| `MissingPassword` | Provide a non-empty password, or ensure a saved profile exists before requesting its stored PSK |
 | `Timeout` | Retry or increase timeout |
 | `DhcpFailed` | Check network infrastructure |
 | `NoWifiDevice` | Check that a Wi-Fi adapter is installed |

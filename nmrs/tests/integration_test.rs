@@ -1,1607 +1,1580 @@
+use std::collections::HashMap;
+use std::future::Future;
+use std::panic::{AssertUnwindSafe, resume_unwind};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
+
+use futures::{FutureExt, StreamExt};
+use nmrs::agent::{SecretAgent, SecretAgentFlags, SecretAgentHandle, SecretSetting};
+use nmrs::builders::WireGuardBuilder;
+use nmrs::raw::zvariant::{OwnedObjectPath, OwnedValue, Value};
 use nmrs::{
-    ConnectionError, DeviceState, DeviceType, NetworkManager, OpenVpnAuthType, StateReason,
-    VpnKind, WifiSecurity, WireGuardConfig, WireGuardPeer, reason_to_error,
+    ActiveConnection, ActiveConnectionState, ConnectionError, DeviceState, MonitorHandle,
+    NetworkEvent, NetworkEventStream, NetworkManager, SettingsChange, SettingsEventStream,
+    SettingsPatch, SettingsSummary, TimeoutConfig, WifiKeyMgmt, WifiScope, WifiSecurity,
+    WireGuardPeer,
 };
 use serial_test::serial;
-use std::time::Duration;
-use tokio::time::sleep;
+use tokio::time::{sleep, timeout};
+use uuid::Uuid;
 
-/// Helper function to check if NetworkManager is available
-/// Returns true if we can connect to NetworkManager, false otherwise
-async fn is_networkmanager_available() -> bool {
-    NetworkManager::new().await.is_ok()
-}
+const DBUS_TIMEOUT: Duration = Duration::from_secs(10);
+const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
+const WIFI_TIMEOUT: Duration = Duration::from_secs(50);
 
-/// Check if WiFi is available
-async fn has_wifi_device(nm: &NetworkManager) -> bool {
-    nm.list_wireless_devices()
-        .await
-        .map(|d| !d.is_empty())
-        .unwrap_or(false)
-}
-
-/// Check if Ethernet is available
-async fn has_ethernet_device(nm: &NetworkManager) -> bool {
-    nm.list_wired_devices()
-        .await
-        .map(|d| !d.is_empty())
-        .unwrap_or(false)
-}
-
-/// Skip tests if NetworkManager is not available outside the integration harness.
-macro_rules! require_networkmanager {
-    () => {
-        if !is_networkmanager_available().await {
-            if std::env::var_os("NMRS_REQUIRE_NETWORKMANAGER").is_some() {
-                panic!("NetworkManager is required but unavailable");
-            }
-            eprintln!("Skipping test: NetworkManager not available");
-            return;
-        }
-    };
-}
-
-/// Skip tests if WiFi device is not available outside the WiFi integration harness.
-macro_rules! require_wifi {
-    ($nm:expr) => {
-        if !has_wifi_device($nm).await {
-            if std::env::var_os("NMRS_REQUIRE_WIFI").is_some() {
-                panic!("WiFi is required but no WiFi device is available");
-            }
-            eprintln!("Skipping test: No WiFi device available");
-            return;
-        }
-    };
-}
-
-/// Skip tests if Ethernet device is not available
-macro_rules! require_ethernet {
-    ($nm:expr) => {
-        if !has_ethernet_device($nm).await {
-            eprintln!("Skipping test: No Ethernet device available");
-            return;
-        }
-    };
-}
-
-#[tokio::test]
-#[serial]
-async fn test_networkmanager_initialization() {
-    require_networkmanager!();
-
-    let _nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-}
-
-/// Test listing devices
-#[tokio::test]
-#[serial]
-async fn test_list_devices() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-    let devices = nm.list_devices().await.expect("Failed to list devices");
-
-    assert!(!devices.is_empty(), "Expected at least one device");
-
-    for device in &devices {
-        assert!(!device.path.is_empty(), "Device path should not be empty");
-        assert!(
-            !device.interface.is_empty(),
-            "Device interface should not be empty"
-        );
+fn required_env(name: &str) -> String {
+    match std::env::var(name) {
+        Ok(value) if !value.trim().is_empty() => value,
+        Ok(_) => panic!("{name} must not be empty"),
+        Err(error) => panic!(
+            "{name} is required for this ignored integration test ({error}); use the isolated test harness"
+        ),
     }
 }
 
-/// Test WiFi enabled state
-#[tokio::test]
-#[serial]
-async fn test_wifi_enabled_get_set() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-    require_wifi!(&nm);
-
-    let initial_state = nm
-        .wifi_state()
-        .await
-        .expect("Failed to get WiFi enabled state")
-        .enabled;
-
-    match nm.set_wireless_enabled(!initial_state).await {
-        Ok(_) => {
-            sleep(Duration::from_millis(500)).await;
-
-            let new_state = nm
-                .wifi_state()
-                .await
-                .expect("Failed to get WiFi enabled state after toggle")
-                .enabled;
-
-            if new_state == initial_state {
-                eprintln!(
-                    "Warning: WiFi state didn't change (may lack permissions). Initial: {}, New: {}",
-                    initial_state, new_state
-                );
-                return;
-            }
-        }
-        Err(e) => {
-            eprintln!("Failed to toggle WiFi (may lack permissions): {}", e);
-            return;
-        }
-    }
-
-    nm.set_wireless_enabled(initial_state)
-        .await
-        .expect("Failed to restore WiFi enabled state");
-
-    sleep(Duration::from_millis(500)).await;
-
-    let restored_state = nm
-        .wifi_state()
-        .await
-        .expect("Failed to get WiFi enabled state after restore")
-        .enabled;
-    assert_eq!(
-        restored_state, initial_state,
-        "WiFi state should be restored to original"
-    );
+fn required_capability(name: &str) {
+    let value = required_env(name);
+    assert_eq!(value, "1", "{name} must be set to 1, got {value:?}");
 }
 
-#[tokio::test]
-#[serial]
-async fn test_wifi_hardware_enabled() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
+async fn bounded<T>(
+    description: &str,
+    duration: Duration,
+    operation: impl Future<Output = T>,
+) -> T {
+    timeout(duration, operation)
         .await
-        .expect("Failed to connect to NetworkManager");
-
-    require_wifi!(&nm);
-
-    // Read-only property — just verify the call succeeds
-    let state = nm
-        .wifi_state()
-        .await
-        .expect("Failed to get WiFi radio state");
-    let _ = state.hardware_enabled;
+        .unwrap_or_else(|_| panic!("timed out after {duration:?}: {description}"))
 }
 
-/// Test waiting for WiFi to be ready
-#[tokio::test]
-#[serial]
-async fn test_wait_for_wifi_ready() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-    require_wifi!(&nm);
-
-    // Ensure WiFi is enabled
-    nm.set_wireless_enabled(true)
-        .await
-        .expect("Failed to enable WiFi");
-
-    // Wait for WiFi to be ready
-    let result = nm.wait_for_wifi_ready().await;
-
-    // This should either succeed or fail gracefully
-    // We don't assert success because WiFi might not be ready in all test environments
-    match result {
-        Ok(_) => {}
-        Err(e) => {
-            eprintln!(
-                "WiFi not ready (this may be expected in some environments): {}",
-                e
-            );
-        }
-    }
-}
-
-/// Test scanning networks
-#[tokio::test]
-#[serial]
-async fn test_scan_networks() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-    require_wifi!(&nm);
-
-    // Ensure WiFi is enabled
-    nm.set_wireless_enabled(true)
-        .await
-        .expect("Failed to enable WiFi");
-
-    // Wait for WiFi to be ready
-    let _ = nm.wait_for_wifi_ready().await;
-
-    // Request a scan
-    let result = nm.scan_networks(None).await;
-
-    // Scan should either succeed or fail gracefully
-    match result {
-        Ok(_) => {
-            // Success - wait a bit for scan to complete
-            sleep(Duration::from_secs(2)).await;
-        }
-        Err(e) => {
-            eprintln!("Scan failed (may be expected in some environments): {}", e);
-        }
-    }
-}
-
-/// Test listing networks
-#[tokio::test]
-#[serial]
-async fn test_list_networks() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-    require_wifi!(&nm);
-
-    // Ensure WiFi is enabled
-    nm.set_wireless_enabled(true)
-        .await
-        .expect("Failed to enable WiFi");
-
-    // Wait for WiFi to be ready
-    let _ = nm.wait_for_wifi_ready().await;
-
-    // Request a scan first
-    let _ = nm.scan_networks(None).await;
-    sleep(Duration::from_secs(2)).await;
-
-    // List networks
-    let networks = nm
-        .list_networks(None)
-        .await
-        .expect("Failed to list networks");
-
-    // Verify network structure
-    for network in &networks {
-        assert!(
-            !network.ssid.is_empty() || network.ssid == "<hidden>",
-            "SSID should not be empty (unless hidden)"
-        );
-        // `list_networks` can include deduplicated entries where device identity
-        // is not populated; that is valid for this API.
-    }
-}
-
-/// Ensure the virtual access point is visible when the WiFi integration harness runs.
-#[tokio::test]
-#[serial]
-async fn test_hwsim_access_point_is_discovered() {
-    let expected_ssid = match std::env::var("NMRS_EXPECT_WIFI_SSID") {
-        Ok(ssid) => ssid,
-        Err(_) => return,
-    };
-    let interface = std::env::var("NMRS_WIFI_INTERFACE")
-        .expect("WiFi integration harness did not provide the station interface");
-
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-    require_wifi!(&nm);
-
-    nm.set_wireless_enabled(true)
-        .await
-        .expect("Failed to enable WiFi");
-
-    let wifi = nm.wifi(&interface);
-    for _ in 0..3 {
-        wifi.scan()
-            .await
-            .expect("Failed to scan for the virtual access point");
-        sleep(Duration::from_secs(2)).await;
-
-        let networks = wifi
-            .list_networks()
-            .await
-            .expect("Failed to list scanned networks");
-
-        if let Some(network) = networks
-            .iter()
-            .find(|network| network.ssid == expected_ssid)
-        {
-            assert!(network.secured, "The virtual access point must be secured");
-            assert!(network.is_psk, "The virtual access point must use WPA-PSK");
-            return;
-        }
-    }
-
-    panic!("The virtual access point {expected_ssid:?} was not discovered");
-}
-
-/// Test getting current SSID
-#[tokio::test]
-#[serial]
-async fn test_current_ssid() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-    require_wifi!(&nm);
-
-    // Ensure WiFi is enabled
-    nm.set_wireless_enabled(true)
-        .await
-        .expect("Failed to enable WiFi");
-
-    // Get current SSID (may be None if not connected)
-    let current_ssid = nm.current_ssid().await;
-
-    // If connected, SSID should not be empty
-    if let Some(ssid) = current_ssid {
-        assert!(
-            !ssid.is_empty(),
-            "Current SSID should not be empty if connected"
-        );
-    }
-}
-
-/// Test getting current connection info
-#[tokio::test]
-#[serial]
-async fn test_current_connection_info() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-    require_wifi!(&nm);
-
-    // Ensure WiFi is enabled
-    nm.set_wireless_enabled(true)
-        .await
-        .expect("Failed to enable WiFi");
-
-    // Get current connection info (may be None if not connected)
-    let info = nm.current_connection_info().await;
-
-    // If connected, SSID should not be empty
-    if let Some((ssid, _frequency)) = info {
-        assert!(
-            !ssid.is_empty(),
-            "Current SSID should not be empty if connected"
-        );
-    }
-}
-
-/// Test showing details
-#[tokio::test]
-#[serial]
-async fn test_show_details() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-    require_wifi!(&nm);
-
-    // Ensure WiFi is enabled
-    nm.set_wireless_enabled(true)
-        .await
-        .expect("Failed to enable WiFi");
-
-    // Wait for WiFi to be ready
-    let _ = nm.wait_for_wifi_ready().await;
-
-    // Request a scan first
-    let _ = nm.scan_networks(None).await;
-    sleep(Duration::from_secs(2)).await;
-
-    // List networks
-    let networks = nm
-        .list_networks(None)
-        .await
-        .expect("Failed to list networks");
-
-    // Try to show details for the first network (if any)
-    if let Some(network) = networks.first() {
-        let result = nm.show_details(network).await;
-
-        match result {
-            Ok(details) => {
-                // Verify details structure
-                assert_eq!(details.ssid, network.ssid, "SSID should match");
-                assert!(!details.bssid.is_empty(), "BSSID should not be empty");
-                assert!(details.strength <= 100, "Strength should be <= 100");
-                assert!(!details.mode.is_empty(), "Mode should not be empty");
-                assert!(!details.security.is_empty(), "Security should not be empty");
-                assert!(!details.status.is_empty(), "Status should not be empty");
-            }
-            Err(e) => {
-                // Network might have disappeared between scan and details request
-                eprintln!("Failed to show details (may be expected): {}", e);
-            }
-        }
-    }
-}
-
-/// Test checking if a connection is saved
-#[tokio::test]
-#[serial]
-async fn test_has_saved_connection() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-    require_wifi!(&nm);
-
-    // Test with a non-existent SSID
-    let result = nm
-        .has_saved_connection("__NONEXISTENT_TEST_SSID__")
-        .await
-        .expect("Failed to check saved connection");
-    assert!(
-        !result,
-        "Non-existent SSID should not have saved connection"
-    );
-
-    // Test with empty SSID
-    let _result = nm
-        .has_saved_connection("")
-        .await
-        .expect("Failed to check saved connection for empty SSID");
-}
-
-/// Test getting the path of a saved connection
-#[tokio::test]
-#[serial]
-async fn test_get_saved_connection_path() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-    require_wifi!(&nm);
-
-    // Test with a non-existent SSID
-    let result = nm
-        .get_saved_connection_path("__NONEXISTENT_TEST_SSID__")
-        .await
-        .expect("Failed to get saved connection path");
-    assert!(
-        result.is_none(),
-        "Non-existent SSID should not have saved connection path"
-    );
-
-    // Test with empty SSID
-    let result = nm
-        .get_saved_connection_path("")
-        .await
-        .expect("Failed to get saved connection path for empty SSID");
-    // Result can be Some or None depending on system state
-    let _ = result;
-}
-
-/// Test getting the UUID of a saved connection
-#[tokio::test]
-#[serial]
-async fn test_get_saved_connection_uuid() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-    require_wifi!(&nm);
-
-    let result = nm
-        .get_saved_connection_uuid("__NONEXISTENT_TEST_SSID__")
-        .await
-        .expect("Failed to get saved connection UUID");
-    assert!(
-        result.is_none(),
-        "Non-existent SSID should not have saved connection UUID"
-    );
-
-    let result = nm
-        .get_saved_connection_uuid("")
-        .await
-        .expect("Failed to get saved connection UUID for empty SSID");
-    let _ = result;
-}
-
-/// Test connecting to an open network
-#[tokio::test]
-#[serial]
-async fn test_connect_open_network() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-    require_wifi!(&nm);
-
-    // Ensure WiFi is enabled
-    nm.set_wireless_enabled(true)
-        .await
-        .expect("Failed to enable WiFi");
-
-    // Wait for WiFi to be ready
-    let _ = nm.wait_for_wifi_ready().await;
-
-    // Request a scan first
-    let _ = nm.scan_networks(None).await;
-    sleep(Duration::from_secs(2)).await;
-
-    // List networks to find an open network
-    let networks = nm
-        .list_networks(None)
-        .await
-        .expect("Failed to list networks");
-
-    // Find an open network (if any)
-    let open_network = networks.iter().find(|n| !n.secured);
-
-    if let Some(network) = open_network {
-        let test_ssid = &network.ssid;
-
-        // Skip if SSID is hidden or empty
-        if test_ssid.is_empty() || test_ssid == "<hidden>" {
-            eprintln!("Skipping: Found open network but SSID is hidden/empty");
-            return;
-        }
-
-        // Try to connect to the open network
-        let result = nm.connect(test_ssid, None, WifiSecurity::Open).await;
-
-        match result {
-            Ok(_) => {
-                // Connection succeeded - wait a bit and verify
-                sleep(Duration::from_secs(3)).await;
-                let current = nm.current_ssid().await;
-                if let Some(connected_ssid) = current {
-                    // May or may not match depending on connection success
-                    eprintln!("Connected SSID: {}", connected_ssid);
-                }
-            }
-            Err(e) => {
-                // Connection failed - this is acceptable in test environments
-                eprintln!("Connection failed (may be expected): {}", e);
-            }
-        }
-    } else {
-        eprintln!("No open networks found for testing");
-    }
-}
-
-/// Test connecting to a PSK network with an empty password
-#[tokio::test]
-#[serial]
-async fn test_connect_psk_network_with_empty_password() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-    require_wifi!(&nm);
-
-    // Ensure WiFi is enabled
-    nm.set_wireless_enabled(true)
-        .await
-        .expect("Failed to enable WiFi");
-
-    // Wait for WiFi to be ready
-    let _ = nm.wait_for_wifi_ready().await;
-
-    // Request a scan first
-    let _ = nm.scan_networks(None).await;
-    sleep(Duration::from_secs(2)).await;
-
-    // List networks to find a PSK network
-    let networks = nm
-        .list_networks(None)
-        .await
-        .expect("Failed to list networks");
-
-    // Find a PSK network (if any)
-    let psk_network = networks.iter().find(|n| n.is_psk);
-
-    if let Some(network) = psk_network {
-        let test_ssid = &network.ssid;
-
-        // Skip if SSID is hidden or empty
-        if test_ssid.is_empty() || test_ssid == "<hidden>" {
-            eprintln!("Skipping: Found PSK network but SSID is hidden/empty");
-            return;
-        }
-
-        // Check if we have a saved connection for this network
-        let has_saved = nm
-            .has_saved_connection(test_ssid)
-            .await
-            .expect("Failed to check saved connection");
-
-        if has_saved {
-            // Try to connect with empty password (should use saved credentials)
-            let result = nm
-                .connect(test_ssid, None, WifiSecurity::WpaPsk { psk: String::new() })
-                .await;
-
-            match result {
-                Ok(_) => {
-                    // Connection succeeded - wait a bit
-                    sleep(Duration::from_secs(3)).await;
-                }
-                Err(e) => {
-                    // Connection failed - this is acceptable
-                    eprintln!("Connection with saved credentials failed: {}", e);
-                }
-            }
-        } else {
-            eprintln!("No saved connection for PSK network, skipping test");
-        }
-    } else {
-        eprintln!("No PSK networks found for testing");
-    }
-}
-
-/// Test forgetting a nonexistent network
-#[tokio::test]
-#[serial]
-async fn test_forget_nonexistent_network() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-    require_wifi!(&nm);
-
-    // Try to forget a non-existent network
-    let result = nm.forget("__NONEXISTENT_TEST_SSID_TO_FORGET__").await;
-
-    // This should fail since the network doesn't exist
-    assert!(
-        result.is_err(),
-        "Forgetting non-existent network should fail"
-    );
-}
-
-/// Test device states
-#[tokio::test]
-#[serial]
-async fn test_device_states() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-    let devices = nm.list_devices().await.expect("Failed to list devices");
-
-    // Verify that all devices have valid states
-    for device in &devices {
-        // DeviceState should be one of the known states
-        // The struct is non-exhaustive and so we allow Other(_)
-        match device.state {
-            DeviceState::Unmanaged
-            | DeviceState::Unavailable
-            | DeviceState::Disconnected
-            | DeviceState::Prepare
-            | DeviceState::Config
-            | DeviceState::NeedAuth
-            | DeviceState::IpConfig
-            | DeviceState::IpCheck
-            | DeviceState::Secondaries
-            | DeviceState::Activated
-            | DeviceState::Deactivating
-            | DeviceState::Failed
-            | DeviceState::Other(_) => {}
-            _ => {
-                panic!("Invalid device state: {:?}", device.state);
-            }
-        }
-    }
-}
-
-/// Test device types
-#[tokio::test]
-#[serial]
-async fn test_device_types() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-    let devices = nm.list_devices().await.expect("Failed to list devices");
-
-    // Verify that all devices have valid types
-    for device in &devices {
-        // DeviceType should be one of the known types
-        // The struct is non-exhaustive and so we allow Other(_)
-        match device.device_type {
-            DeviceType::Ethernet
-            | DeviceType::Wifi
-            | DeviceType::Bluetooth
-            | DeviceType::WifiP2P
-            | DeviceType::Loopback
-            | DeviceType::Other(_) => {
-                // Valid type
-            }
-            _ => {
-                panic!("Invalid device type: {:?}", device.device_type);
-            }
-        }
-    }
-}
-
-/// Test network properties
-#[tokio::test]
-#[serial]
-async fn test_network_properties() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-    require_wifi!(&nm);
-
-    // Ensure WiFi is enabled
-    nm.set_wireless_enabled(true)
-        .await
-        .expect("Failed to enable WiFi");
-
-    // Wait for WiFi to be ready
-    let _ = nm.wait_for_wifi_ready().await;
-
-    // Request a scan first
-    let _ = nm.scan_networks(None).await;
-    sleep(Duration::from_secs(2)).await;
-
-    // List networks
-    let networks = nm
-        .list_networks(None)
-        .await
-        .expect("Failed to list networks");
-
-    // Verify network properties
-    for network in &networks {
-        // SSID should not be empty (unless hidden)
-        assert!(
-            !network.ssid.is_empty() || network.ssid == "<hidden>",
-            "SSID should not be empty"
-        );
-
-        // `device` may be empty for deduplicated scan entries; only validate
-        // normalized fields that are guaranteed by this API.
-
-        // If strength is Some, it should be <= 100
-        if let Some(strength) = network.strength {
-            assert!(strength <= 100, "Strength should be <= 100");
-        }
-
-        // Security flags should be consistent
-        if !network.secured {
-            assert!(!network.is_psk, "Unsecured network should not be PSK");
-            assert!(!network.is_eap, "Unsecured network should not be EAP");
-        }
-    }
-}
-
-/// Test multiple scan requests
-#[tokio::test]
-#[serial]
-async fn test_multiple_scan_requests() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-    require_wifi!(&nm);
-
-    // Ensure WiFi is enabled
-    nm.set_wireless_enabled(true)
-        .await
-        .expect("Failed to enable WiFi");
-
-    // Wait for WiFi to be ready
-    let _ = nm.wait_for_wifi_ready().await;
-
-    // Request multiple scans
-    for i in 0..3 {
-        nm.wait_for_wifi_ready().await.expect("WiFi not ready");
-
-        let result = nm.scan_networks(None).await;
-        match result {
-            Ok(_) => eprintln!("Scan {} succeeded", i + 1),
-            Err(e) => eprintln!("Scan {} failed: {}", i + 1, e),
-        }
-
-        nm.wait_for_wifi_ready()
-            .await
-            .expect("WiFi did not recover");
-        sleep(Duration::from_secs(3)).await;
-    }
-
-    // List networks after multiple scans
-    let networks = nm
-        .list_networks(None)
-        .await
-        .expect("Failed to list networks");
-    eprintln!("Found {} networks after multiple scans", networks.len());
-}
-
-/// Test concurrent operations
-#[tokio::test]
-#[serial]
-async fn test_concurrent_operations() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-    require_wifi!(&nm);
-
-    // Ensure WiFi is enabled
-    nm.set_wireless_enabled(true)
-        .await
-        .expect("Failed to enable WiFi");
-
-    // Run multiple operations concurrently
-    let (devices_result, wifi_state_result, networks_result) =
-        tokio::join!(nm.list_devices(), nm.wifi_state(), nm.list_networks(None));
-
-    // All should succeed
-    assert!(devices_result.is_ok(), "list_devices should succeed");
-    assert!(wifi_state_result.is_ok(), "wifi_state should succeed");
-    // networks_result may fail if WiFi is not ready, which is acceptable
-    let _ = networks_result;
-}
-
-/// Test that reason_to_error maps auth failures correctly
-#[test]
-fn reason_to_error_auth_mapping() {
-    // Supplicant failed (code 9) should map to AuthFailed
-    assert!(matches!(reason_to_error(9), ConnectionError::AuthFailed));
-
-    // Supplicant disconnected (code 7) should map to AuthFailed
-    assert!(matches!(reason_to_error(7), ConnectionError::AuthFailed));
-
-    // DHCP failed (code 17) should map to DhcpFailed
-    assert!(matches!(reason_to_error(17), ConnectionError::DhcpFailed));
-
-    // SSID not found (code 70) should map to NotFound
-    assert!(matches!(reason_to_error(70), ConnectionError::NotFound));
-}
-
-/// Test StateReason conversions
-#[test]
-fn state_reason_conversion() {
-    assert_eq!(StateReason::from(9), StateReason::SupplicantFailed);
-    assert_eq!(StateReason::from(70), StateReason::SsidNotFound);
-    assert_eq!(StateReason::from(999), StateReason::Other(999));
-}
-
-/// Test ConnectionError display formatting
-#[test]
-fn connection_error_display() {
-    let auth_err = ConnectionError::AuthFailed;
-    assert_eq!(format!("{}", auth_err), "authentication failed");
-
-    let not_found_err = ConnectionError::NotFound;
-    assert_eq!(format!("{}", not_found_err), "network not found");
-
-    let timeout_err = ConnectionError::Timeout;
-    assert_eq!(format!("{}", timeout_err), "connection timeout");
-
-    let stuck_err = ConnectionError::Stuck("config".into());
-    assert_eq!(
-        format!("{}", stuck_err),
-        "connection stuck in state: config"
-    );
-}
-
-/// Test forgetting a network returns NoSavedConnection error
-#[tokio::test]
-#[serial]
-async fn forget_returns_no_saved_connection_error() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-    require_wifi!(&nm);
-
-    let result = nm.forget("__NONEXISTENT_TEST_SSID__").await;
-
-    match result {
-        Err(ConnectionError::NoSavedConnection) => {
-            // Expected error type
-        }
-        Err(e) => {
-            panic!("Expected NoSavedConnection error, got: {}", e);
-        }
-        Ok(_) => {
-            // Error is Expected in case of failed operation only.
-            println!("Expected response, got success");
-        }
-    }
-}
-
-/// Test listing wired devices
-#[tokio::test]
-#[serial]
-async fn test_list_wired_devices() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-
-    let devices = nm
-        .list_wired_devices()
-        .await
-        .expect("Failed to list wired devices");
-
-    // Verify device structure for wired devices
-    for device in &devices {
-        assert!(!device.path.is_empty(), "Device path should not be empty");
-        assert!(
-            !device.interface.is_empty(),
-            "Device interface should not be empty"
-        );
-        assert_eq!(
-            device.device_type,
-            DeviceType::Ethernet,
-            "Device type should be Ethernet"
-        );
-    }
-}
-
-/// Test connecting to wired device
-#[tokio::test]
-#[serial]
-async fn test_connect_wired() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-    require_ethernet!(&nm);
-
-    // Try to connect to wired device
-    let result = nm.connect_wired().await;
-
-    match result {
-        Ok(_) => {
-            // Connection succeeded or is waiting for cable
-            eprintln!("Wired connection initiated successfully");
-        }
-        Err(e) => {
-            // Connection failed - this is acceptable in test environments
-            eprintln!("Wired connection failed (may be expected): {}", e);
-        }
-    }
-}
-
-/// Helper to create test VPN configuration
-fn create_test_vpn_creds(name: &str) -> WireGuardConfig {
-    let peer = WireGuardPeer::new(
-        "HIgo9xNzJMWLKAShlKl6/bUT1VI9Q0SDBXGtLXkPFXc=",
-        "test.example.com:51820",
-        vec!["0.0.0.0/0".into(), "::/0".into()],
+async fn network_manager() -> NetworkManager {
+    required_capability("NMRS_REQUIRE_NETWORKMANAGER");
+
+    let config = TimeoutConfig::new()
+        .with_connection_timeout(Duration::from_secs(40))
+        .with_disconnect_timeout(Duration::from_secs(15));
+    bounded(
+        "connect to the system D-Bus and NetworkManager",
+        DBUS_TIMEOUT,
+        NetworkManager::with_config(config),
     )
-    .with_persistent_keepalive(25);
+    .await
+    .expect("the harness declared NetworkManager available, but initialization failed")
+}
 
-    WireGuardConfig::new(
-        name,
-        "test.example.com:51820",
-        "YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=",
-        "10.100.0.2/24",
-        vec![peer],
+async fn next_settings_change(
+    stream: &mut SettingsEventStream,
+    description: &str,
+    mut matches: impl FnMut(&SettingsChange) -> bool,
+) -> SettingsChange {
+    timeout(EVENT_TIMEOUT, async {
+        loop {
+            match stream.next().await {
+                Some(Ok(change)) if matches(&change) => return change,
+                Some(Ok(_)) => {}
+                Some(Err(error)) => panic!("settings event stream failed: {error}"),
+                None => panic!("settings event stream ended before {description}"),
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for {description}"))
+}
+
+async fn next_network_event(
+    stream: &mut NetworkEventStream,
+    description: &str,
+    mut matches: impl FnMut(&NetworkEvent) -> bool,
+) -> NetworkEvent {
+    timeout(EVENT_TIMEOUT, async {
+        loop {
+            match stream.next().await {
+                Some(Ok(event)) if matches(&event) => return event,
+                Some(Ok(_)) => {}
+                Some(Err(error)) => panic!("network event stream failed: {error}"),
+                None => panic!("network event stream ended before {description}"),
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for {description}"))
+}
+
+fn change_has_path(change: &SettingsChange, expected_kind: &str, expected_path: &str) -> bool {
+    match (expected_kind, change) {
+        ("added", SettingsChange::Added { path })
+        | ("updated", SettingsChange::Updated { path })
+        | ("removed", SettingsChange::Removed { path }) => path.as_str() == expected_path,
+        _ => false,
+    }
+}
+
+async fn cleanup_saved_profile(nm: &NetworkManager, uuid: &str) -> Vec<String> {
+    match timeout(DBUS_TIMEOUT, nm.delete_saved_connection(uuid)).await {
+        Ok(Ok(())) => Vec::new(),
+        Ok(Err(ConnectionError::SavedConnectionNotFound(missing))) if missing == uuid => Vec::new(),
+        Ok(Err(error)) => vec![format!("delete saved profile {uuid}: {error}")],
+        Err(_) => vec![format!("delete saved profile {uuid}: timed out")],
+    }
+}
+
+async fn cleanup_wifi_profile(wifi: &WifiScope, ssid: &str) -> Vec<String> {
+    let mut failures = Vec::new();
+
+    match timeout(DBUS_TIMEOUT, wifi.disconnect()).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => failures.push(format!("disconnect {ssid:?}: {error}")),
+        Err(_) => failures.push(format!("disconnect {ssid:?}: timed out")),
+    }
+    match timeout(WIFI_TIMEOUT, wifi.forget(ssid)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => failures.push(format!("forget {ssid:?}: {error}")),
+        Err(_) => failures.push(format!("forget {ssid:?}: timed out")),
+    }
+
+    failures
+}
+
+async fn disconnect_device(nm: &NetworkManager, interface: &str) -> nmrs::Result<()> {
+    let path = nm.get_device_by_interface(interface).await?;
+    let proxy = nmrs::raw::zbus::Proxy::new(
+        nm.dbus_connection(),
+        "org.freedesktop.NetworkManager",
+        path,
+        "org.freedesktop.NetworkManager.Device",
     )
-    .with_dns(vec!["1.1.1.1".into(), "8.8.8.8".into()])
-    .with_mtu(1420)
-}
+    .await?;
+    let state = DeviceState::from(proxy.get_property::<u32>("State").await?);
+    if matches!(
+        state,
+        DeviceState::Unmanaged | DeviceState::Unavailable | DeviceState::Disconnected
+    ) {
+        return Ok(());
+    }
 
-/// Test listing VPN connections
-#[tokio::test]
-#[serial]
-async fn test_list_vpn_connections() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-
-    // List VPN connections (should not fail even if empty)
-    let result = nm.list_vpn_connections().await;
-    assert!(result.is_ok(), "Should be able to list VPN connections");
-
-    let vpns = result.unwrap();
-    eprintln!("Found {} VPN connection(s)", vpns.len());
-
-    // Verify structure of any VPN connections found
-    for vpn in &vpns {
-        assert!(!vpn.name.is_empty(), "VPN name should not be empty");
-        eprintln!("VPN: {} ({:?})", vpn.name, vpn.vpn_type);
+    proxy.call_method("Disconnect", &()).await?;
+    loop {
+        let state = DeviceState::from(proxy.get_property::<u32>("State").await?);
+        if matches!(state, DeviceState::Unavailable | DeviceState::Disconnected) {
+            return Ok(());
+        }
+        sleep(Duration::from_millis(25)).await;
     }
 }
 
-/// Test VPN connection lifecycle (does not actually connect)
-#[tokio::test]
-#[serial]
-async fn test_vpn_lifecycle_dry_run() {
-    require_networkmanager!();
+async fn cleanup_wired_profile(nm: &NetworkManager, interface: &str) -> Vec<String> {
+    let mut failures = Vec::new();
+    match timeout(DBUS_TIMEOUT, disconnect_device(nm, interface)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => failures.push(format!("disconnect {interface}: {error}")),
+        Err(_) => failures.push(format!("disconnect {interface}: timed out")),
+    }
 
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
+    match timeout(DBUS_TIMEOUT, nm.get_saved_connection_uuid(interface)).await {
+        Ok(Ok(Some(uuid))) => failures.extend(cleanup_saved_profile(nm, &uuid).await),
+        Ok(Ok(None)) => {}
+        Ok(Err(error)) => failures.push(format!("resolve {interface} profile: {error}")),
+        Err(_) => failures.push(format!("resolve {interface} profile: timed out")),
+    }
 
-    // Note: This test does NOT actually connect to a VPN
-    // It only tests the API structure and error handling
+    failures
+}
 
-    // Create test credentials
-    let creds = create_test_vpn_creds("test_vpn_lifecycle");
+async fn cleanup_vpn_profile(nm: &NetworkManager, uuid: &str) -> Vec<String> {
+    let mut failures = Vec::new();
+    match timeout(DBUS_TIMEOUT, nm.disconnect_vpn_by_uuid(uuid)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(ConnectionError::VpnNotFound(missing))) if missing == uuid => {}
+        Ok(Err(error)) => failures.push(format!("disconnect VPN {uuid}: {error}")),
+        Err(_) => failures.push(format!("disconnect VPN {uuid}: timed out")),
+    }
+    failures.extend(cleanup_saved_profile(nm, uuid).await);
+    failures
+}
 
-    // Attempt to connect (will likely fail as test server doesn't exist)
-    let result = nm.connect_vpn(creds).await;
-
-    match result {
-        Ok(_) => {
-            eprintln!("VPN connection succeeded (unexpected in test)");
-            // Clean up
-            let _ = nm.disconnect_vpn("test_vpn_lifecycle").await;
-            let _ = nm.forget_vpn("test_vpn_lifecycle").await;
-        }
-        Err(e) => {
-            eprintln!("VPN connection failed as expected: {}", e);
-            // This is expected since we're using fake credentials
-        }
+async fn cleanup_secret_agent(handle: SecretAgentHandle) -> Option<String> {
+    match timeout(DBUS_TIMEOUT, handle.unregister()).await {
+        Ok(Ok(())) => None,
+        Ok(Err(error)) => Some(format!("unregister secret agent: {error}")),
+        Err(_) => Some("unregister secret agent: timed out".into()),
     }
 }
 
-/// Test VPN disconnection with non-existent VPN
-#[tokio::test]
-#[serial]
-async fn test_disconnect_nonexistent_vpn() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-
-    // Disconnecting a non-existent VPN should succeed (idempotent)
-    let result = nm.disconnect_vpn("nonexistent_vpn_connection_12345").await;
-    assert!(
-        result.is_ok(),
-        "Disconnecting non-existent VPN should succeed"
-    );
+#[derive(Debug)]
+struct RawActiveConnection {
+    path: OwnedObjectPath,
+    connection_path: OwnedObjectPath,
+    id: String,
+    connection_type: String,
+    state: u32,
 }
 
-/// Test forgetting non-existent VPN
-#[tokio::test]
-#[serial]
-async fn test_forget_nonexistent_vpn() {
-    require_networkmanager!();
+async fn raw_active_connection(
+    nm: &NetworkManager,
+    uuid: &str,
+) -> nmrs::Result<Option<RawActiveConnection>> {
+    let active_paths = raw_active_paths(nm).await?;
 
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
+    for path in active_paths {
+        let active = nmrs::raw::zbus::Proxy::new(
+            nm.dbus_connection(),
+            "org.freedesktop.NetworkManager",
+            path.clone(),
+            "org.freedesktop.NetworkManager.Connection.Active",
+        )
+        .await?;
+        if active.get_property::<String>("Uuid").await? != uuid {
+            continue;
+        }
 
-    // Forgetting a non-existent VPN will return Ok
-    // Error is Expected in case of failed operation only
-    let result = nm.forget_vpn("nonexistent_vpn_connection_12345").await;
-    assert!(
-        result.is_ok(),
-        "Forgetting non-existent VPN should return error"
-    );
-
-    match result {
-        Err(ConnectionError::NoSavedConnection) => {
-            eprintln!("Correct error: NoSavedConnection");
-        }
-        Err(e) => {
-            panic!("Unexpected error type: {}", e);
-        }
-        Ok(_) => {
-            println!("Correct response: NoSavedConnection");
-        }
+        return Ok(Some(RawActiveConnection {
+            path,
+            connection_path: active.get_property("Connection").await?,
+            id: active.get_property("Id").await?,
+            connection_type: active.get_property("Type").await?,
+            state: active.get_property("State").await?,
+        }));
     }
+
+    Ok(None)
 }
 
-/// Test getting info for non-existent VPN
-#[tokio::test]
-#[serial]
-async fn test_get_nonexistent_vpn_info() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-
-    // Getting info for non-existent/inactive VPN should fail
-    let result = nm.get_vpn_info("nonexistent_vpn_connection_12345").await;
-    assert!(
-        result.is_err(),
-        "Getting info for non-existent VPN should return error"
-    );
-
-    match result {
-        Err(ConnectionError::NoVpnConnection) => {
-            eprintln!("Correct error: NoVpnConnection");
-        }
-        Err(e) => {
-            eprintln!("Error (acceptable): {}", e);
-        }
-        Ok(_) => {
-            panic!("Should have failed");
-        }
-    }
-}
-
-/// Test VPN type enum
-#[tokio::test]
-#[serial]
-async fn test_vpn_type() {
-    // Verify VPN types are properly defined
-    let wg = VpnKind::WireGuard;
-    assert_eq!(format!("{:?}", wg), "WireGuard");
-}
-
-/// Test WireGuard peer structure
-#[tokio::test]
-#[serial]
-async fn test_wireguard_peer_structure() {
-    let peer = WireGuardPeer::new(
-        "test_key",
-        "test.example.com:51820",
-        vec!["0.0.0.0/0".into()],
+async fn raw_active_paths(nm: &NetworkManager) -> nmrs::Result<Vec<OwnedObjectPath>> {
+    let manager = nmrs::raw::zbus::Proxy::new(
+        nm.dbus_connection(),
+        "org.freedesktop.NetworkManager",
+        "/org/freedesktop/NetworkManager",
+        "org.freedesktop.NetworkManager",
     )
-    .with_preshared_key("psk")
-    .with_persistent_keepalive(25);
-
-    assert_eq!(peer.public_key, "test_key");
-    assert_eq!(peer.gateway, "test.example.com:51820");
-    assert_eq!(peer.allowed_ips.len(), 1);
-    assert_eq!(peer.preshared_key, Some("psk".into()));
-    assert_eq!(peer.persistent_keepalive, Some(25));
-}
-
-/// Test VPN configuration structure
-#[tokio::test]
-#[serial]
-async fn test_vpn_credentials_structure() {
-    let creds = create_test_vpn_creds("test_credentials");
-
-    assert_eq!(creds.name, "test_credentials");
-    assert_eq!(creds.peers.len(), 1);
-    assert_eq!(creds.address, "10.100.0.2/24");
-    assert!(creds.dns.is_some());
-    assert_eq!(creds.dns.as_ref().unwrap().len(), 2);
-    assert_eq!(creds.mtu, Some(1420));
-}
-
-/// Check if Bluetooth is available
-#[allow(dead_code)]
-async fn has_bluetooth_device(nm: &NetworkManager) -> bool {
-    nm.list_bluetooth_devices()
+    .await?;
+    manager
+        .get_property::<Vec<OwnedObjectPath>>("ActiveConnections")
         .await
-        .map(|d| !d.is_empty())
-        .unwrap_or(false)
+        .map_err(Into::into)
 }
 
-/// Skip tests if Bluetooth device is not available
-#[allow(unused_macros)]
-macro_rules! require_bluetooth {
-    ($nm:expr) => {
-        if !has_bluetooth_device($nm).await {
-            eprintln!("Skipping test: No Bluetooth device available");
-            return;
-        }
-    };
-}
-
-/// Test listing Bluetooth devices
-#[tokio::test]
-#[serial]
-async fn test_list_bluetooth_devices() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-
-    let devices = nm
-        .list_bluetooth_devices()
-        .await
-        .expect("Failed to list Bluetooth devices");
-
-    // Verify device structure for Bluetooth devices
-    for device in &devices {
-        assert!(
-            !device.bdaddr.is_empty(),
-            "Bluetooth address should not be empty"
-        );
-        eprintln!(
-            "Bluetooth device: {} ({}) - {}",
-            device.alias.as_deref().unwrap_or("unknown"),
-            device.bdaddr,
-            device.bt_caps
-        );
+async fn stop_monitor(description: &str, handle: MonitorHandle) -> Option<String> {
+    match timeout(DBUS_TIMEOUT, handle.stop()).await {
+        Ok(Ok(())) => None,
+        Ok(Err(error)) => Some(format!("stop {description}: {error}")),
+        Err(_) => Some(format!("stop {description}: timed out")),
     }
 }
 
-/// Test Bluetooth device type enum
-#[test]
-fn test_bluetooth_network_role() {
-    use nmrs::models::BluetoothNetworkRole;
+fn finish_after_cleanup(
+    outcome: Result<(), Box<dyn std::any::Any + Send>>,
+    cleanup_failures: Vec<String>,
+) {
+    if let Err(payload) = outcome {
+        for failure in cleanup_failures {
+            eprintln!("cleanup after integration-test panic failed: {failure}");
+        }
+        resume_unwind(payload);
+    }
 
-    let panu = BluetoothNetworkRole::PanU;
-    assert_eq!(format!("{}", panu), "PANU");
-
-    let dun = BluetoothNetworkRole::Dun;
-    assert_eq!(format!("{}", dun), "DUN");
-}
-
-/// Test BluetoothIdentity structure
-#[test]
-fn test_bluetooth_identity_structure() {
-    use nmrs::models::{BluetoothIdentity, BluetoothNetworkRole};
-
-    let identity =
-        BluetoothIdentity::new("00:1A:7D:DA:71:13".into(), BluetoothNetworkRole::PanU).unwrap();
-
-    assert_eq!(identity.bdaddr, "00:1A:7D:DA:71:13");
-    assert!(matches!(
-        identity.bt_device_type,
-        BluetoothNetworkRole::PanU
-    ));
-}
-
-/// Test BluetoothDevice structure
-#[test]
-fn test_bluetooth_device_structure() {
-    use nmrs::models::{BluetoothDevice, BluetoothNetworkRole};
-
-    let role = BluetoothNetworkRole::PanU as u32;
-    let device = BluetoothDevice::new(
-        "00:1A:7D:DA:71:13".into(),
-        Some("MyPhone".into()),
-        Some("Phone".into()),
-        role,
-        DeviceState::Activated,
+    assert!(
+        cleanup_failures.is_empty(),
+        "integration cleanup failed: {}",
+        cleanup_failures.join("; ")
     );
-
-    assert_eq!(device.bdaddr, "00:1A:7D:DA:71:13");
-    assert_eq!(device.name, Some("MyPhone".into()));
-    assert_eq!(device.alias, Some("Phone".into()));
-    assert_eq!(device.state, DeviceState::Activated);
 }
 
-/// Test BluetoothDevice display
-#[test]
-fn test_bluetooth_device_display() {
-    use nmrs::models::{BluetoothDevice, BluetoothNetworkRole};
-
-    let role = BluetoothNetworkRole::PanU as u32;
-    let device = BluetoothDevice::new(
-        "00:1A:7D:DA:71:13".into(),
-        Some("MyPhone".into()),
-        Some("Phone".into()),
-        role,
-        DeviceState::Activated,
-    );
-
-    let display = format!("{}", device);
-    assert!(display.contains("Phone"));
-    assert!(display.contains("00:1A:7D:DA:71:13"));
+async fn active_connections(nm: &NetworkManager) -> Vec<ActiveConnection> {
+    bounded(
+        "list typed active connections",
+        DBUS_TIMEOUT,
+        nm.list_active_connections(),
+    )
+    .await
+    .expect("failed to list typed active connections")
 }
 
-/// Test Device::is_bluetooth method
-#[tokio::test]
-#[serial]
-async fn test_device_is_bluetooth() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-
-    let devices = nm.list_devices().await.expect("Failed to list devices");
-
-    for device in &devices {
-        if device.is_bluetooth() {
-            assert_eq!(device.device_type, DeviceType::Bluetooth);
-            eprintln!("Found Bluetooth device: {}", device.interface);
-        }
-    }
-}
-
-/// Test Bluetooth device in all devices list
-#[tokio::test]
-#[serial]
-async fn test_bluetooth_in_device_types() {
-    require_networkmanager!();
-
-    let nm = NetworkManager::new()
-        .await
-        .expect("Failed to create NetworkManager");
-
-    let devices = nm.list_devices().await.expect("Failed to list devices");
-
-    // Check if any Bluetooth devices exist
-    let bluetooth_devices: Vec<_> = devices
-        .iter()
-        .filter(|d| matches!(d.device_type, DeviceType::Bluetooth))
-        .collect();
-
-    if !bluetooth_devices.is_empty() {
-        eprintln!("Found {} Bluetooth device(s)", bluetooth_devices.len());
-        for device in bluetooth_devices {
-            eprintln!("  - {}: {}", device.interface, device.state);
-        }
-    } else {
-        eprintln!("No Bluetooth devices found (this is OK)");
-    }
-}
-
-/// Test ConnectionError::NoBluetoothDevice
-#[test]
-fn test_connection_error_no_bluetooth_device() {
-    let err = ConnectionError::NoBluetoothDevice;
-    assert_eq!(format!("{}", err), "Bluetooth device not found");
-}
-
-/// Test BluetoothNetworkRole conversion from u32
-#[test]
-fn test_bluetooth_network_role_from_u32() {
-    use nmrs::models::BluetoothNetworkRole;
-
-    assert!(matches!(
-        BluetoothNetworkRole::from(0),
-        BluetoothNetworkRole::PanU
-    ));
-    assert!(matches!(
-        BluetoothNetworkRole::from(1),
-        BluetoothNetworkRole::Dun
-    ));
-    // Unknown values should default to PanU
-    assert!(matches!(
-        BluetoothNetworkRole::from(999),
-        BluetoothNetworkRole::PanU
-    ));
-}
-
-// --- OpenVPN import tests ---
-
-/// Test that OpenVpnBuilder::from_ovpn_str produces correct settings for a
-/// full TLS config, and that build_openvpn_connection serializes them.
-#[test]
-fn test_ovpn_import_tls_roundtrip() {
-    use nmrs::ConnectionOptions;
-    use nmrs::builders::{OpenVpnBuilder, build_openvpn_connection};
-
-    let ovpn = "\
-remote vpn.example.com 1194 udp
-ca /etc/openvpn/ca.crt
-cert /etc/openvpn/client.crt
-key /etc/openvpn/client.key
-cipher AES-256-GCM
-auth SHA256
-tls-auth /etc/openvpn/ta.key 1
-";
-    let config = OpenVpnBuilder::from_ovpn_str(ovpn, "roundtrip-test")
-        .unwrap()
-        .build()
-        .unwrap();
-
-    assert_eq!(config.remote, "vpn.example.com");
-    assert_eq!(config.port, 1194);
-    assert_eq!(config.auth_type, Some(OpenVpnAuthType::Tls));
-    assert_eq!(config.cipher, Some("AES-256-GCM".into()));
-    assert_eq!(config.auth, Some("SHA256".into()));
-    assert_eq!(config.tls_auth_key, Some("/etc/openvpn/ta.key".into()));
-    assert_eq!(config.tls_auth_direction, Some(1));
-
-    let opts = ConnectionOptions::new(false);
-    let settings = build_openvpn_connection(&config, &opts).unwrap();
-    assert!(settings.contains_key("connection"));
-    assert!(settings.contains_key("vpn"));
-}
-
-/// Test that from_ovpn_str infers password+TLS auth when both
-/// auth-user-pass and cert/key are present.
-#[test]
-fn test_ovpn_import_password_tls() {
-    use nmrs::builders::OpenVpnBuilder;
-
-    let ovpn = "\
-remote vpn.example.com 443 tcp
-auth-user-pass
-ca /etc/openvpn/ca.crt
-cert /etc/openvpn/client.crt
-key /etc/openvpn/client.key
-";
-    let config = OpenVpnBuilder::from_ovpn_str(ovpn, "pw-tls-test")
-        .unwrap()
-        .username("user")
-        .build()
-        .unwrap();
-
-    assert_eq!(config.auth_type, Some(OpenVpnAuthType::PasswordTls));
-    assert!(config.tcp);
-    assert_eq!(config.port, 443);
-}
-
-/// Test that the caller can override parsed settings before build.
-#[test]
-fn test_ovpn_import_override() {
-    use nmrs::builders::OpenVpnBuilder;
-
-    let ovpn = "\
-remote vpn.example.com 1194
-ca /etc/openvpn/ca.crt
-cert /etc/openvpn/client.crt
-key /etc/openvpn/client.key
-";
-    let config = OpenVpnBuilder::from_ovpn_str(ovpn, "override-test")
-        .unwrap()
-        .port(443)
-        .tcp(true)
-        .dns(vec!["1.1.1.1".into()])
-        .mtu(1400)
-        .remote_cert_tls("server")
-        .build()
-        .unwrap();
-
-    assert_eq!(config.port, 443);
-    assert!(config.tcp);
-    assert_eq!(config.dns, Some(vec!["1.1.1.1".into()]));
-    assert_eq!(config.mtu, Some(1400));
-    assert_eq!(config.remote_cert_tls, Some("server".into()));
-}
-
-/// Test airplane mode toggle (set and get)
+/// Exercises NetworkManager's settings API against the isolated D-Bus harness.
 ///
-/// This tests the aggregate airplane mode operation combining WiFi, WWAN, and Bluetooth.
-/// Specifically validates that set_airplane_mode returns Ok(()) even if Bluetooth
-/// adapter settle failures occur, as long as WiFi/WWAN toggles succeed.
-/// This is a regression test for the fix where BluetoothToggleFailed is treated as
-/// non-fatal in the aggregate operation.
+/// This is ignored intentionally: a normal `cargo test` must never discover or
+/// mutate the developer's host NetworkManager. The CI/Docker harness opts in.
 #[tokio::test]
 #[serial]
-async fn test_airplane_mode_toggle() {
-    require_networkmanager!();
+#[ignore = "requires NMRS_REQUIRE_NETWORKMANAGER=1 and an isolated NetworkManager"]
+async fn networkmanager_profile_crud_and_settings_events() {
+    let nm = network_manager().await;
+    let mut events = bounded(
+        "subscribe to saved-connection settings events",
+        DBUS_TIMEOUT,
+        nm.settings_events(),
+    )
+    .await
+    .expect("failed to subscribe to saved-connection settings events");
+    let mut network_events = bounded(
+        "subscribe to unified NetworkManager events",
+        DBUS_TIMEOUT,
+        nm.network_events(),
+    )
+    .await
+    .expect("failed to subscribe to unified NetworkManager events");
 
-    let nm = NetworkManager::new()
+    let id = format!("nmrs-integration-{}", Uuid::new_v4());
+    let renamed_id = format!("{id}-updated");
+    let uuid = Uuid::new_v4();
+    let uuid_string = uuid.to_string();
+    let outcome = AssertUnwindSafe(async {
+        let settings = WireGuardBuilder::new(&id)
+            .private_key("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=")
+            .address("10.203.0.2/24")
+            .add_peer(WireGuardPeer::new(
+                "HIgo9xNzJMWLKAShlKl6/bUT1VI9Q0SDBXGtLXkPFXc=",
+                "192.0.2.1:51820",
+                vec!["10.204.0.0/16".into()],
+            ))
+            .mtu(1380)
+            .uuid(uuid)
+            .autoconnect(false)
+            .build()
+            .expect("the integration WireGuard profile must be valid");
+
+        let path = bounded(
+            "add a WireGuard settings profile",
+            DBUS_TIMEOUT,
+            nm.add_connection(settings),
+        )
         .await
-        .expect("Failed to create NetworkManager");
+        .expect("NetworkManager rejected a valid WireGuard settings profile");
+        let path_string = path.as_str().to_owned();
 
-    // Get initial airplane mode state
-    let initial_state = nm
-        .airplane_mode_state()
-        .await
-        .expect("Failed to get airplane mode state");
-
-    if !initial_state.wifi.present
-        && !initial_state.wwan.present
-        && !initial_state.bluetooth.present
-    {
-        eprintln!("Skipping test: no controllable radios present on host");
-        return;
-    }
-
-    let is_airplane_mode = initial_state.is_airplane_mode();
-    println!(
-        "Initial airplane mode state: is_airplane_mode={}, WiFi enabled={}, WWAN enabled={}, Bluetooth enabled={}",
-        is_airplane_mode,
-        initial_state.wifi.enabled,
-        initial_state.wwan.enabled,
-        initial_state.bluetooth.enabled
-    );
-
-    // Toggle airplane mode to opposite state
-    let target_enabled = !is_airplane_mode;
-    println!("Toggling airplane mode to: {}", target_enabled);
-
-    let mut failures: Vec<String> = Vec::new();
-    let wifi_or_wwan_present = initial_state.wifi.present || initial_state.wwan.present;
-
-    if let Err(e) = nm.set_airplane_mode(target_enabled).await {
-        // BluetoothToggleFailed is expected on Bluetooth-only hosts (no Wi-Fi/WWAN).
-        // Only treat this as a regression if Wi-Fi or WWAN is present.
-        if wifi_or_wwan_present {
-            failures.push(format!(
-                "set_airplane_mode toggle returned error (regression candidate): {e}"
-            ));
-        } else {
-            println!("set_airplane_mode error on Bluetooth-only host (expected): {e}");
-        }
-    } else {
-        println!("Airplane mode toggle succeeded");
-    }
-
-    // Give the radios time to settle (especially Bluetooth with its 2-second timeout)
-    sleep(Duration::from_secs(3)).await;
-
-    // Verify the toggle took effect
-    let new_state = match nm.airplane_mode_state().await {
-        Ok(state) => Some(state),
-        Err(e) => {
-            failures.push(format!(
-                "Failed to get airplane mode state after toggle: {e}"
-            ));
-            None
-        }
-    };
-
-    if let Some(state) = &new_state {
-        let new_is_airplane_mode = state.is_airplane_mode();
-        println!(
-            "New airplane mode state: is_airplane_mode={}, WiFi enabled={}, WWAN enabled={}, Bluetooth enabled={}",
-            new_is_airplane_mode, state.wifi.enabled, state.wwan.enabled, state.bluetooth.enabled
+        let added = next_settings_change(&mut events, "the profile Added event", |change| {
+            change_has_path(change, "added", &path_string)
+        })
+        .await;
+        assert!(
+            matches!(added, SettingsChange::Added { .. }),
+            "expected an Added event, got {added:?}"
+        );
+        let unified_added = next_network_event(
+            &mut network_events,
+            "the unified SettingsChanged(Added) event",
+            |event| {
+                matches!(
+                    event,
+                    NetworkEvent::SettingsChanged(SettingsChange::Added { path })
+                        if path.as_str() == path_string
+                )
+            },
+        )
+        .await;
+        assert!(
+            matches!(
+                unified_added,
+                NetworkEvent::SettingsChanged(SettingsChange::Added { ref path })
+                    if path.as_str() == path_string
+            ),
+            "expected the exact unified Added event, got {unified_added:?}"
         );
 
-        let expected_radio_on = !target_enabled;
-        let wifi_or_wwan_present = state.wifi.present || state.wwan.present;
-        for (name, radio) in [
-            ("WiFi", state.wifi),
-            ("WWAN", state.wwan),
-            ("Bluetooth", state.bluetooth),
-        ] {
-            // BluetoothToggleFailed is non-fatal when Wi-Fi/WWAN are present,
-            // so skip the Bluetooth assertion on those hosts.
-            if name == "Bluetooth" && wifi_or_wwan_present {
-                continue;
-            }
-            if radio.present && radio.enabled != expected_radio_on {
-                failures.push(format!(
-                    "{name} enabled mismatch after toggle: expected {}, got {}",
-                    expected_radio_on, radio.enabled
-                ));
-            }
-        }
-    }
+        let brief = bounded(
+            "list saved connection identities",
+            DBUS_TIMEOUT,
+            nm.list_saved_connections_brief(),
+        )
+        .await
+        .expect("failed to list saved connection identities")
+        .into_iter()
+        .find(|profile| profile.uuid == uuid_string)
+        .expect("the newly added profile was absent from the brief listing");
+        assert_eq!(brief.path, path);
+        assert_eq!(brief.id, id);
+        assert_eq!(brief.connection_type, "wireguard");
 
-    // Best-effort restore to initial aggregate state.
-    // NOTE: set_airplane_mode(false) turns ALL radios on, so this does not truly
-    // restore individual radio states. If the host started in a mixed state
-    // (e.g., Wi-Fi on but Bluetooth off), radios may end up in a different
-    // configuration than before. We log the result but don't assert on it.
-    println!(
-        "Restoring airplane mode to initial state: {}",
-        is_airplane_mode
+        let profile = bounded(
+            "decode the saved WireGuard profile",
+            DBUS_TIMEOUT,
+            nm.get_saved_connection(&uuid_string),
+        )
+        .await
+        .expect("failed to load the newly added WireGuard profile");
+        assert_eq!(profile.path, path);
+        assert_eq!(profile.id, id);
+        assert_eq!(profile.connection_type, "wireguard");
+        assert!(!profile.autoconnect);
+        match profile.summary {
+            SettingsSummary::WireGuard {
+                mtu,
+                peer_count,
+                first_peer_endpoint,
+                ..
+            } => {
+                assert_eq!(mtu, Some(1380));
+                assert_eq!(peer_count, 1);
+                assert_eq!(first_peer_endpoint.as_deref(), Some("192.0.2.1:51820"));
+            }
+            other => panic!("expected a WireGuard settings summary, got {other:?}"),
+        }
+
+        let mut patch = SettingsPatch::default();
+        patch.id = Some(renamed_id.clone());
+        patch.autoconnect = Some(true);
+        patch.autoconnect_priority = Some(42);
+        bounded(
+            "update the saved profile",
+            DBUS_TIMEOUT,
+            nm.update_saved_connection(&uuid_string, patch),
+        )
+        .await
+        .expect("failed to update the saved profile");
+
+        let updated_event = next_settings_change(&mut events, "the profile Updated event", |change| {
+            change_has_path(change, "updated", &path_string)
+        })
+        .await;
+        assert!(
+            matches!(updated_event, SettingsChange::Updated { .. }),
+            "expected an Updated event, got {updated_event:?}"
+        );
+        let unified_updated = next_network_event(
+            &mut network_events,
+            "the unified SettingsChanged(Updated) event",
+            |event| {
+                matches!(
+                    event,
+                    NetworkEvent::SettingsChanged(SettingsChange::Updated { path })
+                        if path.as_str() == path_string
+                )
+            },
+        )
+        .await;
+        assert!(
+            matches!(
+                unified_updated,
+                NetworkEvent::SettingsChanged(SettingsChange::Updated { ref path })
+                    if path.as_str() == path_string
+            ),
+            "expected the exact unified Updated event, got {unified_updated:?}"
+        );
+        let updated = bounded(
+            "reload the updated profile",
+            DBUS_TIMEOUT,
+            nm.get_saved_connection(&uuid_string),
+        )
+        .await
+        .expect("failed to reload the updated profile");
+        assert_eq!(updated.id, renamed_id);
+        assert!(updated.autoconnect);
+        assert_eq!(updated.autoconnect_priority, 42);
+
+        bounded(
+            "delete the saved profile",
+            DBUS_TIMEOUT,
+            nm.delete_saved_connection(&uuid_string),
+        )
+        .await
+        .expect("failed to delete the saved profile");
+        let removed_event = next_settings_change(&mut events, "the profile Removed event", |change| {
+            change_has_path(change, "removed", &path_string)
+        })
+        .await;
+        assert!(
+            matches!(removed_event, SettingsChange::Removed { .. }),
+            "expected a Removed event, got {removed_event:?}"
+        );
+        let unified_removed = next_network_event(
+            &mut network_events,
+            "the unified SettingsChanged(Removed) event",
+            |event| {
+                matches!(
+                    event,
+                    NetworkEvent::SettingsChanged(SettingsChange::Removed { path })
+                        if path.as_str() == path_string
+                )
+            },
+        )
+        .await;
+        assert!(
+            matches!(
+                unified_removed,
+                NetworkEvent::SettingsChanged(SettingsChange::Removed { ref path })
+                    if path.as_str() == path_string
+            ),
+            "expected the exact unified Removed event, got {unified_removed:?}"
+        );
+
+        let ids = bounded(
+            "list profiles after deletion",
+            DBUS_TIMEOUT,
+            nm.list_saved_connection_ids(),
+        )
+        .await
+        .expect("failed to list profiles after deletion");
+        assert!(!ids.iter().any(|candidate| candidate == &renamed_id));
+
+        let error = bounded(
+            "load a deleted profile",
+            DBUS_TIMEOUT,
+            nm.get_saved_connection(&uuid_string),
+        )
+        .await
+        .expect_err("loading a deleted profile must fail");
+        assert!(
+            matches!(error, ConnectionError::SavedConnectionNotFound(ref missing) if missing == &uuid_string),
+            "expected SavedConnectionNotFound for {uuid_string}, got {error:?}"
+        );
+    })
+    .catch_unwind()
+    .await;
+
+    let cleanup_failures = cleanup_saved_profile(&nm, &uuid_string).await;
+    finish_after_cleanup(outcome, cleanup_failures);
+}
+
+/// Exercises a real NetworkManager-to-agent secret request while activating a
+/// native WireGuard VPN, plus registration ownership and cleanup rules.
+#[tokio::test]
+#[serial]
+#[ignore = "requires NMRS_REQUIRE_NETWORKMANAGER=1 and an isolated NetworkManager"]
+async fn networkmanager_secret_agent_registration_lifecycle() {
+    let nm = network_manager().await;
+    let suffix = Uuid::new_v4().simple().to_string();
+    let invalid_identifier = format!("com.nmrs:integration.Agent{suffix}");
+    let invalid_error = match bounded(
+        "reject an invalid secret-agent identifier",
+        DBUS_TIMEOUT,
+        SecretAgent::builder()
+            .with_identifier(&invalid_identifier)
+            .register(),
+    )
+    .await
+    {
+        Err(error) => error,
+        Ok((handle, _requests)) => {
+            bounded(
+                "unregister unexpectedly accepted invalid agent",
+                DBUS_TIMEOUT,
+                handle.unregister(),
+            )
+            .await
+            .expect("failed to clean up unexpectedly accepted invalid agent");
+            panic!("NetworkManager accepted invalid agent identifier {invalid_identifier:?}");
+        }
+    };
+    assert!(
+        matches!(
+            invalid_error,
+            ConnectionError::AgentRegistration { ref context }
+                if context.contains("registering secret agent")
+                    && context.contains("InvalidIdentifier")
+        ),
+        "expected NetworkManager's InvalidIdentifier registration rejection, got {invalid_error:?}"
     );
 
-    if let Err(e) = nm.set_airplane_mode(is_airplane_mode).await {
-        println!("Best-effort restore failed (not a test failure): {e}");
-    }
+    let identifier = format!("com.nmrs.integration.Agent{suffix}");
+    let (handle, mut requests) = bounded(
+        "register the first secret agent",
+        DBUS_TIMEOUT,
+        SecretAgent::builder()
+            .with_identifier(&identifier)
+            .register(),
+    )
+    .await
+    .expect("failed to register the first secret agent");
+    let mut active_handle = Some(handle);
+    let profile_id = format!("nmrs-agent-wireguard-{suffix}");
+    let profile_uuid = Uuid::new_v4().to_string();
+    let private_key = "YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=";
 
-    // Give radios time to settle again
-    sleep(Duration::from_secs(3)).await;
+    let outcome = AssertUnwindSafe(async {
+        let duplicate_error = match bounded(
+            "reject a duplicate secret-agent identifier",
+            DBUS_TIMEOUT,
+            SecretAgent::builder()
+                .with_identifier(&identifier)
+                .register(),
+        )
+        .await
+        {
+            Err(error) => error,
+            Ok((duplicate, _duplicate_requests)) => {
+                bounded(
+                    "unregister unexpectedly accepted duplicate agent",
+                    DBUS_TIMEOUT,
+                    duplicate.unregister(),
+                )
+                .await
+                .expect("failed to clean up unexpectedly accepted duplicate agent");
+                panic!("NetworkManager accepted duplicate agent identifier {identifier:?}");
+            }
+        };
+        assert!(
+            matches!(duplicate_error, ConnectionError::AgentAlreadyRegistered),
+            "expected AgentAlreadyRegistered for duplicate registration, got {duplicate_error:?}"
+        );
 
-    // Log restored state for diagnostics (no assertions—restoration is best-effort)
-    match nm.airplane_mode_state().await {
-        Ok(restored_state) => {
-            println!(
-                "Restored airplane mode state: is_airplane_mode={}, WiFi enabled={}, WWAN enabled={}, Bluetooth enabled={}",
-                restored_state.is_airplane_mode(),
-                restored_state.wifi.enabled,
-                restored_state.wwan.enabled,
-                restored_state.bluetooth.enabled
+        let reregister_error = bounded(
+            "reject re-registration while the agent is active",
+            DBUS_TIMEOUT,
+            active_handle
+                .as_ref()
+                .expect("the primary agent handle disappeared")
+                .reregister(),
+        )
+        .await
+        .expect_err("an active secret agent must not re-register");
+        assert!(
+            matches!(reregister_error, ConnectionError::AgentAlreadyRegistered),
+            "expected AgentAlreadyRegistered for active re-registration, got {reregister_error:?}"
+        );
+
+        let profile_uuid_value = Uuid::parse_str(&profile_uuid)
+            .expect("the generated integration profile UUID must parse");
+        let mut settings = WireGuardBuilder::new(&profile_id)
+            .private_key(private_key)
+            .address("10.207.0.2/24")
+            .add_peer(WireGuardPeer::new(
+                "HIgo9xNzJMWLKAShlKl6/bUT1VI9Q0SDBXGtLXkPFXc=",
+                "192.0.2.1:51820",
+                vec!["10.208.0.0/16".into()],
+            ))
+            .uuid(profile_uuid_value)
+            .autoconnect(false)
+            .build()
+            .expect("the agent-owned WireGuard profile must be valid");
+        let wireguard = settings
+            .get_mut("wireguard")
+            .expect("the WireGuard builder omitted its settings section");
+        assert!(
+            wireguard.remove("private-key").is_some(),
+            "the WireGuard builder omitted its private key"
+        );
+        wireguard.insert("private-key-flags", Value::from(1u32));
+
+        let profile_path = bounded(
+            "add the agent-owned WireGuard profile",
+            DBUS_TIMEOUT,
+            nm.add_connection(settings),
+        )
+        .await
+        .expect("NetworkManager rejected the agent-owned WireGuard profile");
+
+        let missing_uuid = Uuid::new_v4().to_string();
+        let missing_error = bounded(
+            "reject activation of a missing VPN UUID",
+            DBUS_TIMEOUT,
+            nm.connect_vpn_by_uuid(&missing_uuid),
+        )
+        .await
+        .expect_err("activation of a missing VPN UUID must fail");
+        assert!(
+            matches!(missing_error, ConnectionError::VpnNotFound(ref missing) if missing == &missing_uuid),
+            "expected VpnNotFound for {missing_uuid}, got {missing_error:?}"
+        );
+
+        let get_secrets = async {
+            let profile = nmrs::raw::zbus::Proxy::new(
+                nm.dbus_connection(),
+                "org.freedesktop.NetworkManager",
+                profile_path.clone(),
+                "org.freedesktop.NetworkManager.Settings.Connection",
+            )
+            .await
+            .expect("failed to create the saved-profile D-Bus proxy");
+            let reply = profile
+                .call_method("GetSecrets", &("wireguard",))
+                .await
+                .expect("NetworkManager failed to route GetSecrets to the registered agent");
+            reply
+                .body()
+                .deserialize::<HashMap<String, HashMap<String, OwnedValue>>>()
+                .expect("NetworkManager returned a malformed GetSecrets reply")
+        };
+        let secret_exchange = async {
+            let request = bounded(
+                "receive NetworkManager's saved-profile GetSecrets request",
+                DBUS_TIMEOUT,
+                requests.next(),
+            )
+            .await
+            .expect("the secret-agent request stream closed during activation");
+            assert_eq!(request.connection_uuid, profile_uuid);
+            assert_eq!(request.connection_id, profile_id);
+            assert_eq!(request.connection_type, "wireguard");
+            assert_eq!(request.connection_path, profile_path);
+            assert!(
+                matches!(request.setting, SecretSetting::Other(ref name) if name == "wireguard"),
+                "expected a wireguard secret request, got {:?}",
+                request.setting
             );
-        }
-        Err(e) => println!("Could not read restored state: {e}"),
-    }
+            assert_eq!(
+                request.flags,
+                SecretAgentFlags::USER_REQUESTED,
+                "saved-profile GetSecrets used unexpected request flags: {:?}",
+                request.flags,
+            );
+            assert!(request.hints.is_empty());
+            assert!(request.existing_secrets.is_empty());
 
-    if !failures.is_empty() {
-        panic!("{}", failures.join("\n"));
+            let mut reply = HashMap::new();
+            reply.insert(
+                "private-key".into(),
+                OwnedValue::from(nmrs::raw::zvariant::Str::from(private_key)),
+            );
+            request
+                .responder
+                .raw("wireguard", reply)
+                .await
+                .expect("failed to route the WireGuard secret reply to NetworkManager");
+        };
+        let (returned_secrets, ()) = tokio::join!(get_secrets, secret_exchange);
+        let returned_private_key = <&str>::try_from(
+            returned_secrets
+                .get("wireguard")
+                .and_then(|setting| setting.get("private-key"))
+                .expect("the GetSecrets reply omitted wireguard.private-key"),
+        )
+        .expect("wireguard.private-key was not returned as a string");
+        assert_eq!(returned_private_key, private_key);
+
+        let mut wireguard_overlay = HashMap::new();
+        wireguard_overlay.insert(
+            "private-key".into(),
+            OwnedValue::from(nmrs::raw::zvariant::Str::from(returned_private_key)),
+        );
+        wireguard_overlay.insert("private-key-flags".into(), OwnedValue::from(0u32));
+        let mut overlay = HashMap::new();
+        overlay.insert("wireguard".into(), wireguard_overlay);
+        let mut patch = SettingsPatch::default();
+        patch.raw_overlay = Some(overlay);
+        bounded(
+            "persist the agent-provided WireGuard private key",
+            DBUS_TIMEOUT,
+            nm.update_saved_connection(&profile_uuid, patch),
+        )
+        .await
+        .expect("failed to persist the agent-provided WireGuard private key");
+
+        bounded(
+            "activate the configured WireGuard profile",
+            WIFI_TIMEOUT,
+            nm.connect_vpn_by_uuid(&profile_uuid),
+        )
+        .await
+        .expect("WireGuard activation failed after persisting the agent-provided key");
+
+        let raw_active = bounded(
+            "inspect the active WireGuard connection over D-Bus",
+            DBUS_TIMEOUT,
+            raw_active_connection(&nm, &profile_uuid),
+        )
+        .await
+        .expect("failed to inspect active connections over D-Bus")
+        .expect("NetworkManager omitted the activated WireGuard connection");
+        assert_ne!(raw_active.path.as_str(), "/");
+        assert_eq!(raw_active.connection_path, profile_path);
+        assert_eq!(raw_active.id, profile_id);
+        assert_eq!(raw_active.connection_type, "wireguard");
+        assert_eq!(raw_active.state, 2, "raw active state was not Activated");
+
+        let mut last_active = Vec::new();
+        let active_vpn = timeout(EVENT_TIMEOUT, async {
+            loop {
+                last_active = active_connections(&nm).await;
+                if let Some(vpn) = last_active.iter().find_map(|connection| match connection {
+                    ActiveConnection::Vpn(vpn)
+                        if vpn.uuid == profile_uuid
+                            && vpn.state == ActiveConnectionState::Activated
+                            && vpn.interface.as_deref() == Some("wg-nmrs-agent")
+                            && vpn
+                                .ip4_address
+                                .as_deref()
+                                .is_some_and(|address| address.starts_with("10.207.0.2/")) =>
+                    {
+                        Some(vpn.clone())
+                    }
+                    _ => None,
+                }) {
+                    break vpn;
+                }
+                sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "typed active connections never exposed the configured WireGuard state: {last_active:?}"
+            )
+        });
+        assert_eq!(active_vpn.id, profile_id);
+        assert_eq!(active_vpn.state, ActiveConnectionState::Activated);
+        assert_eq!(active_vpn.interface.as_deref(), Some("wg-nmrs-agent"));
+        assert!(
+            active_vpn
+                .ip4_address
+                .as_deref()
+                .is_some_and(|address| address.starts_with("10.207.0.2/")),
+            "typed VPN connection omitted its configured address: {active_vpn:?}"
+        );
+
+        bounded(
+            "deactivate the WireGuard VPN",
+            DBUS_TIMEOUT,
+            nm.disconnect_vpn_by_uuid(&profile_uuid),
+        )
+        .await
+        .expect("failed to deactivate the WireGuard VPN");
+        timeout(EVENT_TIMEOUT, async {
+            loop {
+                let raw_absent = raw_active_paths(&nm)
+                    .await
+                    .expect("failed to inspect D-Bus state after VPN deactivation")
+                    .iter()
+                    .all(|path| path != &raw_active.path);
+                if raw_absent {
+                    let typed_absent =
+                        !active_connections(&nm).await.iter().any(|connection| {
+                            matches!(connection, ActiveConnection::Vpn(vpn) if vpn.uuid == profile_uuid)
+                        });
+                    if typed_absent {
+                        break;
+                    }
+                }
+                sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("WireGuard remained active after D-Bus deactivation");
+
+        bounded(
+            "delete the agent-owned WireGuard profile",
+            DBUS_TIMEOUT,
+            nm.delete_saved_connection(&profile_uuid),
+        )
+        .await
+        .expect("failed to delete the agent-owned WireGuard profile");
+
+        let primary = active_handle
+            .take()
+            .expect("the primary agent handle disappeared before unregister");
+        bounded(
+            "unregister the first secret agent",
+            DBUS_TIMEOUT,
+            primary.unregister(),
+        )
+        .await
+        .expect("failed to unregister the first secret agent");
+        assert!(
+            bounded(
+                "wait for the first request stream to close",
+                DBUS_TIMEOUT,
+                requests.next(),
+            )
+            .await
+            .is_none(),
+            "secret request stream remained open after unregister"
+        );
+
+        let (replacement, mut replacement_requests) = bounded(
+            "re-register the released secret-agent identifier",
+            DBUS_TIMEOUT,
+            SecretAgent::builder()
+                .with_identifier(&identifier)
+                .register(),
+        )
+        .await
+        .expect("the identifier was not released after unregister");
+        active_handle = Some(replacement);
+        let replacement = active_handle
+            .take()
+            .expect("the replacement agent handle disappeared before unregister");
+        bounded(
+            "unregister the replacement secret agent",
+            DBUS_TIMEOUT,
+            replacement.unregister(),
+        )
+        .await
+        .expect("failed to unregister the replacement secret agent");
+        assert!(
+            bounded(
+                "wait for the replacement request stream to close",
+                DBUS_TIMEOUT,
+                replacement_requests.next(),
+            )
+            .await
+            .is_none(),
+            "replacement request stream remained open after unregister"
+        );
+    })
+    .catch_unwind()
+    .await;
+
+    let mut cleanup_failures = cleanup_vpn_profile(&nm, &profile_uuid).await;
+    if let Some(handle) = active_handle.take()
+        && let Some(failure) = cleanup_secret_agent(handle).await
+    {
+        cleanup_failures.push(failure);
     }
+    finish_after_cleanup(outcome, cleanup_failures);
+}
+
+/// Exercises a deterministic veth/DHCP wired connection without touching the
+/// container's Docker-provided `eth0` interface.
+#[tokio::test]
+#[serial]
+#[ignore = "requires NMRS_REQUIRE_WIRED=1 and the isolated veth harness"]
+async fn wired_connection_lifecycle() {
+    required_capability("NMRS_REQUIRE_WIRED");
+    let interface = required_env("NMRS_WIRED_INTERFACE");
+    let nm = network_manager().await;
+
+    let outcome = AssertUnwindSafe(async {
+        let devices = bounded("list wired devices", DBUS_TIMEOUT, nm.list_wired_devices())
+            .await
+            .expect("failed to list wired devices");
+        let device = devices
+            .iter()
+            .find(|device| device.interface == interface)
+            .unwrap_or_else(|| {
+                panic!("managed veth interface {interface:?} was missing: {devices:?}")
+            });
+        assert_eq!(device.managed, Some(true));
+        assert!(!device.path.is_empty());
+
+        let details = bounded(
+            "list detailed wired devices",
+            DBUS_TIMEOUT,
+            nm.list_wired_device_details(),
+        )
+        .await
+        .expect("failed to list detailed wired devices");
+        let detail = details
+            .iter()
+            .find(|device| device.interface == interface)
+            .expect("managed veth was absent from detailed wired devices");
+        assert!(!detail.path.is_empty());
+        assert!(!detail.hw_address.is_empty());
+        assert!(detail.active_connection_id.is_none());
+
+        bounded(
+            "connect the managed veth client",
+            WIFI_TIMEOUT,
+            nm.connect_wired(),
+        )
+        .await
+        .expect("wired activation or DHCP failed");
+        let saved_uuid = bounded(
+            "resolve the wired profile UUID",
+            DBUS_TIMEOUT,
+            nm.get_saved_connection_uuid(&interface),
+        )
+        .await
+        .expect("failed to resolve the wired profile UUID")
+        .expect("wired activation did not create a saved profile");
+
+        let active = active_connections(&nm).await;
+        let active_wired = active
+            .iter()
+            .find_map(|connection| match connection {
+                ActiveConnection::Wired(wired)
+                    if wired.interface.as_deref() == Some(interface.as_str()) =>
+                {
+                    Some(wired.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                panic!("typed active connections omitted the veth connection: {active:?}")
+            });
+        assert_eq!(active_wired.id, interface);
+        assert_eq!(active_wired.uuid, saved_uuid);
+        assert_eq!(active_wired.state, ActiveConnectionState::Activated);
+        assert!(
+            active_wired
+                .ip4_address
+                .as_deref()
+                .is_some_and(|address| address.starts_with("192.168.251.")),
+            "typed wired connection omitted its DHCP address"
+        );
+
+        let connected_details = bounded(
+            "read connected wired details",
+            DBUS_TIMEOUT,
+            nm.list_wired_device_details(),
+        )
+        .await
+        .expect("failed to read connected wired details");
+        let connected = connected_details
+            .iter()
+            .find(|device| device.interface == interface)
+            .expect("connected veth was absent from detailed wired devices");
+        assert_eq!(connected.state, DeviceState::Activated);
+        assert_eq!(
+            connected.active_connection_id.as_deref(),
+            Some(interface.as_str())
+        );
+        assert!(
+            connected
+                .ip4_address
+                .as_deref()
+                .is_some_and(|address| address.starts_with("192.168.251."))
+        );
+
+        bounded(
+            "disconnect the managed veth client",
+            DBUS_TIMEOUT,
+            disconnect_device(&nm, &interface),
+        )
+        .await
+        .expect("failed to disconnect the managed veth client");
+        timeout(EVENT_TIMEOUT, async {
+            loop {
+                if !active_connections(&nm).await.iter().any(|connection| {
+                    matches!(connection, ActiveConnection::Wired(wired) if wired.uuid == saved_uuid)
+                }) {
+                    break;
+                }
+                sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("typed wired connection remained active after disconnect");
+
+        let disconnected_details = bounded(
+            "read disconnected wired details",
+            DBUS_TIMEOUT,
+            nm.list_wired_device_details(),
+        )
+        .await
+        .expect("failed to read disconnected wired details");
+        let disconnected = disconnected_details
+            .iter()
+            .find(|device| device.interface == interface)
+            .expect("disconnected veth was absent from detailed wired devices");
+        assert_eq!(disconnected.state, DeviceState::Disconnected);
+        assert!(disconnected.active_connection_id.is_none());
+
+        bounded(
+            "delete the wired profile",
+            DBUS_TIMEOUT,
+            nm.delete_saved_connection(&saved_uuid),
+        )
+        .await
+        .expect("failed to delete the wired profile");
+        assert!(
+            bounded(
+                "resolve wired profile after deletion",
+                DBUS_TIMEOUT,
+                nm.get_saved_connection_uuid(&interface),
+            )
+            .await
+            .expect("failed to resolve wired profile after deletion")
+            .is_none()
+        );
+    })
+    .catch_unwind()
+    .await;
+
+    let cleanup_failures = cleanup_wired_profile(&nm, &interface).await;
+    finish_after_cleanup(outcome, cleanup_failures);
+}
+
+/// Proves discovery, WPA authentication, DHCP, saved-secret reuse, and cleanup
+/// against the deterministic mac80211_hwsim access point.
+#[tokio::test]
+#[serial]
+#[ignore = "requires the isolated mac80211_hwsim WiFi harness"]
+async fn wifi_wpa_saved_connection_lifecycle() {
+    required_capability("NMRS_REQUIRE_WIFI");
+    let interface = required_env("NMRS_WIFI_INTERFACE");
+    let ssid = required_env("NMRS_EXPECT_WIFI_SSID");
+    let absent_ssid = format!("{ssid}-absent");
+    let password = required_env("NMRS_WIFI_PASSWORD");
+    assert!(
+        (8..=63).contains(&password.len()),
+        "NMRS_WIFI_PASSWORD must be a valid WPA passphrase"
+    );
+
+    let nm = network_manager().await;
+    let initial_wifi_enabled = bounded(
+        "read the initial WiFi radio state",
+        DBUS_TIMEOUT,
+        nm.wifi_state(),
+    )
+    .await
+    .expect("failed to capture the WiFi radio state before the test")
+    .enabled;
+    let wifi = nm.wifi(&interface);
+    let device_callback_count = Arc::new(AtomicUsize::new(0));
+    let callback_count = Arc::clone(&device_callback_count);
+    let network_callback_count = Arc::new(AtomicUsize::new(0));
+    let network_callback = Arc::clone(&network_callback_count);
+    let mut device_monitor = None;
+    let mut network_monitor = None;
+
+    let outcome = AssertUnwindSafe(async {
+        device_monitor = Some(
+            bounded(
+                "start the WiFi device callback monitor",
+                DBUS_TIMEOUT,
+                nm.monitor_device_changes(move || {
+                    callback_count.fetch_add(1, Ordering::SeqCst);
+                }),
+            )
+            .await
+            .expect("the WiFi device callback monitor did not become ready"),
+        );
+        network_monitor = Some(
+            bounded(
+                "start the WiFi network callback monitor",
+                DBUS_TIMEOUT,
+                nm.monitor_network_changes(move || {
+                    network_callback.fetch_add(1, Ordering::SeqCst);
+                }),
+            )
+            .await
+            .expect("the WiFi network callback monitor did not become ready"),
+        );
+
+        bounded(
+            "enable the WiFi radio",
+            DBUS_TIMEOUT,
+            nm.set_wireless_enabled(true),
+        )
+        .await
+        .expect("the harness declared WiFi available, but enabling it failed");
+        bounded(
+            "wait for the WiFi device to become ready",
+            DBUS_TIMEOUT,
+            nm.wait_for_wifi_ready(),
+        )
+        .await
+        .expect("the harness WiFi device did not become ready");
+
+        let devices = bounded(
+            "list wireless devices",
+            DBUS_TIMEOUT,
+            nm.list_wireless_devices(),
+        )
+        .await
+        .expect("failed to list wireless devices");
+        let device = devices
+            .iter()
+            .find(|device| device.interface == interface)
+            .unwrap_or_else(|| {
+                panic!("harness WiFi interface {interface:?} was not managed: {devices:?}")
+            });
+        assert!(!device.path.is_empty());
+        assert_eq!(device.managed, Some(true));
+
+        bounded(
+            "remove any stale test profile",
+            DBUS_TIMEOUT,
+            wifi.forget(&ssid),
+        )
+        .await
+        .expect("failed to remove a stale test profile");
+        bounded(
+            "remove any stale absent-network profile",
+            DBUS_TIMEOUT,
+            wifi.forget(&absent_ssid),
+        )
+        .await
+        .expect("failed to remove a stale absent-network profile");
+
+        let absent_error = bounded(
+            "reject an absent SSID",
+            WIFI_TIMEOUT,
+            wifi.connect(
+                &absent_ssid,
+                WifiSecurity::WpaPsk {
+                    psk: password.clone(),
+                },
+            ),
+        )
+        .await
+        .expect_err("connecting to an absent SSID must fail");
+        assert!(
+            matches!(absent_error, ConnectionError::NotFound),
+            "expected NotFound for absent SSID, got {absent_error:?}"
+        );
+        assert!(
+            !bounded(
+                "check absent SSID profile",
+                DBUS_TIMEOUT,
+                nm.has_saved_connection(&absent_ssid),
+            )
+            .await
+            .expect("failed to check the absent SSID profile"),
+            "an absent SSID created a saved profile"
+        );
+
+        bounded("scan for the harness AP", DBUS_TIMEOUT, wifi.scan())
+            .await
+            .expect("the harness WiFi scan failed");
+        let network = timeout(Duration::from_secs(15), async {
+            loop {
+                let networks = wifi
+                    .list_networks()
+                    .await
+                    .expect("listing WiFi scan results failed");
+                if let Some(network) = networks.into_iter().find(|network| network.ssid == ssid) {
+                    return network;
+                }
+                sleep(Duration::from_millis(500)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("the expected access point {ssid:?} was not discovered"));
+        assert_eq!(network.device, interface);
+        assert!(network.secured);
+        assert!(network.is_psk);
+        assert!(!network.is_eap);
+        assert!(!network.best_bssid.is_empty());
+        assert!(
+            network
+                .bssids
+                .iter()
+                .any(|bssid| bssid == &network.best_bssid)
+        );
+
+        network_callback_count.store(0, Ordering::SeqCst);
+        bounded(
+            "disable WiFi to remove the monitored access point",
+            DBUS_TIMEOUT,
+            nm.set_wireless_enabled(false),
+        )
+        .await
+        .expect("failed to disable WiFi for the network-monitor contract");
+        timeout(EVENT_TIMEOUT, async {
+            while network_callback_count.load(Ordering::SeqCst) == 0 {
+                sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("network callback was not delivered when the access point disappeared");
+        bounded(
+            "re-enable WiFi after the network-monitor contract",
+            DBUS_TIMEOUT,
+            nm.set_wireless_enabled(true),
+        )
+        .await
+        .expect("failed to re-enable WiFi after the network-monitor contract");
+        bounded(
+            "wait for WiFi after the network-monitor contract",
+            DBUS_TIMEOUT,
+            nm.wait_for_wifi_ready(),
+        )
+        .await
+        .expect("the WiFi device did not recover after re-enabling it");
+        bounded(
+            "rescan after the network-monitor contract",
+            DBUS_TIMEOUT,
+            wifi.scan(),
+        )
+        .await
+        .expect("the post-monitor WiFi scan failed");
+        let access_point = timeout(Duration::from_secs(15), async {
+            loop {
+                let access_points = wifi
+                    .list_access_points()
+                    .await
+                    .expect("listing per-BSSID access points failed");
+                if let Some(access_point) = access_points
+                    .into_iter()
+                    .find(|access_point| access_point.ssid == ssid)
+                {
+                    return access_point;
+                }
+                sleep(Duration::from_millis(500)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("the access point {ssid:?} did not return after re-enabling"));
+        assert_eq!(access_point.interface, interface);
+        assert_eq!(access_point.ssid_bytes, ssid.as_bytes());
+        assert!(!access_point.bssid.is_empty());
+        assert!(access_point.frequency_mhz > 0);
+        assert!(access_point.security.psk);
+        let expected_bssid = access_point.bssid.clone();
+
+        let wrong_psk_error = bounded(
+            "reject an incorrect WPA passphrase",
+            WIFI_TIMEOUT,
+            wifi.connect(
+                &ssid,
+                WifiSecurity::WpaPsk {
+                    psk: "nmrs-definitely-wrong-password".into(),
+                },
+            ),
+        )
+        .await
+        .expect_err("an incorrect WPA passphrase must fail");
+        assert!(
+            matches!(wrong_psk_error, ConnectionError::AuthFailed),
+            "expected AuthFailed for an incorrect WPA passphrase, got {wrong_psk_error:?}"
+        );
+        assert!(
+            !bounded(
+                "check state after rejected WPA authentication",
+                DBUS_TIMEOUT,
+                nm.is_connected(&ssid),
+            )
+            .await
+            .expect("failed to query state after rejected WPA authentication")
+        );
+        assert!(
+            !active_connections(&nm)
+                .await
+                .iter()
+                .any(|active| matches!(active, ActiveConnection::Wifi(wifi) if wifi.ssid == ssid)),
+            "rejected WPA authentication left an active WiFi connection"
+        );
+        assert!(
+            !bounded(
+                "check profile after rejected WPA authentication",
+                DBUS_TIMEOUT,
+                nm.has_saved_connection(&ssid),
+            )
+            .await
+            .expect("failed to query profile after rejected WPA authentication"),
+            "rejected WPA authentication left a saved bad profile"
+        );
+
+        device_callback_count.store(0, Ordering::SeqCst);
+        bounded(
+            "connect to the WPA access point",
+            WIFI_TIMEOUT,
+            wifi.connect(
+                &ssid,
+                WifiSecurity::WpaPsk {
+                    psk: password.clone(),
+                },
+            ),
+        )
+        .await
+        .expect("WPA authentication or DHCP activation failed");
+        timeout(EVENT_TIMEOUT, async {
+            while device_callback_count.load(Ordering::SeqCst) == 0 {
+                sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("device callback was not delivered during WiFi activation");
+        assert!(
+            bounded(
+                "check connected state",
+                DBUS_TIMEOUT,
+                nm.is_connected(&ssid)
+            )
+            .await
+            .expect("failed to query connected state")
+        );
+        let current_ssid = bounded("read the current SSID", DBUS_TIMEOUT, nm.current_ssid()).await;
+        assert_eq!(current_ssid.as_deref(), Some(ssid.as_str()));
+
+        let active = bounded(
+            "read the active WiFi network",
+            DBUS_TIMEOUT,
+            nm.current_network(),
+        )
+        .await
+        .expect("failed to read the active WiFi network")
+        .expect("connect returned success without an active WiFi network");
+        assert_eq!(active.ssid, ssid);
+        assert_eq!(active.device, interface);
+        assert!(active.is_active);
+        let ip4_address = active
+            .ip4_address
+            .as_deref()
+            .expect("successful activation did not acquire an IPv4 DHCP lease");
+        assert!(
+            ip4_address.starts_with("192.168.250."),
+            "unexpected DHCP address {ip4_address:?}"
+        );
+
+        assert!(
+            bounded(
+                "check for the saved WiFi profile",
+                DBUS_TIMEOUT,
+                nm.has_saved_connection(&ssid),
+            )
+            .await
+            .expect("failed to query the saved WiFi profile")
+        );
+        let saved_path = bounded(
+            "resolve the saved WiFi path",
+            DBUS_TIMEOUT,
+            nm.get_saved_connection_path(&ssid),
+        )
+        .await
+        .expect("failed to resolve the saved WiFi path")
+        .expect("successful WPA connection did not create a saved profile");
+        assert_ne!(saved_path.as_str(), "/");
+        let saved_uuid = bounded(
+            "resolve the saved WiFi UUID",
+            DBUS_TIMEOUT,
+            nm.get_saved_connection_uuid(&ssid),
+        )
+        .await
+        .expect("failed to resolve the saved WiFi UUID")
+        .expect("successful WPA connection had no saved UUID");
+        let saved = bounded(
+            "decode the saved WiFi profile",
+            DBUS_TIMEOUT,
+            nm.get_saved_connection(&saved_uuid),
+        )
+        .await
+        .expect("failed to decode the saved WiFi profile");
+        assert_eq!(saved.id, ssid);
+        assert_eq!(saved.connection_type, "802-11-wireless");
+        match saved.summary {
+            SettingsSummary::Wifi {
+                ssid: saved_ssid,
+                security: Some(security),
+                ..
+            } => {
+                assert_eq!(saved_ssid, ssid);
+                assert_eq!(security.key_mgmt, WifiKeyMgmt::WpaPsk);
+            }
+            other => panic!("expected a WPA WiFi settings summary, got {other:?}"),
+        }
+
+        let active = active_connections(&nm).await;
+        let typed_wifi = active
+            .iter()
+            .find_map(|connection| match connection {
+                ActiveConnection::Wifi(wifi) if wifi.ssid == ssid => Some(wifi.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                panic!("typed active connections omitted the connected WiFi network: {active:?}")
+            });
+        assert_eq!(typed_wifi.id, ssid);
+        assert_eq!(typed_wifi.uuid, saved_uuid);
+        assert_eq!(typed_wifi.ssid, ssid);
+        assert_eq!(typed_wifi.interface.as_deref(), Some(interface.as_str()));
+        assert_eq!(typed_wifi.bssid.as_deref(), Some(expected_bssid.as_str()));
+        assert!(typed_wifi.strength.is_some());
+        assert_eq!(typed_wifi.state, ActiveConnectionState::Activated);
+        assert!(
+            typed_wifi
+                .ip4_address
+                .as_deref()
+                .is_some_and(|address| address.starts_with("192.168.250.")),
+            "typed active WiFi connection omitted its DHCP address"
+        );
+
+        bounded(
+            "disconnect the WiFi device",
+            DBUS_TIMEOUT,
+            wifi.disconnect(),
+        )
+        .await
+        .expect("failed to disconnect after the initial WPA connection");
+        assert!(
+            !bounded(
+                "check disconnected state",
+                DBUS_TIMEOUT,
+                nm.is_connected(&ssid),
+            )
+            .await
+            .expect("failed to query disconnected state")
+        );
+        assert!(
+            !active_connections(&nm).await.iter().any(
+                |active| matches!(active, ActiveConnection::Wifi(wifi) if wifi.uuid == saved_uuid)
+            ),
+            "typed active WiFi connection remained after disconnect"
+        );
+
+        bounded(
+            "reconnect with NetworkManager's saved PSK",
+            WIFI_TIMEOUT,
+            wifi.connect(&ssid, WifiSecurity::WpaPsk { psk: String::new() }),
+        )
+        .await
+        .expect("saved-credential WPA reconnect failed");
+        assert!(
+            bounded(
+                "check saved-credential reconnect",
+                DBUS_TIMEOUT,
+                nm.is_connected(&ssid),
+            )
+            .await
+            .expect("failed to query the saved-credential reconnect")
+        );
+
+        bounded(
+            "forget the active WiFi profile",
+            WIFI_TIMEOUT,
+            wifi.forget(&ssid),
+        )
+        .await
+        .expect("failed to disconnect and forget the WiFi profile");
+        assert!(
+            !bounded(
+                "check profile removal",
+                DBUS_TIMEOUT,
+                nm.has_saved_connection(&ssid),
+            )
+            .await
+            .expect("failed to query profile removal")
+        );
+        assert!(
+            bounded(
+                "resolve path after forgetting",
+                DBUS_TIMEOUT,
+                nm.get_saved_connection_path(&ssid),
+            )
+            .await
+            .expect("failed to resolve the profile path after forgetting")
+            .is_none()
+        );
+        assert!(
+            bounded(
+                "resolve UUID after forgetting",
+                DBUS_TIMEOUT,
+                nm.get_saved_connection_uuid(&ssid),
+            )
+            .await
+            .expect("failed to resolve the profile UUID after forgetting")
+            .is_none()
+        );
+
+        let error = bounded(
+            "reject an empty PSK without saved credentials",
+            DBUS_TIMEOUT,
+            wifi.connect(&ssid, WifiSecurity::WpaPsk { psk: String::new() }),
+        )
+        .await
+        .expect_err("an empty PSK without a saved profile must fail");
+        assert!(
+            matches!(error, ConnectionError::MissingPassword),
+            "expected MissingPassword after forgetting saved credentials, got {error:?}"
+        );
+    })
+    .catch_unwind()
+    .await;
+
+    let mut cleanup_failures = cleanup_wifi_profile(&wifi, &ssid).await;
+    match timeout(WIFI_TIMEOUT, wifi.forget(&absent_ssid)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => cleanup_failures.push(format!("forget {absent_ssid:?}: {error}")),
+        Err(_) => cleanup_failures.push(format!("forget {absent_ssid:?}: timed out")),
+    }
+    if let Some(handle) = device_monitor.take()
+        && let Some(failure) = stop_monitor("WiFi device callback monitor", handle).await
+    {
+        cleanup_failures.push(failure);
+    }
+    if let Some(handle) = network_monitor.take()
+        && let Some(failure) = stop_monitor("WiFi network callback monitor", handle).await
+    {
+        cleanup_failures.push(failure);
+    }
+    match timeout(DBUS_TIMEOUT, nm.set_wireless_enabled(initial_wifi_enabled)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => cleanup_failures.push(format!(
+            "restore WiFi radio enabled={initial_wifi_enabled}: {error}"
+        )),
+        Err(_) => cleanup_failures.push(format!(
+            "restore WiFi radio enabled={initial_wifi_enabled}: timed out"
+        )),
+    }
+    finish_after_cleanup(outcome, cleanup_failures);
 }

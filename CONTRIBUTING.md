@@ -12,7 +12,7 @@ I'm fairly accepting to all PR's, only with a couple caveats:
 **To run or develop nmrs you need:**
 
 - Rust (stable) via `rustup`
-- A running `NetworkManager` instance
+- Linux and NetworkManager only for environmental integration tests
 
 I also provide a `Dockerfile` you can build if you don't use Linux and use macOS instead.
 
@@ -29,7 +29,8 @@ docker compose run --rm test
 ```
 
 This starts an isolated system D-Bus and NetworkManager instance, waits for it
-to be ready, and requires integration tests to connect to it.
+to be ready, runs the workspace tests, and executes the NetworkManager profile
+CRUD integration contract. It does not use the host system bus.
 
 **To run an interactive shell:**
 
@@ -47,7 +48,7 @@ docker run --rm -it -v $(pwd):/app nmrs-lib   # mounts local changes
 If you decide to run the shell, ensure you run all commands from within the nmrs directory, not root.
 
 ```bash
-cargo test -p nmrs           # run library tests
+cargo test -p nmrs --lib     # run library unit tests
 cargo build -p nmrs          # build the library
 cargo check                  # you get the point...
 ```
@@ -69,44 +70,67 @@ fix(#24): fixed bug where something was happening
 
 ## Tests
 
-All tests must pass before a merge takes place.
+All unit, documentation, and applicable environmental tests must pass before a
+merge takes place.
 
-### Ensure NetworkManager is running
-
-```bash
-sudo systemctl start NetworkManager
-```
-
-### Test everything (unit + integration)
+### Unit and documentation tests
 
 ```bash
-cargo test --all-features
+cargo test --locked --lib --all-features --workspace
+cargo test --locked --doc --all-features --workspace
 ```
 
-### Integration tests
+The integration tests are marked `#[ignore]`. A normal `cargo test` compiles
+them but does not contact or mutate any NetworkManager instance. Do not remove
+that boundary or add tests which silently return success when a required daemon,
+device, or access point is missing.
 
-These require WiFi hardware. Please make sure you
-run this locally before your PR to ensure everything works.
+### Isolated NetworkManager integration
 
 ```bash
-cargo test --test integration_test --all-features
+docker compose run --build --rm test-integration
 ```
 
-If you do not have access to WiFi hardware (for whatever odd reason that is), you can do something like this:
+This starts a private system D-Bus and NetworkManager, plus a veth-backed DHCP
+network which cannot select Docker's own `eth0`. It validates real saved-profile
+creation, decoding, update, deletion, exact direct and unified settings events,
+a NetworkManager-routed secret request and reply, native WireGuard activation,
+wired discovery, DHCP activation, typed active-connection data, and disconnect
+cleanup. The harness sets
+`NMRS_REQUIRE_NETWORKMANAGER=1` and `NMRS_REQUIRE_WIRED=1`; once a capability is
+declared, missing services and unexpected D-Bus errors fail the test.
 
-```bash
-sudo modprobe mac80211_hwsim radios=2
-cargo test --test integration_test --all-features
-sudo modprobe -r mac80211_hwsim
-```
+### Deterministic WiFi integration
 
-For the same virtual-radio setup used in CI, on a Linux host with Docker:
+The WiFi contract requires two `mac80211_hwsim` radios. The container configures
+one as a WPA2 access point, supplies DHCP with dnsmasq, and gives only the other
+radio to its private NetworkManager. It asserts discovery, WPA authentication,
+network and device callback delivery, DHCP, disconnect, saved-credential
+reconnect, forget, and the missing-password error after cleanup.
 
 ```bash
 sudo modprobe mac80211_hwsim radios=2
 docker compose run --build --rm test-wifi-integration
 sudo modprobe -r mac80211_hwsim
 ```
+
+The WiFi runner sets `NMRS_REQUIRE_WIFI=1`, `NMRS_WIFI_INTERFACE`,
+`NMRS_EXPECT_WIFI_SSID`, and `NMRS_WIFI_PASSWORD`. If a declared facility is
+missing, the test fails rather than being reported as a pass.
+
+To run the NM-only contracts against a deliberately selected local daemon, opt
+in explicitly:
+
+```bash
+NMRS_REQUIRE_NETWORKMANAGER=1 \
+  cargo test --test integration_test --all-features \
+  networkmanager_ -- --ignored --test-threads=1
+```
+
+These tests create and delete a NetworkManager profile and register a temporary
+secret agent. The wired contract is intentionally available only when its
+separate capability and private interface are supplied. Prefer the Docker
+harness unless modifying the selected daemon is intentional.
 
 > [!NOTE]
 >

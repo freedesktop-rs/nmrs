@@ -82,18 +82,3 @@ pub(crate) async fn current_bluetooth_bdaddr(conn: &Connection) -> Option<String
     }
     None
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_bluetooth_struct_exists() {
-        // Verify the Bluetooth struct can be instantiated
-        let _bt = Bluetooth;
-    }
-
-    // Most of the monitoring functions require a real D-Bus connection
-    // and NetworkManager running, so they are better suited for integration tests.
-    // We can add unit tests for helper functions if they are extracted.
-}

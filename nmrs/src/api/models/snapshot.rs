@@ -606,6 +606,38 @@ mod tests {
     }
 
     #[test]
+    fn attaches_interface_bound_profile_only_to_matching_group() {
+        let snapshot = snapshot(
+            vec![
+                ap("wlan0", "Cafe", "AA:AA:AA:AA:AA:01", 70),
+                ap("wlan1", "Cafe", "BB:BB:BB:BB:BB:01", 90),
+            ],
+            vec![
+                saved_wifi(10, "wlan1-profile", "Cafe", Some("wlan1"), None),
+                saved_wifi(11, "missing-interface", "Cafe", Some("wlan9"), None),
+            ],
+            Vec::new(),
+            Vec::new(),
+        );
+
+        let groups = snapshot.wifi_groups();
+        let wlan0 = groups
+            .iter()
+            .find(|group| group.interface == "wlan0")
+            .unwrap();
+        let wlan1 = groups
+            .iter()
+            .find(|group| group.interface == "wlan1")
+            .unwrap();
+
+        assert!(!wlan0.known);
+        assert!(wlan0.saved_profiles.is_empty());
+        assert!(wlan1.known);
+        assert_eq!(wlan1.saved_profiles.len(), 1);
+        assert_eq!(wlan1.saved_profiles[0].uuid, "wlan1-profile");
+    }
+
+    #[test]
     fn matches_bssid_pinned_saved_profiles() {
         let snapshot = snapshot(
             vec![

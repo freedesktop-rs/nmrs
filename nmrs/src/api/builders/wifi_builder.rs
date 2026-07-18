@@ -143,12 +143,13 @@ impl WifiConnectionBuilder {
     ///
     /// This is the default, but can be called explicitly for clarity.
     #[must_use]
-    pub fn open(self) -> Self {
-        // Open networks don't need a security section
-        Self {
-            security_configured: true,
-            ..self
-        }
+    pub fn open(mut self) -> Self {
+        self.inner = self
+            .inner
+            .without_section("802-11-wireless-security")
+            .without_section("802-1x");
+        self.security_configured = false;
+        self
     }
 
     /// Configures WPA-PSK (Personal) security with the given passphrase.
@@ -166,6 +167,7 @@ impl WifiConnectionBuilder {
 
         self.inner = self
             .inner
+            .without_section("802-1x")
             .with_section("802-11-wireless-security", security);
         self.security_configured = true;
         self
@@ -390,10 +392,7 @@ impl WifiConnectionBuilder {
             wireless.insert("bssid", Value::from(bssid));
         }
 
-        // Link to security section if security is configured (not open)
-        if self.security_configured && !self.ssid.is_empty() {
-            // Check if we actually have a security section (not just open)
-            // Open networks don't have the security section
+        if self.security_configured {
             wireless.insert("security", Value::from("802-11-wireless-security"));
         }
 
@@ -453,11 +452,32 @@ mod tests {
         assert!(settings.contains_key("ipv4"));
         assert!(settings.contains_key("ipv6"));
         assert!(!settings.contains_key("802-11-wireless-security"));
+        assert!(!settings.contains_key("802-1x"));
 
         let wireless = settings.get("802-11-wireless").unwrap();
         assert_eq!(
             wireless.get("ssid"),
             Some(&Value::from(b"OpenNetwork".to_vec()))
+        );
+        assert_eq!(wireless.get("mode"), Some(&Value::from("infrastructure")));
+        assert!(
+            !wireless.contains_key("security"),
+            "open Wi-Fi must not reference a security section"
+        );
+    }
+
+    #[test]
+    fn open_overrides_previously_configured_security() {
+        let settings = WifiConnectionBuilder::new("OpenNetwork")
+            .wpa_psk("password123")
+            .open()
+            .build();
+
+        assert!(!settings.contains_key("802-11-wireless-security"));
+        assert!(!settings.contains_key("802-1x"));
+        assert!(
+            !settings["802-11-wireless"].contains_key("security"),
+            "open() must remove the security link as well as its sections"
         );
     }
 
