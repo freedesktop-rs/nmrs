@@ -28,6 +28,7 @@ pub enum ConnectionError {
     // Connection lifecycle
     DhcpFailed,
     Timeout,
+    ConnectionInProgress,
     Stuck(String),
     DeviceFailed(StateReason),
     ActivationFailed(ConnectionStateReason),
@@ -100,6 +101,7 @@ These indicate issues the user can fix:
 | `DhcpFailed` | Check network infrastructure |
 | `NoWifiDevice` | Check that a Wi-Fi adapter is installed |
 | `NoWiredDevice` | Check that an Ethernet adapter exists |
+| `ConnectionInProgress` | A connection operation is already in progress |
 
 ### Validation Errors
 
