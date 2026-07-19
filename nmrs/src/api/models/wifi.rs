@@ -871,18 +871,15 @@ impl EapOptionsBuilder {
 /// use zeroize::Zeroize;
 ///
 /// fn main() -> Result<()> {
-///     let s: String = /* ... */;
+///     let s: String = "password".to_string();
 ///     let mut pass = Passphrase::from(s);
 ///
 ///     // Get the String back if needed.
 ///     let revealed = pass.reveal();
 ///
-///     // Do some stuff ...
+///     // ...
 ///
-///     // Bad! Revealed passphrases must be zeroized.
-///     return Ok(());
-///
-///     // Now it's safe.
+///     // Revealed passphrases must be zeroized manually.
 ///     revealed.zeroize();
 ///     Ok(())
 /// }
@@ -911,7 +908,7 @@ impl Passphrase {
     ///   `zeroize()` *must* be called manually before [`Drop`] occurs:
     /// ```
     /// {
-    ///     let mut passphrase: Passphrase = /* ... */;
+    ///     let mut passphrase: Passphrase = Passphrase::new("password");
     ///     let revealed = passphrase.reveal();
     ///
     ///     // ...
