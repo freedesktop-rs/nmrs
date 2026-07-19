@@ -43,8 +43,7 @@ use crate::core::vpn::{
 };
 use crate::core::wifi_device::{list_wifi_devices, set_wifi_enabled_for_interface};
 use crate::models::{
-    BluetoothDevice, BluetoothIdentity, NetworkEventStream, SettingsEventStream, VpnConfig,
-    VpnConfiguration, VpnConnection, VpnConnectionInfo,
+    BluetoothDevice, BluetoothIdentity, NetworkEventStream, Passphrase, SettingsEventStream, VpnConfig, VpnConfiguration, VpnConnection, VpnConnectionInfo,
 };
 use crate::monitoring::device as device_monitor;
 use crate::monitoring::events as event_monitor;
@@ -771,7 +770,7 @@ impl NetworkManager {
         &self,
         path: impl AsRef<std::path::Path>,
         username: Option<&str>,
-        password: Option<&str>,
+        password: Option<Passphrase>,
     ) -> Result<()> {
         use crate::builders::OpenVpnBuilder;
 

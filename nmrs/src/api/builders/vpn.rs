@@ -328,8 +328,8 @@ pub fn build_openvpn_connection(
     let data_dict = string_pairs_to_dict(vpn_data)?;
 
     let mut vpn_secrets: Vec<(String, String)> = Vec::new();
-    push_opt_str(&mut vpn_secrets, "password", config.password.as_ref());
-    push_opt_str(&mut vpn_secrets, "cert-pass", config.key_password.as_ref());
+    push_opt_display(&mut vpn_secrets, "password", config.password.clone().map(|p| p.reveal()));
+    push_opt_display(&mut vpn_secrets, "cert-pass", config.key_password.clone().map(|p| p.reveal()));
 
     let mut vpn: HashMap<&'static str, Value<'static>> = HashMap::new();
     vpn.insert(
@@ -380,6 +380,7 @@ pub fn build_openvpn_connection(
 
     Ok(settings)
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
