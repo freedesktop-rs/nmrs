@@ -4,6 +4,7 @@ All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
 
+## [3.4.1] - 2026-07-19
 ### Added
 
 - Isolated NetworkManager integration contracts now cover saved-profile events,
@@ -479,7 +480,8 @@ present)` constructor; `RadioState::new` keeps existing behavior and defaults
 [3.2.2]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v1.2.0...nmrs-v3.2.2
 [3.3.0]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v1.2.0...nmrs-v3.3.0
 [3.4.0]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v1.2.0...nmrs-v3.4.0
-[Unreleased]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.4.0...HEAD
+[3.4.1]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v1.2.0...nmrs-v3.4.1
+[Unreleased]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.4.1...HEAD
 [1.1.0]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v1.0.1...nmrs-v1.1.0
 [1.0.1]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v1.0.0...nmrs-v1.0.1
 [1.0.0]: https://github.com/freedesktop-rs/nmrs/compare/v0.5.0-beta...nmrs-v1.0.0
