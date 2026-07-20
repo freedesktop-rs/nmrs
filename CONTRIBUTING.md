@@ -138,4 +138,9 @@ harness unless modifying the selected daemon is intentional.
 
 ## License
 
-All contributions fall under the [MIT License](https://github.com/freedesktop-rs/nmrs?tab=MIT-1-ov-file).
+This project is dual-licensed under either of the following licenses:
+
+- [MIT License](https://github.com/freedesktop-rs/nmrs?tab=MIT-1-ov-file).
+- [Apache 2.0 License](https://github.com/freedesktop-rs/nmrs?tab=Apache-2.0-1-ov-file)
+
+By contributing, you agree that your contributions will be dual-licensed under the terms of both licenses.
