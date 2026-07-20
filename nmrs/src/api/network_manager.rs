@@ -43,7 +43,8 @@ use crate::core::vpn::{
 };
 use crate::core::wifi_device::{list_wifi_devices, set_wifi_enabled_for_interface};
 use crate::models::{
-    BluetoothDevice, BluetoothIdentity, NetworkEventStream, Passphrase, SettingsEventStream, VpnConfig, VpnConfiguration, VpnConnection, VpnConnectionInfo,
+    BluetoothDevice, BluetoothIdentity, NetworkEventStream, Passphrase, SettingsEventStream,
+    VpnConfig, VpnConfiguration, VpnConnection, VpnConnectionInfo,
 };
 use crate::monitoring::device as device_monitor;
 use crate::monitoring::events as event_monitor;
@@ -82,7 +83,7 @@ use crate::types::constants::device_type;
 /// ## Basic WiFi Connection
 ///
 /// ```no_run
-/// use nmrs::{NetworkManager, WifiSecurity};
+/// use nmrs::{NetworkManager, Passphrase, WifiSecurity};
 ///
 /// # async fn example() -> nmrs::Result<()> {
 /// let nm = NetworkManager::new().await?;
@@ -95,7 +96,7 @@ use crate::types::constants::device_type;
 ///
 /// // Connect to a network on the first Wi-Fi device
 /// nm.connect("MyNetwork", None, WifiSecurity::WpaPsk {
-///     psk: "password".into()
+///     psk: Passphrase::new("password".to_string())
 /// }).await?;
 /// # Ok(())
 /// # }
@@ -248,13 +249,13 @@ impl NetworkManager {
     /// # Examples
     ///
     /// ```no_run
+    /// use nmrs::{NetworkManager, Passphrase};
     /// use nmrs::builders::{WifiConnectionBuilder, WifiMode};
-    /// use nmrs::NetworkManager;
     ///
     /// # async fn example() -> nmrs::Result<()> {
     /// let nm = NetworkManager::new().await?;
     /// let settings = WifiConnectionBuilder::new("Hotspot")
-    ///     .wpa_psk("password")
+    ///     .wpa_psk(Passphrase::new("password".to_string()))
     ///     .mode(WifiMode::Ap)
     ///     .ipv4_shared()
     ///     .build();
@@ -283,7 +284,7 @@ impl NetworkManager {
     ///
     /// ```no_run
     /// use nmrs::builders::{build_wifi_connection, WifiConnectionBuilder, WifiMode};
-    /// use nmrs::{ConnectionOptions, NetworkManager, WifiSecurity};
+    /// use nmrs::{ConnectionOptions, Passphrase, NetworkManager, WifiSecurity};
     ///
     /// # async fn example() -> nmrs::Result<()> {
     /// let nm = NetworkManager::new().await?;
@@ -292,7 +293,7 @@ impl NetworkManager {
     /// let opts = ConnectionOptions::new(true);
     /// let settings = build_wifi_connection(
     ///     "GuestWiFi",
-    ///     &WifiSecurity::WpaPsk { psk: "password".into() },
+    ///     &WifiSecurity::WpaPsk { psk: Passphrase::new("password".to_string()) },
     ///     &opts,
     /// );
     /// let profile = nm.add_connection(settings).await?;
@@ -327,13 +328,13 @@ impl NetworkManager {
     /// # Examples
     ///
     /// ```no_run
+    /// use nmrs::{NetworkManager, Passphrase};
     /// use nmrs::builders::{WifiConnectionBuilder, WifiMode};
-    /// use nmrs::NetworkManager;
     ///
     /// # async fn example() -> nmrs::Result<()> {
     /// let nm = NetworkManager::new().await?;
     /// let settings = WifiConnectionBuilder::new("Hotspot")
-    ///     .wpa_psk("password")
+    ///     .wpa_psk(Passphrase::new("password".to_string()))
     ///     .mode(WifiMode::Ap)
     ///     .ipv4_shared()
     ///     .ipv6_ignore()
@@ -484,13 +485,13 @@ impl NetworkManager {
     /// # Examples
     ///
     /// ```no_run
-    /// use nmrs::{NetworkManager, WifiSecurity};
+    /// use nmrs::{NetworkManager, Passphrase, WifiSecurity};
     ///
     /// # async fn example() -> nmrs::Result<()> {
     /// let nm = NetworkManager::new().await?;
     /// nm.wifi("wlan1").connect(
     ///     "Guest",
-    ///     WifiSecurity::WpaPsk { psk: "guestpass".into() },
+    ///     WifiSecurity::WpaPsk { psk: Passphrase::new("guestpass".to_string()) },
     /// ).await?;
     /// # Ok(())
     /// # }
@@ -560,7 +561,7 @@ impl NetworkManager {
     /// # Examples
     ///
     /// ```no_run
-    /// use nmrs::{NetworkManager, WifiSecurity};
+    /// use nmrs::{NetworkManager, Passphrase, WifiSecurity};
     ///
     /// # async fn example() -> nmrs::Result<()> {
     /// let nm = NetworkManager::new().await?;
@@ -568,7 +569,7 @@ impl NetworkManager {
     ///     "HomeWiFi",
     ///     Some("AA:BB:CC:DD:EE:FF"),
     ///     None,
-    ///     WifiSecurity::WpaPsk { psk: "password".into() },
+    ///     WifiSecurity::WpaPsk { psk: Passphrase::new("password".to_string()) },
     /// ).await?;
     /// # Ok(())
     /// # }
@@ -704,7 +705,7 @@ impl NetworkManager {
     /// ## OpenVPN
     ///
     /// ```rust
-    /// use nmrs::{NetworkManager, OpenVpnConfig, OpenVpnAuthType};
+    /// use nmrs::{NetworkManager, OpenVpnConfig, OpenVpnAuthType, Passphrase};
     ///
     /// # async fn example() -> nmrs::Result<()> {
     /// let nm = NetworkManager::new().await?;
@@ -712,7 +713,7 @@ impl NetworkManager {
     /// let config = OpenVpnConfig::new("CorpVPN", "vpn.example.com", 1194, false)
     ///     .with_auth_type(OpenVpnAuthType::PasswordTls)
     ///     .with_username("user")
-    ///     .with_password("secret")
+    ///     .with_password(Passphrase::new("secret".to_string()))
     ///     .with_ca_cert("/etc/openvpn/ca.crt")
     ///     .with_client_cert("/etc/openvpn/client.crt")
     ///     .with_client_key("/etc/openvpn/client.key");
@@ -750,11 +751,16 @@ impl NetworkManager {
     /// # Example
     ///
     /// ```no_run
-    /// use nmrs::NetworkManager;
+    /// use nmrs::{NetworkManager, Passphrase};
     ///
     /// # async fn example() -> nmrs::Result<()> {
     /// let nm = NetworkManager::new().await?;
-    /// nm.import_ovpn("corp.ovpn", Some("user"), Some("secret")).await?;
+    /// nm.import_ovpn(
+    ///     "corp.ovpn",
+    ///     Some("user"),
+    ///     Some(Passphrase::new("secret".to_string()))
+    /// ).await?;
+    ///
     /// # Ok(())
     /// # }
     /// ```
@@ -1164,13 +1170,13 @@ impl NetworkManager {
     /// # Example
     ///
     /// ```no_run
-    /// use nmrs::{NetworkManager, WifiSecurity, ConnectionError};
+    /// use nmrs::{NetworkManager, WifiSecurity, ConnectionError, Passphrase};
     ///
     /// # async fn example() -> nmrs::Result<()> {
     /// let nm = NetworkManager::new().await?;
     ///
     /// match nm.try_connect("MyNetwork", None, WifiSecurity::WpaPsk {
-    ///     psk: "password".into(),
+    ///     psk: Passphrase::new("password".to_string()),
     /// }).await {
     ///     Ok(()) => println!("Connected!"),
     ///     Err(ConnectionError::ConnectionInProgress) => {

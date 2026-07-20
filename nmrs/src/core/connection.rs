@@ -1088,7 +1088,7 @@ pub(crate) async fn get_device_by_interface(
 mod tests {
     use super::*;
     use crate::api::models::EapOptions;
-    use crate::models::Passphrase;
+    use crate::Passphrase;
 
     fn saved_path() -> OwnedObjectPath {
         OwnedObjectPath::try_from("/org/freedesktop/NetworkManager/Settings/1")

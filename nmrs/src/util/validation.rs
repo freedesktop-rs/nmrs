@@ -820,10 +820,7 @@ pub fn validate_bssid(bssid: &str) -> Result<(), ConnectionError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        api::models::{EapMethod, EapOptions, Phase2, VpnKind, VpnRoute},
-        models::Passphrase,
-    };
+    use crate::{EapMethod, EapOptions, Phase2, Passphrase, VpnKind, VpnRoute};
 
     macro_rules! assert_error_message {
         ($result:expr, $variant:ident, $expected:expr) => {

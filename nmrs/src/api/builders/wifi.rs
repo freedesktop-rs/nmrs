@@ -18,10 +18,11 @@
 //! For new code, consider using the builder API from `wifi_builder` module:
 //!
 //! ```rust
+//! use nmrs::Passphrase;
 //! use nmrs::builders::WifiConnectionBuilder;
 //!
 //! let settings = WifiConnectionBuilder::new("MyNetwork")
-//!     .wpa_psk("password")
+//!     .wpa_psk(Passphrase::new("password".to_string()))
 //!     .autoconnect(true)
 //!     .ipv4_auto()
 //!     .ipv6_auto()

@@ -13,12 +13,12 @@ use std::path::Path;
 
 use uuid::Uuid;
 
+use crate::Passphrase;
 use crate::api::models::{
     ConnectionError, OpenVpnAuthType, OpenVpnCompression, OpenVpnConfig, OpenVpnProxy, VpnRoute,
     vpn_route_from_parser,
 };
 use crate::core::ovpn_parser::parser::{self, CertSource, OvpnFile};
-use crate::models::Passphrase;
 use crate::util::cert_store::store_inline_cert;
 use crate::util::validation::validate_connection_name;
 

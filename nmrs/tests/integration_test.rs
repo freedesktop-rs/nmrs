@@ -8,13 +8,12 @@ use std::time::Duration;
 use futures::{FutureExt, StreamExt};
 use nmrs::agent::{SecretAgent, SecretAgentFlags, SecretAgentHandle, SecretSetting};
 use nmrs::builders::WireGuardBuilder;
-use nmrs::models::Passphrase;
 use nmrs::raw::zvariant::{OwnedObjectPath, OwnedValue, Value};
 use nmrs::{
     ActiveConnection, ActiveConnectionState, ConnectionError, DeviceState, MonitorHandle,
-    NetworkEvent, NetworkEventStream, NetworkManager, SettingsChange, SettingsEventStream,
-    SettingsPatch, SettingsSummary, TimeoutConfig, WifiKeyMgmt, WifiScope, WifiSecurity,
-    WireGuardPeer,
+    NetworkEvent, NetworkEventStream, NetworkManager, Passphrase, SettingsChange,
+    SettingsEventStream, SettingsPatch, SettingsSummary, TimeoutConfig, WifiKeyMgmt, WifiScope,
+    WifiSecurity, WireGuardPeer,
 };
 use serial_test::serial;
 use tokio::time::{sleep, timeout};

@@ -202,9 +202,9 @@ pub enum Phase2 {
 /// ## PEAP with MSCHAPv2 (Common Corporate Setup)
 ///
 /// ```rust
-/// use nmrs::{EapOptions, EapMethod, Phase2};
+/// use nmrs::{EapOptions, EapMethod, Passphrase, Phase2};
 ///
-/// let opts = EapOptions::new("employee@company.com", "my_password")
+/// let opts = EapOptions::new("employee@company.com", Passphrase::new("my_password".to_string()))
 ///     .with_anonymous_identity("anonymous@company.com")
 ///     .with_domain_suffix_match("company.com")
 ///     .with_system_ca_certs(true)  // Use system certificate store
@@ -215,9 +215,9 @@ pub enum Phase2 {
 /// ## TTLS with PAP (Alternative Setup)
 ///
 /// ```rust
-/// use nmrs::{EapOptions, EapMethod, Phase2};
+/// use nmrs::{EapOptions, EapMethod, Passphrase, Phase2};
 ///
-/// let opts = EapOptions::new("student@university.edu", "password")
+/// let opts = EapOptions::new("student@university.edu", Passphrase::new("password".to_string()))
 ///     .with_ca_cert_path("file:///etc/ssl/certs/university-ca.pem")
 ///     .with_method(EapMethod::Ttls)
 ///     .with_phase2(Phase2::Pap);
@@ -282,9 +282,9 @@ impl EapOptions {
     /// # Examples
     ///
     /// ```rust
-    /// use nmrs::{EapOptions, EapMethod, Phase2};
+    /// use nmrs::{EapOptions, EapMethod, Passphrase, Phase2};
     ///
-    /// let opts = EapOptions::new("user@example.com", "password")
+    /// let opts = EapOptions::new("user@example.com", Passphrase::new("password".to_string()))
     ///     .with_method(EapMethod::Peap)
     ///     .with_phase2(Phase2::Mschapv2);
     /// ```
@@ -358,11 +358,11 @@ impl EapOptions {
     /// # Examples
     ///
     /// ```rust
-    /// use nmrs::{EapOptions, EapMethod, Phase2};
+    /// use nmrs::{EapOptions, EapMethod, Passphrase, Phase2};
     ///
     /// let opts = EapOptions::builder()
     ///     .identity("user@company.com")
-    ///     .password("my_password")
+    ///     .password(Passphrase::new("my_password".to_string()))
     ///     .method(EapMethod::Peap)
     ///     .phase2(Phase2::Mschapv2)
     ///     .domain_suffix_match("company.com")
@@ -448,11 +448,11 @@ impl EapOptions {
 /// ## PEAP with MSCHAPv2 (Common Corporate Setup)
 ///
 /// ```rust
-/// use nmrs::{EapOptions, EapMethod, Phase2};
+/// use nmrs::{EapOptions, EapMethod, Passphrase, Phase2};
 ///
 /// let opts = EapOptions::builder()
 ///     .identity("employee@company.com")
-///     .password("my_password")
+///     .password(Passphrase::new("my_password".to_string()))
 ///     .method(EapMethod::Peap)
 ///     .phase2(Phase2::Mschapv2)
 ///     .anonymous_identity("anonymous@company.com")
@@ -465,11 +465,11 @@ impl EapOptions {
 /// ## TTLS with PAP
 ///
 /// ```rust
-/// use nmrs::{EapOptions, EapMethod, Phase2};
+/// use nmrs::{EapOptions, EapMethod, Passphrase, Phase2};
 ///
 /// let opts = EapOptions::builder()
 ///     .identity("student@university.edu")
-///     .password("password")
+///     .password(Passphrase::new("password".to_string()))
 ///     .method(EapMethod::Ttls)
 ///     .phase2(Phase2::Pap)
 ///     .ca_cert_path("file:///etc/ssl/certs/university-ca.pem")
@@ -770,11 +770,11 @@ impl EapOptionsBuilder {
     /// # Examples
     ///
     /// ```rust
-    /// use nmrs::{EapOptions, EapMethod, Phase2};
+    /// use nmrs::{EapOptions, EapMethod, Passphrase, Phase2};
     ///
     /// let opts = EapOptions::builder()
     ///     .identity("user@example.com")
-    ///     .password("password")
+    ///     .password(Passphrase::new("password".to_string()))
     ///     .method(EapMethod::Peap)
     ///     .phase2(Phase2::Mschapv2)
     ///     .build()
@@ -868,20 +868,20 @@ impl EapOptionsBuilder {
 ///
 /// # Examples
 /// ```
+/// use nmrs::Passphrase;
 /// use zeroize::Zeroize;
 ///
-/// fn main() -> Result<()> {
+/// fn main() {
 ///     let s: String = "password".to_string();
 ///     let mut pass = Passphrase::from(s);
 ///
 ///     // Get the String back if needed.
-///     let revealed = pass.reveal();
+///     let mut revealed = pass.reveal();
 ///
 ///     // ...
 ///
 ///     // Revealed passphrases must be zeroized manually.
 ///     revealed.zeroize();
-///     Ok(())
 /// }
 /// ```
 #[derive(Clone, Default, Eq, PartialEq, ZeroizeOnDrop)]
@@ -907,9 +907,11 @@ impl Passphrase {
     /// * [`ZeroizeOnDrop`] will no longer apply since the inner [`String`] is returned so
     ///   `zeroize()` *must* be called manually before [`Drop`] occurs:
     /// ```
+    /// use nmrs::Passphrase;
+    /// use zeroize::Zeroize;
     /// {
-    ///     let mut passphrase: Passphrase = Passphrase::new("password");
-    ///     let revealed = passphrase.reveal();
+    ///     let mut passphrase: Passphrase = Passphrase::new("password".to_string());
+    ///     let mut revealed = passphrase.reveal();
     ///
     ///     // ...
     ///
@@ -956,13 +958,13 @@ impl From<String> for Passphrase {
 /// ## Password-Protected Network
 ///
 /// ```no_run
-/// use nmrs::{NetworkManager, WifiSecurity};
+/// use nmrs::{NetworkManager, Passphrase, WifiSecurity};
 ///
 /// # async fn example() -> nmrs::Result<()> {
 /// let nm = NetworkManager::new().await?;
 ///
 /// nm.connect("HomeWiFi", None, WifiSecurity::WpaPsk {
-///     psk: "my_secure_password".into()
+///     psk: Passphrase::new("my_secure_password".to_string())
 /// }).await?;
 /// # Ok(())
 /// # }
@@ -971,12 +973,12 @@ impl From<String> for Passphrase {
 /// ## Enterprise Network (WPA-EAP)
 ///
 /// ```no_run
-/// use nmrs::{NetworkManager, WifiSecurity, EapOptions, EapMethod, Phase2};
+/// use nmrs::{NetworkManager, WifiSecurity, EapOptions, EapMethod, Passphrase, Phase2};
 ///
 /// # async fn example() -> nmrs::Result<()> {
 /// let nm = NetworkManager::new().await?;
 ///
-/// let eap_opts = EapOptions::new("user@company.com", "password")
+/// let eap_opts = EapOptions::new("user@company.com", Passphrase::new("password".to_string()))
 ///     .with_domain_suffix_match("company.com")
 ///     .with_system_ca_certs(true)
 ///     .with_method(EapMethod::Peap)

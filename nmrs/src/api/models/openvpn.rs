@@ -1,8 +1,8 @@
 #![allow(deprecated)]
 
 use super::vpn::{VpnConfig, VpnKind};
+use crate::Passphrase;
 use crate::api::models::error::ConnectionError;
-use crate::models::Passphrase;
 use std::convert::TryFrom;
 use std::net::Ipv4Addr;
 use uuid::Uuid;
@@ -73,12 +73,12 @@ pub enum OpenVpnAuthType {
 /// # Example
 ///
 /// ```rust
-/// use nmrs::{OpenVpnConfig, OpenVpnAuthType};
+/// use nmrs::{OpenVpnConfig, OpenVpnAuthType, Passphrase};
 ///
 /// let config = OpenVpnConfig::new("MyVPN", "vpn.example.com", 1194, false)
 ///     .with_auth_type(OpenVpnAuthType::PasswordTls)
 ///     .with_username("user")
-///     .with_password("secret")
+///     .with_password(Passphrase::new("secret".to_string()))
 ///     .with_ca_cert("/path/to/ca.crt")
 ///     .with_dns(vec!["1.1.1.1".into()]);
 /// ```

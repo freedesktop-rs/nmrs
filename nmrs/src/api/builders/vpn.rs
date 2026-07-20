@@ -392,9 +392,9 @@ pub fn build_openvpn_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{api::models::{
-        OpenVpnCompression, OpenVpnConfig, OpenVpnProxy, VpnKind, WireGuardPeer,
-    }, models::Passphrase};
+    use crate::{
+        OpenVpnCompression, OpenVpnConfig, OpenVpnProxy, Passphrase, VpnKind, WireGuardPeer,
+    };
 
     fn create_test_credentials() -> VpnCredentials {
         let peer = WireGuardPeer::new(

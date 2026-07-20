@@ -46,13 +46,13 @@
 //!
 //! ```rust
 //! use nmrs::builders::{build_ethernet_connection, build_wifi_connection};
-//! use nmrs::{ConnectionOptions, WifiSecurity};
+//! use nmrs::{ConnectionOptions, Passphrase, WifiSecurity};
 //!
 //! let opts = ConnectionOptions::new(true).with_priority(10);
 //!
 //! let wifi = build_wifi_connection(
 //!     "MyNetwork",
-//!     &WifiSecurity::WpaPsk { psk: "password".into() },
+//!     &WifiSecurity::WpaPsk { psk: Passphrase::new("password".to_string()) },
 //!     &opts,
 //! );
 //! let eth = build_ethernet_connection("eth0", &opts);
@@ -62,12 +62,12 @@
 //!
 //! ```no_run
 //! use nmrs::builders::{WifiConnectionBuilder, WifiMode};
-//! use nmrs::NetworkManager;
+//! use nmrs::{NetworkManager, Passphrase};
 //!
 //! # async fn example() -> nmrs::Result<()> {
 //! let nm = NetworkManager::new().await?;
 //! let settings = WifiConnectionBuilder::new("Hotspot")
-//!     .wpa_psk("password")
+//!     .wpa_psk(Passphrase::new("password".to_string()))
 //!     .mode(WifiMode::Ap)
 //!     .ipv4_shared()
 //!     .build();

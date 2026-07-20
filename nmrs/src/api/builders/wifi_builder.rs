@@ -7,10 +7,8 @@ use std::collections::HashMap;
 use zvariant::Value;
 
 use super::connection_builder::ConnectionBuilder;
-use crate::{
-    api::models::{self, ConnectionOptions, EapMethod},
-    models::Passphrase,
-};
+use crate::Passphrase;
+use crate::api::models::{self, ConnectionOptions, EapMethod};
 
 /// WiFi band selection.
 #[non_exhaustive]
@@ -72,10 +70,11 @@ impl WifiMode {
 /// ## WPA-PSK (Personal)
 ///
 /// ```rust
+/// use nmrs::Passphrase;
 /// use nmrs::builders::WifiConnectionBuilder;
 ///
 /// let settings = WifiConnectionBuilder::new("HomeNetwork")
-///     .wpa_psk("my_secure_password")
+///     .wpa_psk(Passphrase::new("my_secure_password".to_string()))
 ///     .autoconnect(true)
 ///     .autoconnect_priority(10)
 ///     .build();
@@ -85,9 +84,9 @@ impl WifiMode {
 ///
 /// ```rust
 /// use nmrs::builders::WifiConnectionBuilder;
-/// use nmrs::{EapOptions, EapMethod, Phase2};
+/// use nmrs::{EapOptions, EapMethod, Passphrase, Phase2};
 ///
-/// let eap_opts = EapOptions::new("user@company.com", "password")
+/// let eap_opts = EapOptions::new("user@company.com", Passphrase::new("password".to_string()))
 ///     .with_domain_suffix_match("company.com")
 ///     .with_system_ca_certs(true)
 ///     .with_method(EapMethod::Peap)
@@ -102,11 +101,12 @@ impl WifiMode {
 /// ## Access Point (Hotspot)
 ///
 /// ```rust
+/// use nmrs::Passphrase;
 /// use nmrs::builders::{WifiConnectionBuilder, WifiMode};
 ///
 /// let settings = WifiConnectionBuilder::new("MyHotspot")
 ///     .mode(WifiMode::Ap)
-///     .wpa_psk("hotspot_password")
+///     .wpa_psk(Passphrase::new("hotspot_password".to_string()))
 ///     .ipv4_shared()
 ///     .ipv6_ignore()
 ///     .build();
@@ -291,11 +291,12 @@ impl WifiConnectionBuilder {
     /// # Example: Access Point
     ///
     /// ```rust
+    /// use nmrs::Passphrase;
     /// use nmrs::builders::{WifiConnectionBuilder, WifiMode};
     ///
     /// let settings = WifiConnectionBuilder::new("MyHotspot")
     ///     .mode(WifiMode::Ap)
-    ///     .wpa_psk("hotspot_password")
+    ///     .wpa_psk(Passphrase::new("hotspot_password".to_string()))
     ///     .ipv4_shared()
     ///     .ipv6_ignore()
     ///     .build();
