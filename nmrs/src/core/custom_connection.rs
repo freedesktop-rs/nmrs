@@ -317,10 +317,10 @@ mod tests {
         assert_eq!(path.as_str(), "/org/freedesktop/NetworkManager/Devices/3");
     }
 
-    #[test]
-    fn resolve_specific_object_rejects_invalid_explicit_path() {
+    #[tokio::test]
+    async fn resolve_specific_object_rejects_invalid_explicit_path() {
         let settings = sample_wifi_settings();
-        let error = resolve_specific_object(&settings, Some("not/an/object/path")).unwrap_err();
+        let error = resolve_specific_object(&settings, Some("not/an/object/path")).await.unwrap_err();
 
         match error {
             ConnectionError::InvalidInput { field, reason } => {
@@ -334,19 +334,19 @@ mod tests {
         }
     }
 
-    #[test]
-    fn resolve_specific_object_derives_bluez_device_path() {
+    #[tokio::test]
+    async fn resolve_specific_object_derives_bluez_device_path() {
         let settings = sample_bluetooth_settings(Some(Value::from("00:1A:7D:DA:71:13")));
-        let path = resolve_specific_object(&settings, None).unwrap();
+        let path = resolve_specific_object(&settings, None).await.unwrap();
 
         assert_eq!(path.as_str(), "/org/bluez/hci0/dev_00_1A_7D_DA_71_13");
     }
 
-    #[test]
-    fn resolve_specific_object_requires_bluetooth_address() {
+    #[tokio::test]
+    async fn resolve_specific_object_requires_bluetooth_address() {
         let settings = sample_bluetooth_settings(None);
         assert_invalid_input(
-            resolve_specific_object(&settings, None).unwrap_err(),
+            resolve_specific_object(&settings, None).await.unwrap_err(),
             "bluetooth.bdaddr",
             "bluetooth settings are missing bdaddr",
         );
