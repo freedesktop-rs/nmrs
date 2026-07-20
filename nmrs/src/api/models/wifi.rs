@@ -926,7 +926,7 @@ impl Passphrase {
     /// the inner value.
     ///
     /// # Security
-    /// The returned reference is **not** protected by zeroization or from logged and should not be
+    /// The returned reference is **not** protected by zeroization or from being logged and should not be
     /// cloned.
     pub fn reveal_ref(&self) -> &str {
         &self.0
