@@ -959,10 +959,15 @@ impl Network {
     /// this method keeps the strongest signal and combines security flags.
     /// Used internally during network scanning to deduplicate results.
     pub fn merge_ap(&mut self, other: &Network) {
-        if let Some(ref b) = other.bssid
-            && !self.bssids.contains(b)
-        {
-            self.bssids.push(b.clone());
+        let mut bssids = self.bssids.clone();
+        if let Some(bssid) = &self.bssid {
+            push_unique_bssid(&mut bssids, bssid);
+        }
+        for bssid in &other.bssids {
+            push_unique_bssid(&mut bssids, bssid);
+        }
+        if let Some(bssid) = &other.bssid {
+            push_unique_bssid(&mut bssids, bssid);
         }
 
         if other.strength.unwrap_or(0) > self.strength.unwrap_or(0) {
@@ -970,8 +975,15 @@ impl Network {
             self.frequency = other.frequency;
             self.bssid = other.bssid.clone();
             self.best_bssid = other.best_bssid.clone();
-            self.security_features = other.security_features;
         }
+
+        if let Some(best_bssid) = &self.bssid {
+            bssids.retain(|bssid| !bssid.eq_ignore_ascii_case(best_bssid));
+            bssids.insert(0, best_bssid.clone());
+        }
+        self.bssids = bssids;
+
+        merge_security_features(&mut self.security_features, other.security_features);
 
         self.secured |= other.secured;
         self.is_psk |= other.is_psk;
@@ -992,9 +1004,54 @@ impl Network {
     }
 }
 
+fn push_unique_bssid(bssids: &mut Vec<String>, candidate: &str) {
+    if !bssids
+        .iter()
+        .any(|bssid| bssid.eq_ignore_ascii_case(candidate))
+    {
+        bssids.push(candidate.to_string());
+    }
+}
+
+fn merge_security_features(current: &mut SecurityFeatures, other: SecurityFeatures) {
+    current.privacy |= other.privacy;
+    current.wps |= other.wps;
+    current.psk |= other.psk;
+    current.eap |= other.eap;
+    current.sae |= other.sae;
+    current.owe |= other.owe;
+    current.owe_transition_mode |= other.owe_transition_mode;
+    current.eap_suite_b_192 |= other.eap_suite_b_192;
+    current.wep40 |= other.wep40;
+    current.wep104 |= other.wep104;
+    current.tkip |= other.tkip;
+    current.ccmp |= other.ccmp;
+}
+
 #[cfg(test)]
 mod network_merge_tests {
-    use super::Network;
+    use super::{Network, SecurityFeatures};
+
+    fn network(bssid: &str, strength: u8) -> Network {
+        Network {
+            device: "wlan0".into(),
+            ssid: "net".into(),
+            bssid: Some(bssid.into()),
+            strength: Some(strength),
+            frequency: Some(2412),
+            secured: false,
+            is_psk: false,
+            is_eap: false,
+            is_hotspot: false,
+            ip4_address: None,
+            ip6_address: None,
+            best_bssid: bssid.into(),
+            bssids: vec![bssid.into()],
+            is_active: false,
+            known: false,
+            security_features: SecurityFeatures::default(),
+        }
+    }
 
     #[test]
     fn merge_ap_keeps_ip_and_device_when_stronger_ap_has_none() {
@@ -1016,7 +1073,9 @@ mod network_merge_tests {
             known: false,
             security_features: Default::default(),
         };
-        let stronger = Network {
+        weaker_connected.security_features.psk = true;
+        weaker_connected.security_features.ccmp = true;
+        let mut stronger = Network {
             device: String::new(),
             ssid: "net".into(),
             bssid: Some("bb:bb:bb:bb:bb:bb".into()),
@@ -1034,6 +1093,8 @@ mod network_merge_tests {
             known: false,
             security_features: Default::default(),
         };
+        stronger.security_features.eap = true;
+        stronger.security_features.sae = true;
         weaker_connected.merge_ap(&stronger);
         assert_eq!(weaker_connected.strength, Some(90));
         assert_eq!(weaker_connected.bssid, Some("bb:bb:bb:bb:bb:bb".into()));
@@ -1042,6 +1103,88 @@ mod network_merge_tests {
         assert_eq!(weaker_connected.ip6_address, Some("fe80::1/64".into()));
         assert_eq!(weaker_connected.device, "wlan0");
         assert!(weaker_connected.is_active);
-        assert_eq!(weaker_connected.bssids.len(), 2);
+        assert!(weaker_connected.security_features.psk);
+        assert!(weaker_connected.security_features.ccmp);
+        assert!(weaker_connected.security_features.eap);
+        assert!(weaker_connected.security_features.sae);
+        assert_eq!(
+            weaker_connected.bssids,
+            vec![
+                "bb:bb:bb:bb:bb:bb".to_string(),
+                "aa:aa:aa:aa:aa:aa".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn merge_ap_combines_flags_security_and_all_unique_bssids() {
+        let mut strongest = network("AA:AA:AA:AA:AA:01", 90);
+        strongest.frequency = Some(5180);
+        strongest.secured = true;
+        strongest.is_psk = true;
+        strongest.security_features.psk = true;
+        strongest.security_features.ccmp = true;
+
+        let mut weaker = network("BB:BB:BB:BB:BB:01", 30);
+        weaker.frequency = Some(2412);
+        weaker.is_eap = true;
+        weaker.is_hotspot = true;
+        weaker.known = true;
+        weaker.bssids = vec![
+            "BB:BB:BB:BB:BB:01".into(),
+            "CC:CC:CC:CC:CC:01".into(),
+            "aa:aa:aa:aa:aa:01".into(),
+        ];
+        weaker.security_features.eap = true;
+        weaker.security_features.sae = true;
+        weaker.security_features.wps = true;
+
+        strongest.merge_ap(&weaker);
+
+        assert_eq!(strongest.strength, Some(90));
+        assert_eq!(strongest.frequency, Some(5180));
+        assert_eq!(strongest.bssid.as_deref(), Some("AA:AA:AA:AA:AA:01"));
+        assert_eq!(
+            strongest.bssids,
+            vec![
+                "AA:AA:AA:AA:AA:01".to_string(),
+                "BB:BB:BB:BB:BB:01".to_string(),
+                "CC:CC:CC:CC:CC:01".to_string(),
+            ]
+        );
+        assert!(strongest.secured);
+        assert!(strongest.is_psk);
+        assert!(strongest.is_eap);
+        assert!(strongest.is_hotspot);
+        assert!(strongest.known);
+        assert!(strongest.security_features.psk);
+        assert!(strongest.security_features.eap);
+        assert!(strongest.security_features.sae);
+        assert!(strongest.security_features.wps);
+        assert!(strongest.security_features.ccmp);
+    }
+
+    #[test]
+    fn merge_ap_fills_missing_connection_context() {
+        let mut network_without_context = network("AA:AA:AA:AA:AA:01", 80);
+        network_without_context.device.clear();
+        let mut connected = network("BB:BB:BB:BB:BB:01", 40);
+        connected.device = "wlan1".into();
+        connected.ip4_address = Some("192.168.50.5/24".into());
+        connected.ip6_address = Some("2001:db8::5/64".into());
+        connected.is_active = true;
+
+        network_without_context.merge_ap(&connected);
+
+        assert_eq!(network_without_context.device, "wlan1");
+        assert_eq!(
+            network_without_context.ip4_address.as_deref(),
+            Some("192.168.50.5/24")
+        );
+        assert_eq!(
+            network_without_context.ip6_address.as_deref(),
+            Some("2001:db8::5/64")
+        );
+        assert!(network_without_context.is_active);
     }
 }

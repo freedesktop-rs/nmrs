@@ -396,10 +396,13 @@ impl ConnectionBuilder {
     /// Sets IPv6 DNS servers.
     #[must_use]
     pub fn ipv6_dns(mut self, servers: Vec<Ipv6Addr>) -> Self {
-        let dns_strings: Vec<String> = servers.into_iter().map(|s| s.to_string()).collect();
+        let dns_bytes: Vec<Vec<u8>> = servers
+            .into_iter()
+            .map(|server| server.octets().to_vec())
+            .collect();
 
         if let Some(ipv6) = self.settings.get_mut("ipv6") {
-            ipv6.insert("dns", Value::from(dns_strings));
+            ipv6.insert("dns", Value::from(dns_bytes));
         }
         self
     }
@@ -471,6 +474,11 @@ impl ConnectionBuilder {
         self
     }
 
+    pub(crate) fn without_section(mut self, name: &'static str) -> Self {
+        self.settings.remove(name);
+        self
+    }
+
     /// Updates an existing section using a closure.
     ///
     /// This allows modifying a section after it's been created, which is useful
@@ -513,6 +521,31 @@ impl ConnectionBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn address_data(address: &str, prefix: u32) -> Value<'static> {
+        let mut entry = HashMap::new();
+        entry.insert("address".to_string(), Value::from(address.to_string()));
+        entry.insert("prefix".to_string(), Value::from(prefix));
+        Value::from(vec![entry])
+    }
+
+    fn route_data(
+        dest: &str,
+        prefix: u32,
+        next_hop: Option<&str>,
+        metric: Option<u32>,
+    ) -> Value<'static> {
+        let mut entry = HashMap::new();
+        entry.insert("dest".to_string(), Value::from(dest.to_string()));
+        entry.insert("prefix".to_string(), Value::from(prefix));
+        if let Some(next_hop) = next_hop {
+            entry.insert("next-hop".to_string(), Value::from(next_hop.to_string()));
+        }
+        if let Some(metric) = metric {
+            entry.insert("metric".to_string(), Value::from(metric));
+        }
+        Value::from(vec![entry])
+    }
 
     #[test]
     fn creates_basic_connection() {
@@ -579,6 +612,18 @@ mod tests {
     }
 
     #[test]
+    fn omits_unset_optional_connection_options() {
+        let settings = ConnectionBuilder::new("802-3-ethernet", "eth0")
+            .options(&ConnectionOptions::new(false))
+            .build();
+
+        let conn = settings.get("connection").unwrap();
+        assert_eq!(conn.get("autoconnect"), Some(&Value::from(false)));
+        assert!(!conn.contains_key("autoconnect-priority"));
+        assert!(!conn.contains_key("autoconnect-retries"));
+    }
+
+    #[test]
     fn configures_ipv4_auto() {
         let settings = ConnectionBuilder::new("802-3-ethernet", "eth0")
             .ipv4_auto()
@@ -596,7 +641,9 @@ mod tests {
 
         let ipv4 = settings.get("ipv4").unwrap();
         assert_eq!(ipv4.get("method"), Some(&Value::from("manual")));
-        assert!(ipv4.contains_key("address-data"));
+        let addresses = ipv4.get("address-data").unwrap();
+        assert_eq!(addresses.value_signature().to_string(), "aa{sv}");
+        assert_eq!(addresses, &address_data("192.168.1.100", 24));
     }
 
     #[test]
@@ -610,15 +657,58 @@ mod tests {
     }
 
     #[test]
+    fn configures_ipv4_link_local_and_shared() {
+        let link_local = ConnectionBuilder::new("802-3-ethernet", "local")
+            .ipv4_link_local()
+            .build();
+        let shared = ConnectionBuilder::new("802-3-ethernet", "shared")
+            .ipv4_shared()
+            .build();
+
+        assert_eq!(
+            link_local["ipv4"].get("method"),
+            Some(&Value::from("link-local"))
+        );
+        assert_eq!(shared["ipv4"].get("method"), Some(&Value::from("shared")));
+    }
+
+    #[test]
     fn configures_ipv4_dns() {
-        let dns = vec!["8.8.8.8".parse().unwrap(), "1.1.1.1".parse().unwrap()];
+        let dns: Vec<Ipv4Addr> = vec!["8.8.8.8".parse().unwrap(), "1.1.1.1".parse().unwrap()];
         let settings = ConnectionBuilder::new("802-3-ethernet", "eth0")
             .ipv4_auto()
-            .ipv4_dns(dns)
+            .ipv4_dns(dns.clone())
             .build();
 
         let ipv4 = settings.get("ipv4").unwrap();
-        assert!(ipv4.contains_key("dns"));
+        let value = ipv4.get("dns").unwrap();
+        assert_eq!(value.value_signature().to_string(), "au");
+        assert_eq!(
+            value,
+            &Value::from(dns.into_iter().map(u32::from).collect::<Vec<_>>())
+        );
+    }
+
+    #[test]
+    fn configures_ipv4_gateway_and_routes() {
+        let settings = ConnectionBuilder::new("802-3-ethernet", "eth0")
+            .ipv4_manual(vec![IpConfig::new("192.168.1.100", 24)])
+            .ipv4_gateway("192.168.1.1".parse().unwrap())
+            .ipv4_routes(vec![
+                Route::new("10.0.0.0", 8)
+                    .next_hop("192.168.1.254")
+                    .metric(25),
+            ])
+            .build();
+
+        let ipv4 = settings.get("ipv4").unwrap();
+        assert_eq!(ipv4.get("gateway"), Some(&Value::from("192.168.1.1")));
+        let routes = ipv4.get("route-data").unwrap();
+        assert_eq!(routes.value_signature().to_string(), "aa{sv}");
+        assert_eq!(
+            routes,
+            &route_data("10.0.0.0", 8, Some("192.168.1.254"), Some(25))
+        );
     }
 
     #[test]
@@ -632,6 +722,19 @@ mod tests {
     }
 
     #[test]
+    fn configures_ipv6_manual() {
+        let settings = ConnectionBuilder::new("802-3-ethernet", "eth0")
+            .ipv6_manual(vec![IpConfig::new("2001:db8::10", 64)])
+            .build();
+
+        let ipv6 = settings.get("ipv6").unwrap();
+        assert_eq!(ipv6.get("method"), Some(&Value::from("manual")));
+        let addresses = ipv6.get("address-data").unwrap();
+        assert_eq!(addresses.value_signature().to_string(), "aa{sv}");
+        assert_eq!(addresses, &address_data("2001:db8::10", 64));
+    }
+
+    #[test]
     fn configures_ipv6_ignore() {
         let settings = ConnectionBuilder::new("802-3-ethernet", "eth0")
             .ipv6_ignore()
@@ -639,6 +742,55 @@ mod tests {
 
         let ipv6 = settings.get("ipv6").unwrap();
         assert_eq!(ipv6.get("method"), Some(&Value::from("ignore")));
+    }
+
+    #[test]
+    fn configures_ipv6_link_local() {
+        let settings = ConnectionBuilder::new("802-3-ethernet", "eth0")
+            .ipv6_link_local()
+            .build();
+
+        assert_eq!(
+            settings["ipv6"].get("method"),
+            Some(&Value::from("link-local"))
+        );
+    }
+
+    #[test]
+    fn configures_ipv6_dns_gateway_and_routes() {
+        let dns: Vec<Ipv6Addr> = vec![
+            "2001:4860:4860::8888".parse().unwrap(),
+            "2606:4700:4700::1111".parse().unwrap(),
+        ];
+        let settings = ConnectionBuilder::new("802-3-ethernet", "eth0")
+            .ipv6_manual(vec![IpConfig::new("2001:db8::10", 64)])
+            .ipv6_dns(dns.clone())
+            .ipv6_gateway("2001:db8::1".parse().unwrap())
+            .ipv6_routes(vec![
+                Route::new("2001:db8:1::", 64)
+                    .next_hop("2001:db8::2")
+                    .metric(50),
+            ])
+            .build();
+
+        let ipv6 = settings.get("ipv6").unwrap();
+        let dns_value = ipv6.get("dns").unwrap();
+        assert_eq!(dns_value.value_signature().to_string(), "aay");
+        assert_eq!(
+            dns_value,
+            &Value::from(
+                dns.into_iter()
+                    .map(|server| server.octets().to_vec())
+                    .collect::<Vec<_>>()
+            )
+        );
+        assert_eq!(ipv6.get("gateway"), Some(&Value::from("2001:db8::1")));
+        let routes = ipv6.get("route-data").unwrap();
+        assert_eq!(routes.value_signature().to_string(), "aa{sv}");
+        assert_eq!(
+            routes,
+            &route_data("2001:db8:1::", 64, Some("2001:db8::2"), Some(50))
+        );
     }
 
     #[test]
@@ -678,8 +830,14 @@ mod tests {
 
         let ipv4 = settings.get("ipv4").unwrap();
         assert_eq!(ipv4.get("method"), Some(&Value::from("manual")));
-        assert!(ipv4.contains_key("address-data"));
-        assert!(ipv4.contains_key("gateway"));
-        assert!(ipv4.contains_key("dns"));
+        assert_eq!(
+            ipv4.get("address-data"),
+            Some(&address_data("192.168.1.100", 24))
+        );
+        assert_eq!(ipv4.get("gateway"), Some(&Value::from("192.168.1.1")));
+        assert_eq!(
+            ipv4.get("dns"),
+            Some(&Value::from(vec![u32::from(Ipv4Addr::new(8, 8, 8, 8))]))
+        );
     }
 }

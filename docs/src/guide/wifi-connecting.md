@@ -32,7 +32,8 @@ When you call `connect()`, nmrs performs the following steps:
 1. **Validates** the SSID and credentials
 2. **Searches** for the network among visible access points
 3. **Checks** for a saved connection profile matching the SSID
-4. **Creates** a new connection profile if none exists, or **reuses** the saved one
+4. **Reuses** the saved profile for `Open` or empty-PSK requests, or **builds** a
+   fresh profile when explicit PSK or EAP credentials are supplied
 5. **Activates** the connection via NetworkManager
 6. **Waits** for the device to reach the `Activated` state
 7. **Returns** `Ok(())` on success, or a specific error on failure
@@ -101,19 +102,26 @@ nm.disconnect(None).await?;
 
 ## Saved Connections
 
-When nmrs connects to a network, NetworkManager saves a connection profile. On subsequent connections to the same SSID, the saved profile is reused automatically.
+When nmrs connects to a network, NetworkManager saves a connection profile. A
+later call reuses that profile when `security` is `WifiSecurity::Open` or an
+empty `WifiSecurity::WpaPsk`. Passing a non-empty PSK or an EAP configuration
+instead tells nmrs to build a fresh profile with those credentials.
 
 ```rust
 let nm = NetworkManager::new().await?;
 
 // Check if a profile exists
 if nm.has_saved_connection("HomeWiFi").await? {
-    println!("Profile exists — will reconnect without needing credentials");
+    println!("Profile exists — stored settings can be reused");
 }
 
-// Connect using saved profile (WifiSecurity value is ignored if profile exists)
+// WifiSecurity::Open requests reuse when a saved profile exists.
 nm.connect("HomeWiFi", None, WifiSecurity::Open).await?;
 ```
+
+For a saved WPA-PSK network, an empty PSK also explicitly requests the stored
+secret. If that activation fails, nmrs preserves the saved profile so it can be
+retried, inspected, or removed with `forget()`.
 
 See [Connection Profiles](./profiles.md) for more on managing saved connections.
 

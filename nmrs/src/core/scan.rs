@@ -53,6 +53,11 @@ pub(crate) async fn scan_networks(conn: &Connection, interface: Option<&str>) ->
             if iface != want {
                 continue;
             }
+        } else {
+            let state = DeviceState::from(d_proxy.state().await?);
+            if matches!(state, DeviceState::Unmanaged | DeviceState::Unavailable) {
+                continue;
+            }
         }
 
         let wifi = NMWirelessProxy::builder(conn)
@@ -204,11 +209,9 @@ pub(crate) async fn list_networks(
         };
 
         let net = Network {
-            device: if ap.is_active {
-                ap.interface.clone()
-            } else {
-                String::new()
-            },
+            // A scan result is always associated with the interface that
+            // discovered its access point, regardless of connection state.
+            device: ap.interface.clone(),
             ssid: ap.ssid.clone(),
             bssid: Some(ap.bssid.clone()),
             strength: Some(ap.strength),
@@ -235,12 +238,6 @@ pub(crate) async fn list_networks(
     // Populate `known` by checking saved connections
     for net in groups.values_mut() {
         net.known = has_saved_connection(conn, &net.ssid).await.unwrap_or(false);
-        if net.device.is_empty()
-            && net.is_active
-            && let Some(ap) = aps.iter().find(|a| a.ssid == net.ssid && a.is_active)
-        {
-            net.device.clone_from(&ap.interface);
-        }
     }
 
     Ok(groups.into_values().collect())

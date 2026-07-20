@@ -10,4 +10,3 @@ vendor/
 /pkg/
 /src/
 *.pkg.tar.zst
-Cargo.lock

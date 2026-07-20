@@ -100,6 +100,13 @@ fn owned_to_bytes(v: &OwnedValue) -> Option<Vec<u8>> {
     Vec::<u8>::try_from(v.clone()).ok()
 }
 
+fn unbox_value<'a, 'v>(mut value: &'a zvariant::Value<'v>) -> &'a zvariant::Value<'v> {
+    while let zvariant::Value::Value(inner) = value {
+        value = inner;
+    }
+    value
+}
+
 fn take_str(m: &HashMap<String, OwnedValue>, key: &str) -> Option<String> {
     m.get(key).and_then(owned_to_str)
 }
@@ -129,8 +136,8 @@ fn take_str_vec(m: &HashMap<String, OwnedValue>, key: &str) -> Vec<String> {
     };
     let mut out = Vec::new();
     for item in arr.iter() {
-        if let Ok(s) = Str::try_from(item.clone()) {
-            out.push(s.to_string());
+        if let zvariant::Value::Str(value) = unbox_value(item) {
+            out.push(value.to_string());
         }
     }
     out
@@ -290,7 +297,9 @@ fn decode_wifi_security(
 
     let key_mgmt_str = take_str(&ws, "key-mgmt").unwrap_or_default();
     let key_mgmt = match key_mgmt_str.as_str() {
-        "none" | "" => WifiKeyMgmt::None,
+        "none" => WifiKeyMgmt::None,
+        "" if !eap.is_empty() => WifiKeyMgmt::WpaEap,
+        "" => WifiKeyMgmt::None,
         "ieee8021x" => WifiKeyMgmt::WpaEap,
         "wpa-none" => WifiKeyMgmt::Wep,
         "wpa-psk" | "wpa-psk-sha256" => WifiKeyMgmt::WpaPsk,
@@ -357,7 +366,7 @@ fn decode_vpn(settings: &HashMap<String, HashMap<String, OwnedValue>>) -> Settin
 
 fn decode_wireguard(settings: &HashMap<String, HashMap<String, OwnedValue>>) -> SettingsSummary {
     let wg = settings.get("wireguard").cloned().unwrap_or_default();
-    let listen_port = take_u32(&wg, "listen-port").map(|p| p as u16);
+    let listen_port = take_u32(&wg, "listen-port").and_then(|p| u16::try_from(p).ok());
     let mtu = take_u32(&wg, "mtu");
     let fwmark = take_u32(&wg, "fwmark");
 
@@ -369,14 +378,14 @@ fn decode_wireguard(settings: &HashMap<String, HashMap<String, OwnedValue>>) -> 
     {
         peer_count = arr.len();
         if let Some(first) = arr.iter().next()
-            && let Ok(dict) = zvariant::Dict::try_from(first.clone())
+            && let zvariant::Value::Dict(dict) = unbox_value(first)
         {
             for (k, val) in dict.iter() {
-                if let Ok(key) = Str::try_from(k.clone())
+                if let zvariant::Value::Str(key) = unbox_value(k)
                     && key.as_str() == "endpoint"
-                    && let Ok(ov) = OwnedValue::try_from(val.clone())
+                    && let zvariant::Value::Str(endpoint) = unbox_value(val)
                 {
-                    first_peer_endpoint = owned_to_str(&ov);
+                    first_peer_endpoint = Some(endpoint.to_string());
                     break;
                 }
             }
@@ -759,6 +768,21 @@ mod tests {
     use super::*;
     use zvariant::Str;
 
+    fn path(suffix: u32) -> OwnedObjectPath {
+        OwnedObjectPath::try_from(format!("/org/freedesktop/NetworkManager/Settings/{suffix}"))
+            .expect("valid object path")
+    }
+
+    fn owned_string_array(values: &[&str]) -> OwnedValue {
+        OwnedValue::try_from(zvariant::Value::from(
+            values
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect::<Vec<_>>(),
+        ))
+        .expect("owned string array")
+    }
+
     fn conn_section(uuid: &str, id: &str, ty: &str) -> HashMap<String, OwnedValue> {
         let mut m = HashMap::new();
         m.insert("uuid".into(), OwnedValue::from(Str::from(uuid)));
@@ -771,26 +795,68 @@ mod tests {
     }
 
     #[test]
-    fn decode_malformed_missing_uuid() {
-        let mut settings = HashMap::new();
-        let mut c = HashMap::new();
-        c.insert("id".into(), OwnedValue::from(Str::from("x")));
-        c.insert(
-            "type".into(),
-            OwnedValue::from(Str::from("802-11-wireless")),
-        );
-        settings.insert("connection".into(), c);
+    fn decode_malformed_required_identity_fields() {
+        let cases = [
+            (HashMap::new(), "missing 'connection' section"),
+            (
+                HashMap::from([(
+                    "connection".into(),
+                    HashMap::from([
+                        ("id".into(), OwnedValue::from(Str::from("x"))),
+                        (
+                            "type".into(),
+                            OwnedValue::from(Str::from("802-11-wireless")),
+                        ),
+                    ]),
+                )]),
+                "missing connection.uuid",
+            ),
+            (
+                HashMap::from([(
+                    "connection".into(),
+                    HashMap::from([
+                        ("uuid".into(), OwnedValue::from(Str::from("u"))),
+                        (
+                            "type".into(),
+                            OwnedValue::from(Str::from("802-11-wireless")),
+                        ),
+                    ]),
+                )]),
+                "missing connection.id",
+            ),
+            (
+                HashMap::from([(
+                    "connection".into(),
+                    HashMap::from([
+                        ("uuid".into(), OwnedValue::from(Str::from("u"))),
+                        ("id".into(), OwnedValue::from(Str::from("x"))),
+                    ]),
+                )]),
+                "missing connection.type",
+            ),
+            (
+                HashMap::from([(
+                    "connection".into(),
+                    HashMap::from([
+                        ("uuid".into(), OwnedValue::from(42u32)),
+                        ("id".into(), OwnedValue::from(Str::from("x"))),
+                        (
+                            "type".into(),
+                            OwnedValue::from(Str::from("802-11-wireless")),
+                        ),
+                    ]),
+                )]),
+                "missing connection.uuid",
+            ),
+        ];
 
-        let r = decode_saved(
-            OwnedObjectPath::try_from("/o").unwrap(),
-            false,
-            None,
-            settings,
-        );
-        assert!(matches!(
-            r,
-            Err(ConnectionError::MalformedSavedConnection(_))
-        ));
+        for (settings, expected) in cases {
+            let result = decode_saved(path(1), false, None, settings);
+            assert!(matches!(
+                result,
+                Err(ConnectionError::MalformedSavedConnection(message)) if message == expected
+            ));
+        }
     }
 
     #[test]
@@ -810,7 +876,7 @@ mod tests {
         settings.insert("802-11-wireless".into(), w);
 
         let c = decode_saved(
-            OwnedObjectPath::try_from("/o").unwrap(),
+            path(2),
             false,
             Some("/etc/NetworkManager/system-connections/coffee.nmconnection".into()),
             settings,
@@ -860,13 +926,7 @@ mod tests {
         );
         settings.insert("802-11-wireless-security".into(), sec);
 
-        let c = decode_saved(
-            OwnedObjectPath::try_from("/o2").unwrap(),
-            false,
-            None,
-            settings,
-        )
-        .unwrap();
+        let c = decode_saved(path(3), false, None, settings).unwrap();
 
         match c.summary {
             SettingsSummary::Wifi {
@@ -878,6 +938,68 @@ mod tests {
             }
             _ => panic!("expected wifi with security"),
         }
+    }
+
+    #[test]
+    fn decode_wifi_eap_security_and_optional_fields() {
+        let wireless = HashMap::from([
+            (
+                "ssid".into(),
+                OwnedValue::try_from(zvariant::Value::from(b"Enterprise".to_vec()))
+                    .expect("owned SSID"),
+            ),
+            ("mode".into(), OwnedValue::from(Str::from("infrastructure"))),
+            ("band".into(), OwnedValue::from(Str::from("a"))),
+            ("channel".into(), OwnedValue::from(36u32)),
+            (
+                "bssid".into(),
+                OwnedValue::from(Str::from("00:11:22:33:44:55")),
+            ),
+            ("hidden".into(), OwnedValue::from(true)),
+            (
+                "mac-address-randomization".into(),
+                OwnedValue::from(Str::from("always")),
+            ),
+        ]);
+        let eap = HashMap::from([("eap".into(), owned_string_array(&["peap", "ttls"]))]);
+        let saved = decode_saved(
+            path(11),
+            false,
+            None,
+            HashMap::from([
+                (
+                    "connection".into(),
+                    conn_section("eap-u", "Enterprise", "802-11-wireless"),
+                ),
+                ("802-11-wireless".into(), wireless),
+                ("802-1x".into(), eap),
+            ]),
+        )
+        .unwrap();
+
+        let SettingsSummary::Wifi {
+            ssid,
+            mode,
+            security,
+            band,
+            channel,
+            bssid,
+            hidden,
+            mac_randomization,
+        } = saved.summary
+        else {
+            panic!("expected Wi-Fi summary")
+        };
+        assert_eq!(ssid, "Enterprise");
+        assert_eq!(mode.as_deref(), Some("infrastructure"));
+        assert_eq!(band.as_deref(), Some("a"));
+        assert_eq!(channel, Some(36));
+        assert_eq!(bssid.as_deref(), Some("00:11:22:33:44:55"));
+        assert!(hidden);
+        assert_eq!(mac_randomization.as_deref(), Some("always"));
+        let security = security.expect("EAP security summary");
+        assert_eq!(security.key_mgmt, WifiKeyMgmt::WpaEap);
+        assert_eq!(security.eap_methods, ["peap", "ttls"]);
     }
 
     #[test]
@@ -897,13 +1019,7 @@ mod tests {
         wg.insert("listen-port".into(), OwnedValue::from(51820u32));
         settings.insert("wireguard".into(), wg);
 
-        let c = decode_saved(
-            OwnedObjectPath::try_from("/o3").unwrap(),
-            false,
-            None,
-            settings,
-        )
-        .unwrap();
+        let c = decode_saved(path(4), false, None, settings).unwrap();
 
         match c.summary {
             SettingsSummary::WireGuard {
@@ -921,13 +1037,7 @@ mod tests {
         let mut settings = HashMap::new();
         settings.insert("connection".into(), conn_section("u4", "tun", "tun"));
 
-        let c = decode_saved(
-            OwnedObjectPath::try_from("/o4").unwrap(),
-            false,
-            None,
-            settings,
-        )
-        .unwrap();
+        let c = decode_saved(path(5), false, None, settings).unwrap();
 
         match c.summary {
             SettingsSummary::Other { sections } => {
@@ -988,6 +1098,394 @@ mod tests {
         assert_eq!(
             owned_to_str(d.get("ipv4").unwrap().get("foo").unwrap()).as_deref(),
             Some("bar")
+        );
+    }
+
+    #[test]
+    fn decode_saved_brief_reads_identity_and_path() {
+        let settings = HashMap::from([(
+            "connection".into(),
+            conn_section("brief-uuid", "Brief Name", "802-3-ethernet"),
+        )]);
+        let expected_path = path(6);
+
+        let brief = decode_saved_brief(expected_path.clone(), &settings).unwrap();
+
+        assert_eq!(brief.path, expected_path);
+        assert_eq!(brief.uuid, "brief-uuid");
+        assert_eq!(brief.id, "Brief Name");
+        assert_eq!(brief.connection_type, "802-3-ethernet");
+    }
+
+    #[test]
+    fn decode_saved_brief_rejects_each_missing_identity_field() {
+        for (missing, expected) in [
+            ("uuid", "missing connection.uuid"),
+            ("id", "missing connection.id"),
+            ("type", "missing connection.type"),
+        ] {
+            let mut connection = conn_section("u", "id", "vpn");
+            connection.remove(missing);
+            let settings = HashMap::from([("connection".into(), connection)]);
+            assert!(matches!(
+                decode_saved_brief(path(7), &settings),
+                Err(ConnectionError::MalformedSavedConnection(message)) if message == expected
+            ));
+        }
+
+        assert!(matches!(
+            decode_saved_brief(path(7), &HashMap::new()),
+            Err(ConnectionError::MalformedSavedConnection(message))
+                if message == "missing 'connection' section"
+        ));
+    }
+
+    #[test]
+    fn decode_ethernet_summary_and_connection_metadata() {
+        let mut connection = conn_section("eth-u", "Wired", "802-3-ethernet");
+        connection.insert(
+            "interface-name".into(),
+            OwnedValue::from(Str::from("enp1s0")),
+        );
+        connection.insert("autoconnect".into(), OwnedValue::from(false));
+        connection.insert("autoconnect-priority".into(), OwnedValue::from(-10i32));
+        connection.insert("timestamp".into(), OwnedValue::from(1234u64));
+        connection.insert(
+            "permissions".into(),
+            owned_string_array(&["user:alice:", "user:bob:"]),
+        );
+        let ethernet = HashMap::from([
+            (
+                "mac-address".into(),
+                OwnedValue::from(Str::from("00:11:22:33:44:55")),
+            ),
+            ("auto-negotiate".into(), OwnedValue::from(true)),
+            ("speed".into(), OwnedValue::from(1000u32)),
+            ("mtu".into(), OwnedValue::from(9000u32)),
+        ]);
+        let saved = decode_saved(
+            path(8),
+            true,
+            Some("/tmp/wired.nmconnection".into()),
+            HashMap::from([
+                ("connection".into(), connection),
+                ("802-3-ethernet".into(), ethernet),
+            ]),
+        )
+        .unwrap();
+
+        assert_eq!(saved.interface_name.as_deref(), Some("enp1s0"));
+        assert!(!saved.autoconnect);
+        assert_eq!(saved.autoconnect_priority, -10);
+        assert_eq!(saved.timestamp_unix, 1234);
+        assert_eq!(saved.permissions, ["user:alice:", "user:bob:"]);
+        assert!(saved.unsaved);
+        assert_eq!(saved.filename.as_deref(), Some("/tmp/wired.nmconnection"));
+        assert!(matches!(
+            saved.summary,
+            SettingsSummary::Ethernet {
+                mac_address: Some(ref mac),
+                auto_negotiate: Some(true),
+                speed_mbps: Some(1000),
+                mtu: Some(9000),
+            } if mac == "00:11:22:33:44:55"
+        ));
+    }
+
+    #[test]
+    fn decode_connection_metadata_uses_documented_defaults_for_wrong_types() {
+        let mut connection = conn_section("defaults-u", "Defaults", "802-3-ethernet");
+        connection.insert("interface-name".into(), OwnedValue::from(Str::from("")));
+        connection.insert("autoconnect".into(), OwnedValue::from(1u32));
+        connection.insert(
+            "autoconnect-priority".into(),
+            OwnedValue::from(Str::from("high")),
+        );
+        connection.insert("timestamp".into(), OwnedValue::from(false));
+        connection.insert("permissions".into(), OwnedValue::from(7u32));
+
+        let saved = decode_saved(
+            path(13),
+            false,
+            None,
+            HashMap::from([("connection".into(), connection)]),
+        )
+        .unwrap();
+
+        assert_eq!(saved.interface_name, None);
+        assert!(saved.autoconnect);
+        assert_eq!(saved.autoconnect_priority, 0);
+        assert_eq!(saved.timestamp_unix, 0);
+        assert!(saved.permissions.is_empty());
+    }
+
+    #[test]
+    fn decode_generic_vpn_summary_omits_secret_values() {
+        let data = zvariant::Dict::from(HashMap::from([
+            ("remote".to_string(), "vpn.example.com".to_string()),
+            ("cipher".to_string(), "AES-256-GCM".to_string()),
+        ]));
+        let vpn = HashMap::from([
+            (
+                "service-type".into(),
+                OwnedValue::from(Str::from("org.freedesktop.NetworkManager.openvpn")),
+            ),
+            ("user-name".into(), OwnedValue::from(Str::from("alice"))),
+            ("password-flags".into(), OwnedValue::from(1u32)),
+            ("persistent".into(), OwnedValue::from(true)),
+            (
+                "data".into(),
+                OwnedValue::try_from(zvariant::Value::Dict(data)).expect("owned dict"),
+            ),
+        ]);
+        let saved = decode_saved(
+            path(9),
+            false,
+            None,
+            HashMap::from([
+                ("connection".into(), conn_section("vpn-u", "VPN", "vpn")),
+                ("vpn".into(), vpn),
+            ]),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            saved.summary,
+            SettingsSummary::Vpn {
+                ref service_type,
+                user_name: Some(ref user),
+                password_flags,
+                ref data_keys,
+                persistent: true,
+            } if service_type == "org.freedesktop.NetworkManager.openvpn"
+                && user == "alice"
+                && password_flags.agent_owned()
+                && data_keys == &["cipher".to_string(), "remote".to_string()]
+        ));
+    }
+
+    #[test]
+    fn decode_native_wireguard_summary_checks_port_range() {
+        for (port, expected) in [(51820, Some(51820)), (u32::from(u16::MAX) + 1, None)] {
+            let wireguard = HashMap::from([
+                ("listen-port".into(), OwnedValue::from(port)),
+                ("mtu".into(), OwnedValue::from(1420u32)),
+                ("fwmark".into(), OwnedValue::from(7u32)),
+            ]);
+            let saved = decode_saved(
+                path(10),
+                false,
+                None,
+                HashMap::from([
+                    (
+                        "connection".into(),
+                        conn_section("wg-u", "WireGuard", "wireguard"),
+                    ),
+                    ("wireguard".into(), wireguard),
+                ]),
+            )
+            .unwrap();
+
+            assert!(matches!(
+                saved.summary,
+                SettingsSummary::WireGuard {
+                    listen_port,
+                    mtu: Some(1420),
+                    fwmark: Some(7),
+                    peer_count: 0,
+                    first_peer_endpoint: None,
+                } if listen_port == expected
+            ));
+        }
+    }
+
+    #[test]
+    fn decode_native_wireguard_peer_array() {
+        let peer: HashMap<String, zvariant::Value<'static>> = HashMap::from([
+            (
+                "public-key".into(),
+                zvariant::Value::Str("peer-public-key".into()),
+            ),
+            (
+                "endpoint".into(),
+                zvariant::Value::Str("vpn.example.com:51820".into()),
+            ),
+        ]);
+        let peers =
+            OwnedValue::try_from(zvariant::Value::from(vec![peer])).expect("owned peer array");
+        let saved = decode_saved(
+            path(12),
+            false,
+            None,
+            HashMap::from([
+                (
+                    "connection".into(),
+                    conn_section("wg-peer-u", "WireGuard peer", "wireguard"),
+                ),
+                ("wireguard".into(), HashMap::from([("peers".into(), peers)])),
+            ]),
+        )
+        .unwrap();
+
+        let SettingsSummary::WireGuard {
+            peer_count,
+            first_peer_endpoint,
+            ..
+        } = saved.summary
+        else {
+            panic!("expected WireGuard summary")
+        };
+        assert_eq!(peer_count, 1);
+        assert_eq!(
+            first_peer_endpoint.as_deref(),
+            Some("vpn.example.com:51820")
+        );
+    }
+
+    #[test]
+    fn decode_mobile_and_bluetooth_summaries() {
+        let gsm = decode_summary(
+            "gsm",
+            &HashMap::from([(
+                "gsm".into(),
+                HashMap::from([
+                    ("apn".into(), OwnedValue::from(Str::from("internet"))),
+                    ("username".into(), OwnedValue::from(Str::from("mobile"))),
+                    ("password-flags".into(), OwnedValue::from(1u32)),
+                    ("pin-flags".into(), OwnedValue::from(2u32)),
+                ]),
+            )]),
+        );
+        assert!(matches!(
+            gsm,
+            SettingsSummary::Gsm {
+                apn: Some(ref apn),
+                user_name: Some(ref user),
+                password_flags: 1,
+                pin_flags: 2,
+            } if apn == "internet" && user == "mobile"
+        ));
+
+        let cdma = decode_summary(
+            "cdma",
+            &HashMap::from([(
+                "cdma".into(),
+                HashMap::from([
+                    ("number".into(), OwnedValue::from(Str::from("#777"))),
+                    ("username".into(), OwnedValue::from(Str::from("carrier"))),
+                    ("password-flags".into(), OwnedValue::from(1u32)),
+                ]),
+            )]),
+        );
+        assert!(matches!(
+            cdma,
+            SettingsSummary::Cdma {
+                number: Some(ref number),
+                user_name: Some(ref user),
+                password_flags: 1,
+            } if number == "#777" && user == "carrier"
+        ));
+
+        let bluetooth = decode_summary(
+            "bluetooth",
+            &HashMap::from([(
+                "bluetooth".into(),
+                HashMap::from([(
+                    "bdaddr".into(),
+                    OwnedValue::from(Str::from("00:11:22:33:44:55")),
+                )]),
+            )]),
+        );
+        assert!(matches!(
+            bluetooth,
+            SettingsSummary::Bluetooth { ref bdaddr, ref bt_type }
+                if bdaddr == "00:11:22:33:44:55" && bt_type == "panu"
+        ));
+    }
+
+    #[test]
+    fn patch_delta_empty_patch_is_empty() {
+        assert!(build_settings_patch_delta(&SettingsPatch::default()).is_empty());
+    }
+
+    #[test]
+    fn patch_delta_serializes_all_typed_fields_and_interface_clear() {
+        let patch = SettingsPatch {
+            autoconnect: Some(false),
+            autoconnect_priority: Some(-42),
+            id: Some("Renamed".into()),
+            interface_name: Some(None),
+            raw_overlay: None,
+        };
+        let delta = build_settings_patch_delta(&patch);
+        let connection = delta.get("connection").unwrap();
+
+        assert_eq!(
+            owned_to_bool(connection.get("autoconnect").unwrap()),
+            Some(false)
+        );
+        assert_eq!(
+            owned_to_i32(connection.get("autoconnect-priority").unwrap()),
+            Some(-42)
+        );
+        assert_eq!(
+            owned_to_str(connection.get("id").unwrap()).as_deref(),
+            Some("Renamed")
+        );
+        assert_eq!(
+            owned_to_str(connection.get("interface-name").unwrap()).as_deref(),
+            Some("")
+        );
+    }
+
+    #[test]
+    fn raw_overlay_has_documented_precedence_over_typed_fields() {
+        let overlay = HashMap::from([(
+            "connection".into(),
+            HashMap::from([
+                ("autoconnect".into(), OwnedValue::from(true)),
+                ("id".into(), OwnedValue::from(Str::from("Overlay Name"))),
+            ]),
+        )]);
+        let patch = SettingsPatch {
+            autoconnect: Some(false),
+            id: Some("Typed Name".into()),
+            raw_overlay: Some(overlay),
+            ..Default::default()
+        };
+        let delta = build_settings_patch_delta(&patch);
+        let connection = delta.get("connection").unwrap();
+
+        assert_eq!(
+            owned_to_bool(connection.get("autoconnect").unwrap()),
+            Some(true)
+        );
+        assert_eq!(
+            owned_to_str(connection.get("id").unwrap()).as_deref(),
+            Some("Overlay Name")
+        );
+    }
+
+    #[test]
+    fn merge_patch_creates_missing_sections_without_losing_existing_values() {
+        let mut settings = HashMap::from([(
+            "connection".into(),
+            conn_section("merge-u", "Original", "802-3-ethernet"),
+        )]);
+        let delta = HashMap::from([(
+            "ipv4".into(),
+            HashMap::from([("method".into(), OwnedValue::from(Str::from("manual")))]),
+        )]);
+
+        merge_settings_patch_delta(&mut settings, delta);
+
+        assert_eq!(
+            owned_to_str(settings["connection"].get("id").unwrap()).as_deref(),
+            Some("Original")
+        );
+        assert_eq!(
+            owned_to_str(settings["ipv4"].get("method").unwrap()).as_deref(),
+            Some("manual")
         );
     }
 }

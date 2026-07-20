@@ -71,3 +71,93 @@ impl Drop for MonitorHandle {
         let _ = self.shutdown_tx.send(());
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    fn task_waiting_for_shutdown(mut shutdown_rx: watch::Receiver<()>) -> JoinHandle<Result<()>> {
+        tokio::spawn(async move {
+            shutdown_rx
+                .changed()
+                .await
+                .map_err(|error| ConnectionError::Stuck(error.to_string()))?;
+            Ok(())
+        })
+    }
+
+    async fn expect_shutdown(shutdown_rx: &mut watch::Receiver<()>) {
+        tokio::time::timeout(Duration::from_secs(1), shutdown_rx.changed())
+            .await
+            .expect("shutdown signal timed out")
+            .expect("shutdown sender dropped without signaling");
+    }
+
+    #[tokio::test]
+    async fn stop_signals_and_waits_for_clean_task_exit() {
+        let (shutdown_tx, shutdown_rx) = watch::channel(());
+        let handle = MonitorHandle::new(shutdown_tx, task_waiting_for_shutdown(shutdown_rx));
+
+        handle.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn stop_propagates_monitor_task_error() {
+        let (shutdown_tx, _shutdown_rx) = watch::channel(());
+        let task = tokio::spawn(async {
+            Err(ConnectionError::Stuck(
+                "monitor returned its own error".into(),
+            ))
+        });
+        let handle = MonitorHandle::new(shutdown_tx, task);
+
+        let error = handle.stop().await.unwrap_err();
+        assert!(matches!(
+            error,
+            ConnectionError::Stuck(message) if message == "monitor returned its own error"
+        ));
+    }
+
+    #[tokio::test]
+    async fn stop_maps_panicked_task_to_stuck_error() {
+        let (shutdown_tx, _shutdown_rx) = watch::channel(());
+        let task = tokio::spawn(async {
+            panic!("monitor task test panic");
+            #[allow(unreachable_code)]
+            Ok(())
+        });
+        let handle = MonitorHandle::new(shutdown_tx, task);
+
+        let error = handle.stop().await.unwrap_err();
+        assert!(matches!(
+            error,
+            ConnectionError::Stuck(message)
+                if message.contains("monitor task panicked")
+                    && message.contains("monitor task test panic")
+        ));
+    }
+
+    #[tokio::test]
+    async fn shutdown_sends_signal_without_consuming_handle() {
+        let (shutdown_tx, shutdown_rx) = watch::channel(());
+        let mut observer = shutdown_rx.clone();
+        let handle = MonitorHandle::new(shutdown_tx, task_waiting_for_shutdown(shutdown_rx));
+
+        handle.shutdown();
+        expect_shutdown(&mut observer).await;
+        handle.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn drop_sends_shutdown_signal() {
+        let (shutdown_tx, shutdown_rx) = watch::channel(());
+        let mut observer = shutdown_rx.clone();
+        let handle = MonitorHandle::new(shutdown_tx, task_waiting_for_shutdown(shutdown_rx));
+
+        drop(handle);
+
+        expect_shutdown(&mut observer).await;
+    }
+}

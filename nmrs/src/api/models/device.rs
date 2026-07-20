@@ -265,7 +265,7 @@ impl DeviceType {
             Self::Wifi => 2,
             Self::WifiP2P => 30,
             Self::Loopback => 32,
-            Self::Bluetooth => 6,
+            Self::Bluetooth => 5,
             Self::Vlan => 11,
             Self::Other(code) => *code,
         }
@@ -352,7 +352,7 @@ impl Device {
     /// Returns `true` if this is a wired (Ethernet) device.
     #[must_use]
     pub fn is_wired(&self) -> bool {
-        matches!(self.device_type, DeviceType::Ethernet)
+        crate::types::device_type_registry::is_wired(self.device_type.to_code())
     }
 
     /// Returns `true` if this is a wireless (Wi-Fi) device.

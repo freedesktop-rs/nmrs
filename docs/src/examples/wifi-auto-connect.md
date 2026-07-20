@@ -112,5 +112,6 @@ HOME_WIFI_PSK="my_home_password" OFFICE_WIFI_PSK="office_pass" cargo run --examp
 
 - **Persistent loop:** Wrap in a loop with a timer to continuously monitor and reconnect
 - **Signal threshold:** Skip networks below a minimum signal strength
-- **Saved profiles:** Check `has_saved_connection()` first to avoid needing passwords
+- **Saved profiles:** After `has_saved_connection()` succeeds, pass
+  `WifiSecurity::Open` or an empty PSK to request the profile's stored settings
 - **Monitoring:** Use `monitor_network_changes()` to react to new networks appearing

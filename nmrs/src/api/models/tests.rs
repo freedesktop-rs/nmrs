@@ -15,14 +15,23 @@ use super::wireguard::*;
 use crate::api::models::DeviceType;
 
 #[test]
-fn device_type_from_u32_all_variants() {
-    assert_eq!(DeviceType::from(1), DeviceType::Ethernet);
-    assert_eq!(DeviceType::from(2), DeviceType::Wifi);
-    assert_eq!(DeviceType::from(11), DeviceType::Vlan);
-    assert_eq!(DeviceType::from(30), DeviceType::WifiP2P);
-    assert_eq!(DeviceType::from(32), DeviceType::Loopback);
-    assert_eq!(DeviceType::from(999), DeviceType::Other(999));
-    assert_eq!(DeviceType::from(0), DeviceType::Other(0));
+fn device_type_code_round_trips_all_variants() {
+    let cases = [
+        (1, DeviceType::Ethernet),
+        (2, DeviceType::Wifi),
+        (5, DeviceType::Bluetooth),
+        (11, DeviceType::Vlan),
+        (30, DeviceType::WifiP2P),
+        (32, DeviceType::Loopback),
+        (999, DeviceType::Other(999)),
+        (0, DeviceType::Other(0)),
+    ];
+
+    for (code, expected) in cases {
+        let actual = DeviceType::from(code);
+        assert_eq!(actual, expected);
+        assert_eq!(actual.to_code(), code);
+    }
 }
 
 #[test]
@@ -33,6 +42,7 @@ fn device_type_from_u32_registry_types() {
     assert_eq!(DeviceType::from(12), DeviceType::Other(12));
     assert_eq!(DeviceType::from(13), DeviceType::Other(13));
     assert_eq!(DeviceType::from(16), DeviceType::Other(16));
+    assert_eq!(DeviceType::from(20), DeviceType::Other(20));
     assert_eq!(DeviceType::from(29), DeviceType::Other(29));
 }
 
@@ -42,6 +52,7 @@ fn device_type_display() {
     assert_eq!(format!("{}", DeviceType::Wifi), "Wi-Fi");
     assert_eq!(format!("{}", DeviceType::WifiP2P), "Wi-Fi P2P");
     assert_eq!(format!("{}", DeviceType::Loopback), "Loopback");
+    assert_eq!(format!("{}", DeviceType::Bluetooth), "Bluetooth");
     assert_eq!(format!("{}", DeviceType::Vlan), "VLAN");
     assert_eq!(format!("{}", DeviceType::Other(42)), "Other(42)");
 }
@@ -52,6 +63,7 @@ fn device_type_display_registry() {
     assert_eq!(format!("{}", DeviceType::Other(12)), "Bond");
     assert_eq!(format!("{}", DeviceType::Other(11)), "VLAN");
     assert_eq!(format!("{}", DeviceType::Other(16)), "TUN");
+    assert_eq!(format!("{}", DeviceType::Other(20)), "Veth");
     assert_eq!(format!("{}", DeviceType::Other(29)), "WireGuard");
 }
 
@@ -104,6 +116,7 @@ fn device_type_connection_type_str() {
     assert_eq!(DeviceType::Wifi.connection_type_str(), "802-11-wireless");
     assert_eq!(DeviceType::WifiP2P.connection_type_str(), "wifi-p2p");
     assert_eq!(DeviceType::Loopback.connection_type_str(), "loopback");
+    assert_eq!(DeviceType::Bluetooth.connection_type_str(), "bluetooth");
     assert_eq!(DeviceType::Vlan.connection_type_str(), "vlan");
 }
 
@@ -112,17 +125,11 @@ fn device_type_connection_type_str_registry() {
     assert_eq!(DeviceType::Other(13).connection_type_str(), "bridge");
     assert_eq!(DeviceType::Other(12).connection_type_str(), "bond");
     assert_eq!(DeviceType::Other(11).connection_type_str(), "vlan");
+    assert_eq!(
+        DeviceType::Other(20).connection_type_str(),
+        "802-3-ethernet"
+    );
     assert_eq!(DeviceType::Other(29).connection_type_str(), "wireguard");
-}
-
-#[test]
-fn device_type_to_code() {
-    assert_eq!(DeviceType::Ethernet.to_code(), 1);
-    assert_eq!(DeviceType::Wifi.to_code(), 2);
-    assert_eq!(DeviceType::Vlan.to_code(), 11);
-    assert_eq!(DeviceType::WifiP2P.to_code(), 30);
-    assert_eq!(DeviceType::Loopback.to_code(), 32);
-    assert_eq!(DeviceType::Other(999).to_code(), 999);
 }
 
 #[test]
@@ -131,6 +138,7 @@ fn device_type_to_code_registry() {
     assert_eq!(DeviceType::Other(12).to_code(), 12);
     assert_eq!(DeviceType::Other(13).to_code(), 13);
     assert_eq!(DeviceType::Other(16).to_code(), 16);
+    assert_eq!(DeviceType::Other(20).to_code(), 20);
     assert_eq!(DeviceType::Other(29).to_code(), 29);
 }
 
@@ -535,8 +543,14 @@ fn test_bluetooth_identity_dun() {
 
 #[test]
 fn test_bluetooth_identity_creation_error() {
-    let res = BluetoothIdentity::new("SomeInvalidAddress".into(), BluetoothNetworkRole::Dun);
-    assert!(res.is_err());
+    let error =
+        BluetoothIdentity::new("SomeInvalidAddress".into(), BluetoothNetworkRole::Dun).unwrap_err();
+    assert!(matches!(
+        error,
+        ConnectionError::InvalidAddress(message)
+            if message
+                == "Invalid Bluetooth Address 'SomeInvalidAddress' (must have 6 segments)"
+    ));
 }
 
 #[test]
@@ -553,7 +567,7 @@ fn test_bluetooth_device_creation() {
     assert_eq!(device.bdaddr, "00:1A:7D:DA:71:13");
     assert_eq!(device.name, Some("MyPhone".into()));
     assert_eq!(device.alias, Some("Phone".into()));
-    assert!(matches!(device.bt_caps, _role));
+    assert_eq!(device.bt_caps, role);
     assert_eq!(device.state, DeviceState::Activated);
 }
 
@@ -591,83 +605,70 @@ fn test_bluetooth_device_display_no_alias() {
     assert!(display_str.contains("DUN"));
 }
 
-#[test]
-fn test_device_is_bluetooth() {
-    let bt_device = Device {
+fn device_with_type(device_type: DeviceType) -> Device {
+    Device {
         path: "/org/freedesktop/NetworkManager/Devices/1".into(),
-        interface: "bt0".into(),
-        identity: DeviceIdentity::new("00:1A:7D:DA:71:13".into(), "00:1A:7D:DA:71:13".into()),
-        device_type: DeviceType::Bluetooth,
+        interface: "test0".into(),
+        identity: DeviceIdentity::new("00:1A:7D:DA:71:13".into(), "test0".into()),
+        device_type,
         state: DeviceState::Activated,
         managed: Some(true),
-        driver: Some("btusb".into()),
+        driver: Some("test".into()),
         ip4_address: None,
         ip6_address: None,
         frequency: None,
         speed_mbps: None,
-    };
-
-    assert!(bt_device.is_bluetooth());
-    assert!(!bt_device.is_wireless());
-    assert!(!bt_device.is_wired());
+    }
 }
 
 #[test]
-fn test_device_wired_speed_construction() {
-    let device = Device {
-        path: "/org/freedesktop/NetworkManager/Devices/2".into(),
-        interface: "eth0".into(),
-        identity: DeviceIdentity::new("00:11:22:33:44:55".into(), "00:11:22:33:44:55".into()),
-        device_type: DeviceType::Ethernet,
-        state: DeviceState::Activated,
-        managed: Some(true),
-        driver: Some("e1000e".into()),
-        ip4_address: Some("192.0.2.10/24".into()),
-        ip6_address: None,
-        frequency: None,
-        speed_mbps: Some(1000),
-    };
+fn device_transport_predicates_are_mutually_exclusive() {
+    let cases = [
+        (DeviceType::Ethernet, (true, false, false)),
+        (DeviceType::Other(20), (true, false, false)),
+        (DeviceType::Wifi, (false, true, false)),
+        (DeviceType::Bluetooth, (false, false, true)),
+        (DeviceType::Loopback, (false, false, false)),
+    ];
 
-    assert!(device.is_wired());
-    assert_eq!(device.speed_mbps, Some(1000));
-}
-
-#[test]
-fn test_wired_device_construction() {
-    let device = WiredDevice {
-        path: "/org/freedesktop/NetworkManager/Devices/2".into(),
-        interface: "eth0".into(),
-        hw_address: "00:11:22:33:44:55".into(),
-        permanent_hw_address: Some("00:11:22:33:44:55".into()),
-        speed_mbps: Some(0),
-        active_connection_id: Some("Wired connection 1".into()),
-        state: DeviceState::Disconnected,
-        ip4_address: None,
-        ip6_address: None,
-    };
-
-    assert_eq!(device.interface, "eth0");
-    assert_eq!(device.speed_mbps, Some(0));
-    assert_eq!(
-        device.active_connection_id.as_deref(),
-        Some("Wired connection 1")
-    );
-}
-
-#[test]
-fn test_device_type_bluetooth() {
-    assert_eq!(DeviceType::from(5), DeviceType::Bluetooth);
-}
-
-#[test]
-fn test_device_type_bluetooth_display() {
-    assert_eq!(format!("{}", DeviceType::Bluetooth), "Bluetooth");
+    for (device_type, expected) in cases {
+        let device = device_with_type(device_type);
+        assert_eq!(
+            (
+                device.is_wired(),
+                device.is_wireless(),
+                device.is_bluetooth(),
+            ),
+            expected
+        );
+    }
 }
 
 #[test]
 fn test_connection_error_no_bluetooth_device() {
     let err = ConnectionError::NoBluetoothDevice;
     assert_eq!(format!("{}", err), "Bluetooth device not found");
+}
+
+fn assert_wireguard_peer(
+    peer: &WireGuardPeer,
+    public_key: &str,
+    gateway: &str,
+    allowed_ips: &[&str],
+    preshared_key: Option<&str>,
+    persistent_keepalive: Option<u32>,
+) {
+    assert_eq!(peer.public_key, public_key);
+    assert_eq!(peer.gateway, gateway);
+    assert_eq!(
+        peer.allowed_ips,
+        allowed_ips
+            .iter()
+            .map(|address| (*address).to_string())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(peer.preshared_key.as_deref(), preshared_key);
+    assert_eq!(peer.persistent_keepalive, persistent_keepalive);
 }
 
 #[test]
@@ -697,6 +698,14 @@ fn test_vpn_credentials_builder_basic() {
     );
     assert_eq!(creds.address, "10.0.0.2/24");
     assert_eq!(creds.peers.len(), 1);
+    assert_wireguard_peer(
+        &creds.peers[0],
+        "HIgo9xNzJMWLKAShlKl6/bUT1VI9Q0SDBXGtLXkPFXc=",
+        "vpn.example.com:51820",
+        &["0.0.0.0/0"],
+        None,
+        None,
+    );
     assert!(creds.dns.is_none());
     assert!(creds.mtu.is_none());
 }
@@ -725,6 +734,14 @@ fn test_wireguard_config_basic() {
     );
     assert_eq!(config.address, "10.0.0.2/24");
     assert_eq!(config.peers.len(), 1);
+    assert_wireguard_peer(
+        &config.peers[0],
+        "HIgo9xNzJMWLKAShlKl6/bUT1VI9Q0SDBXGtLXkPFXc=",
+        "vpn.example.com:51820",
+        &["0.0.0.0/0"],
+        None,
+        None,
+    );
     assert!(config.dns.is_none());
     assert!(config.mtu.is_none());
 }
@@ -761,19 +778,25 @@ fn test_wireguard_config_implements_vpn_config() {
 
 #[test]
 fn test_wireguard_config_roundtrips_through_vpn_credentials() {
+    let uuid = Uuid::new_v4();
     let config = WireGuardConfig::new(
         "TestVPN",
         "vpn.example.com:51820",
         "private_key",
         "10.0.0.2/24",
-        vec![WireGuardPeer::new(
-            "public_key",
-            "vpn.example.com:51820",
-            vec!["0.0.0.0/0".into()],
-        )],
+        vec![
+            WireGuardPeer::new(
+                "public_key",
+                "vpn.example.com:51820",
+                vec!["0.0.0.0/0".into(), "10.0.0.0/8".into()],
+            )
+            .with_preshared_key("preshared_key")
+            .with_persistent_keepalive(25),
+        ],
     )
     .with_dns(vec!["1.1.1.1".into()])
-    .with_mtu(1420);
+    .with_mtu(1420)
+    .with_uuid(uuid);
 
     let legacy: VpnCredentials = config.clone().into();
     let roundtrip = WireGuardConfig::from(legacy);
@@ -782,9 +805,18 @@ fn test_wireguard_config_roundtrips_through_vpn_credentials() {
     assert_eq!(roundtrip.gateway, config.gateway);
     assert_eq!(roundtrip.private_key, config.private_key);
     assert_eq!(roundtrip.address, config.address);
-    assert_eq!(roundtrip.peers.len(), config.peers.len());
+    assert_eq!(roundtrip.peers.len(), 1);
+    assert_wireguard_peer(
+        &roundtrip.peers[0],
+        "public_key",
+        "vpn.example.com:51820",
+        &["0.0.0.0/0", "10.0.0.0/8"],
+        Some("preshared_key"),
+        Some(25),
+    );
     assert_eq!(roundtrip.dns, config.dns);
     assert_eq!(roundtrip.mtu, config.mtu);
+    assert_eq!(roundtrip.uuid, Some(uuid));
 }
 
 #[test]
@@ -816,12 +848,18 @@ fn test_vpn_credentials_builder_with_optionals() {
 
 #[test]
 fn test_vpn_credentials_builder_multiple_peers() {
-    let peer1 = WireGuardPeer::new("key1", "vpn1.example.com:51820", vec!["10.0.0.0/24".into()]);
+    let peer1 = WireGuardPeer::new(
+        "key1",
+        "vpn1.example.com:51820",
+        vec!["10.0.0.0/24".into(), "10.0.1.0/24".into()],
+    )
+    .with_persistent_keepalive(15);
     let peer2 = WireGuardPeer::new(
         "key2",
         "vpn2.example.com:51820",
         vec!["192.168.0.0/24".into()],
-    );
+    )
+    .with_preshared_key("peer2-psk");
 
     let creds = VpnCredentials::builder()
         .name("MultiPeerVPN")
@@ -835,13 +873,31 @@ fn test_vpn_credentials_builder_multiple_peers() {
         .unwrap();
 
     assert_eq!(creds.peers.len(), 2);
+    assert_wireguard_peer(
+        &creds.peers[0],
+        "key1",
+        "vpn1.example.com:51820",
+        &["10.0.0.0/24", "10.0.1.0/24"],
+        None,
+        Some(15),
+    );
+    assert_wireguard_peer(
+        &creds.peers[1],
+        "key2",
+        "vpn2.example.com:51820",
+        &["192.168.0.0/24"],
+        Some("peer2-psk"),
+        None,
+    );
 }
 
 #[test]
 fn test_vpn_credentials_builder_peers_method() {
     let peers = vec![
-        WireGuardPeer::new("key1", "vpn1.example.com:51820", vec!["0.0.0.0/0".into()]),
-        WireGuardPeer::new("key2", "vpn2.example.com:51820", vec!["0.0.0.0/0".into()]),
+        WireGuardPeer::new("key1", "vpn1.example.com:51820", vec!["0.0.0.0/0".into()])
+            .with_persistent_keepalive(20),
+        WireGuardPeer::new("key2", "vpn2.example.com:51821", vec!["::/0".into()])
+            .with_preshared_key("key2-psk"),
     ];
 
     let creds = VpnCredentials::builder()
@@ -855,6 +911,22 @@ fn test_vpn_credentials_builder_peers_method() {
         .unwrap();
 
     assert_eq!(creds.peers.len(), 2);
+    assert_wireguard_peer(
+        &creds.peers[0],
+        "key1",
+        "vpn1.example.com:51820",
+        &["0.0.0.0/0"],
+        None,
+        Some(20),
+    );
+    assert_wireguard_peer(
+        &creds.peers[1],
+        "key2",
+        "vpn2.example.com:51821",
+        &["::/0"],
+        Some("key2-psk"),
+        None,
+    );
 }
 
 #[test]
@@ -869,7 +941,11 @@ fn test_vpn_credentials_builder_missing_name() {
         .add_peer(peer)
         .build()
         .unwrap_err();
-    assert!(matches!(err, ConnectionError::IncompleteBuilder(_)));
+    assert!(matches!(
+        err,
+        ConnectionError::IncompleteBuilder(message)
+            if message == "connection name is required (use .name())"
+    ));
 }
 
 #[test]
@@ -884,7 +960,11 @@ fn test_vpn_credentials_builder_missing_vpn_type() {
         .add_peer(peer)
         .build()
         .unwrap_err();
-    assert!(matches!(err, ConnectionError::IncompleteBuilder(_)));
+    assert!(matches!(
+        err,
+        ConnectionError::IncompleteBuilder(message)
+            if message == "VPN type is required (use .wireguard())"
+    ));
 }
 
 #[test]
@@ -897,7 +977,11 @@ fn test_vpn_credentials_builder_missing_peers() {
         .address("10.0.0.2/24")
         .build()
         .unwrap_err();
-    assert!(matches!(err, ConnectionError::InvalidPeers(_)));
+    assert!(matches!(
+        err,
+        ConnectionError::InvalidPeers(message)
+            if message == "at least one peer is required (use .add_peer())"
+    ));
 }
 
 #[test]
@@ -1046,25 +1130,7 @@ fn test_eap_options_builder_tls_missing_client_cert() {
 }
 
 #[test]
-fn test_eap_options_builder_path_blob_ca_cert_path() {
-    let opts = EapOptions::builder()
-        .identity("student@university.edu")
-        .method(EapMethod::Tls)
-        .ca_cert_path("file:///etc/ssl/certs/ca.pem")
-        .ca_cert_blob(vec![1])
-        .private_key_path("file:///etc/ssl/private/client.key")
-        .private_key_password("password")
-        .client_cert_path("file:///etc/ssl/certs/client.pem")
-        .build()
-        .unwrap();
-
-    assert_eq!(opts.method, EapMethod::Tls);
-    assert_eq!(opts.ca_cert_path, None);
-    assert_eq!(opts.ca_cert_blob, Some(vec![1]));
-}
-
-#[test]
-fn test_eap_options_builder_path_blob_ca_cert() {
+fn test_eap_options_builder_ca_cert_blob_overrides_path() {
     let opts = EapOptions::builder()
         .identity("student@university.edu")
         .method(EapMethod::Tls)
@@ -1125,7 +1191,11 @@ fn test_eap_options_builder_missing_identity() {
         .phase2(Phase2::Mschapv2)
         .build()
         .unwrap_err();
-    assert!(matches!(err, ConnectionError::IncompleteBuilder(_)));
+    assert!(matches!(
+        err,
+        ConnectionError::IncompleteBuilder(message)
+            if message == "EAP identity is required (use .identity())"
+    ));
 }
 
 #[test]
@@ -1136,7 +1206,11 @@ fn test_eap_options_builder_missing_password() {
         .phase2(Phase2::Mschapv2)
         .build()
         .unwrap_err();
-    assert!(matches!(err, ConnectionError::IncompleteBuilder(_)));
+    assert!(matches!(
+        err,
+        ConnectionError::IncompleteBuilder(message)
+            if message == "EAP password is required (use .password())"
+    ));
 }
 
 #[test]
@@ -1147,7 +1221,11 @@ fn test_eap_options_builder_missing_method() {
         .phase2(Phase2::Mschapv2)
         .build()
         .unwrap_err();
-    assert!(matches!(err, ConnectionError::IncompleteBuilder(_)));
+    assert!(matches!(
+        err,
+        ConnectionError::IncompleteBuilder(message)
+            if message == "EAP method is required (use .method())"
+    ));
 }
 
 #[test]
@@ -1158,7 +1236,11 @@ fn test_eap_options_builder_missing_phase2() {
         .method(EapMethod::Peap)
         .build()
         .unwrap_err();
-    assert!(matches!(err, ConnectionError::IncompleteBuilder(_)));
+    assert!(matches!(
+        err,
+        ConnectionError::IncompleteBuilder(message)
+            if message == "EAP phase 2 method is required (use .phase2())"
+    ));
 }
 
 #[test]
@@ -1213,7 +1295,27 @@ fn test_vpn_credentials_builder_equivalence_to_new() {
     assert_eq!(creds_new.gateway, creds_builder.gateway);
     assert_eq!(creds_new.private_key, creds_builder.private_key);
     assert_eq!(creds_new.address, creds_builder.address);
-    assert_eq!(creds_new.peers.len(), creds_builder.peers.len());
+    assert_eq!(creds_new.peers.len(), 1);
+    assert_eq!(creds_builder.peers.len(), 1);
+    assert_wireguard_peer(
+        &creds_new.peers[0],
+        "public_key",
+        "vpn.example.com:51820",
+        &["0.0.0.0/0"],
+        None,
+        None,
+    );
+    assert_wireguard_peer(
+        &creds_builder.peers[0],
+        "public_key",
+        "vpn.example.com:51820",
+        &["0.0.0.0/0"],
+        None,
+        None,
+    );
+    assert_eq!(creds_new.dns, creds_builder.dns);
+    assert_eq!(creds_new.mtu, creds_builder.mtu);
+    assert_eq!(creds_new.uuid, creds_builder.uuid);
 }
 
 #[test]
@@ -1224,53 +1326,14 @@ fn test_timeout_config_default() {
 }
 
 #[test]
-fn test_timeout_config_new() {
-    let config = TimeoutConfig::new();
-    assert_eq!(config.connection_timeout, Duration::from_secs(30));
-    assert_eq!(config.disconnect_timeout, Duration::from_secs(10));
-}
-
-#[test]
-fn test_timeout_config_with_connection_timeout() {
-    let config = TimeoutConfig::new().with_connection_timeout(Duration::from_secs(60));
-    assert_eq!(config.connection_timeout, Duration::from_secs(60));
-    assert_eq!(config.disconnect_timeout, Duration::from_secs(10));
-}
-
-#[test]
-fn test_timeout_config_with_disconnect_timeout() {
-    let config = TimeoutConfig::new().with_disconnect_timeout(Duration::from_secs(20));
-    assert_eq!(config.connection_timeout, Duration::from_secs(30));
-    assert_eq!(config.disconnect_timeout, Duration::from_secs(20));
-}
-
-#[test]
-fn test_timeout_config_with_both_timeouts() {
+fn test_timeout_config_setters_compose_and_last_value_wins() {
     let config = TimeoutConfig::new()
-        .with_connection_timeout(Duration::from_secs(90))
-        .with_disconnect_timeout(Duration::from_secs(30));
-    assert_eq!(config.connection_timeout, Duration::from_secs(90));
-    assert_eq!(config.disconnect_timeout, Duration::from_secs(30));
-}
-
-#[test]
-fn test_timeout_config_chaining() {
-    let config = TimeoutConfig::default()
         .with_connection_timeout(Duration::from_secs(45))
         .with_disconnect_timeout(Duration::from_secs(15))
         .with_connection_timeout(Duration::from_secs(60));
 
     assert_eq!(config.connection_timeout, Duration::from_secs(60));
     assert_eq!(config.disconnect_timeout, Duration::from_secs(15));
-}
-
-#[test]
-fn test_timeout_config_copy() {
-    let config1 = TimeoutConfig::new().with_connection_timeout(Duration::from_secs(120));
-    let config2 = config1;
-
-    assert_eq!(config1.connection_timeout, Duration::from_secs(120));
-    assert_eq!(config2.connection_timeout, Duration::from_secs(120));
 }
 
 #[test]

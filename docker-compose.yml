@@ -10,15 +10,7 @@ services:
       - target-cache:/app/target
     environment:
       - RUST_BACKTRACE=1
-    command: >
-      bash -c "
-        mkdir -p /run/dbus &&
-        dbus-daemon --system --fork &&
-        sleep 1 &&
-        NetworkManager --no-daemon &
-        sleep 3 &&
-        cargo test -p nmrs
-      "
+    command: bash scripts/ci/run-networkmanager-tests.sh all
 
   test-all:
     build:
@@ -31,15 +23,35 @@ services:
       - target-cache:/app/target
     environment:
       - RUST_BACKTRACE=1
-    command: >
-      bash -c "
-        mkdir -p /run/dbus &&
-        dbus-daemon --system --fork &&
-        sleep 1 &&
-        NetworkManager --no-daemon &
-        sleep 3 &&
-        cargo test --workspace
-      "
+    command: bash scripts/ci/run-networkmanager-tests.sh all
+
+  test-integration:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    privileged: true
+    volumes:
+      - .:/app
+      - cargo-cache:/root/.cargo/registry
+      - target-cache:/app/target
+    environment:
+      - RUST_BACKTRACE=1
+    command: bash scripts/ci/run-networkmanager-tests.sh integration
+
+  test-wifi-integration:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    privileged: true
+    network_mode: host
+    volumes:
+      - .:/app
+      - /run/udev:/run/udev:ro
+      - cargo-cache:/root/.cargo/registry
+      - target-cache:/app/target
+    environment:
+      - RUST_BACKTRACE=1
+    command: bash scripts/ci/run-networkmanager-tests.sh wifi-integration
 
   shell:
     build:
@@ -52,15 +64,7 @@ services:
       - target-cache:/app/target
     environment:
       - RUST_BACKTRACE=1
-    command: >
-      bash -c "
-        mkdir -p /run/dbus &&
-        dbus-daemon --system --fork &&
-        sleep 1 &&
-        NetworkManager --no-daemon &
-        sleep 3 &&
-        /bin/bash
-      "
+    command: bash scripts/ci/run-networkmanager-tests.sh shell
     stdin_open: true
     tty: true
 

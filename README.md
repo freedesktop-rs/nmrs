@@ -189,6 +189,15 @@ If something is missing that you'd like to see, please file a PR or issue, addin
 
 Contributions are welcome. Please read [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
 
+Environmental tests are opt-in and ignored by a normal `cargo test`, so local
+test runs never probe the host NetworkManager implicitly. Use
+`docker compose run --build --rm test-integration` for isolated settings,
+NetworkManager-routed secrets, native WireGuard activation, and veth-backed
+wired DHCP lifecycles, or
+`test-wifi-integration` with two `mac80211_hwsim` radios for the deterministic
+WPA/DHCP and callback-monitor lifecycle. See the contributing guide for the
+exact commands.
+
 ## Requirements
 
 - **Rust**: 1.90.0+
@@ -218,25 +227,34 @@ Thank you to everyone who has helped build, test, document, and review `nmrs`.
   <tr>
     <td align="center"><a href="https://github.com/cachebag"><img src="https://avatars.githubusercontent.com/u/111914307?v=4" width="100px;" alt="cachebag"/><br /><sub><b>cachebag</b></sub></a></td>
     <td align="center"><a href="https://github.com/stoutes"><img src="https://avatars.githubusercontent.com/u/31317041?v=4" width="100px;" alt="stoutes"/><br /><sub><b>stoutes</b></sub></a></td>
+    <td align="center"><a href="https://github.com/justinjest"><img src="https://avatars.githubusercontent.com/u/97318401?v=4" width="100px;" alt="justinjest"/><br /><sub><b>justinjest</b></sub></a></td>
+    <td align="center"><a href="https://github.com/Dandiggas"><img src="https://avatars.githubusercontent.com/u/78769670?v=4" width="100px;" alt="Dandiggas"/><br /><sub><b>Dandiggas</b></sub></a></td>
+    <td align="center"><a href="https://github.com/Biqydu"><img src="https://avatars.githubusercontent.com/u/165430853?v=4" width="100px;" alt="Biqydu"/><br /><sub><b>Biqydu</b></sub></a></td>
     <td align="center"><a href="https://github.com/pluiee"><img src="https://avatars.githubusercontent.com/u/93393389?v=4" width="100px;" alt="pluiee"/><br /><sub><b>pluiee</b></sub></a></td>
+  </tr>
+  <tr>
     <td align="center"><a href="https://github.com/JonnieCache"><img src="https://avatars.githubusercontent.com/u/211093?v=4" width="100px;" alt="JonnieCache"/><br /><sub><b>JonnieCache</b></sub></a></td>
+    <td align="center"><a href="https://github.com/morehwachege"><img src="https://avatars.githubusercontent.com/u/76877744?v=4" width="100px;" alt="morehwachege"/><br /><sub><b>morehwachege</b></sub></a></td>
     <td align="center"><a href="https://github.com/tristanmsct"><img src="https://avatars.githubusercontent.com/u/69300092?v=4" width="100px;" alt="tristanmsct"/><br /><sub><b>tristanmsct</b></sub></a></td>
     <td align="center"><a href="https://github.com/Rifat-R"><img src="https://avatars.githubusercontent.com/u/81259132?v=4" width="100px;" alt="Rifat-R"/><br /><sub><b>Rifat-R</b></sub></a></td>
-  </tr>
-  <tr>
     <td align="center"><a href="https://github.com/of-the-stars"><img src="https://avatars.githubusercontent.com/u/47869156?v=4" width="100px;" alt="of-the-stars"/><br /><sub><b>of-the-stars</b></sub></a></td>
-    <td align="center"><a href="https://github.com/okhsunrog"><img src="https://avatars.githubusercontent.com/u/42293787?v=4" width="100px;" alt="okhsunrog"/><br /><sub><b>okhsunrog</b></sub></a></td>
-    <td align="center"><a href="https://github.com/ruthwik-01"><img src="https://avatars.githubusercontent.com/u/235033610?v=4" width="100px;" alt="ruthwik-01"/><br /><sub><b>ruthwik-01</b></sub></a></td>
-    <td align="center"><a href="https://github.com/joncorv"><img src="https://avatars.githubusercontent.com/u/151096562?v=4" width="100px;" alt="joncorv"/><br /><sub><b>joncorv</b></sub></a></td>
-    <td align="center"><a href="https://github.com/AK78gz"><img src="https://avatars.githubusercontent.com/u/89071188?v=4" width="100px;" alt="AK78gz"/><br /><sub><b>AK78gz</b></sub></a></td>
-    <td align="center"><a href="https://github.com/pwsandoval"><img src="https://avatars.githubusercontent.com/u/15174704?v=4" width="100px;" alt="pwsandoval"/><br /><sub><b>pwsandoval</b></sub></a></td>
+    <td align="center"><a href="https://github.com/lkramer"><img src="https://avatars.githubusercontent.com/u/58181?v=4" width="100px;" alt="lkramer"/><br /><sub><b>lkramer</b></sub></a></td>
   </tr>
   <tr>
+    <td align="center"><a href="https://github.com/okhsunrog"><img src="https://avatars.githubusercontent.com/u/42293787?v=4" width="100px;" alt="okhsunrog"/><br /><sub><b>okhsunrog</b></sub></a></td>
+    <td align="center"><a href="https://github.com/neon-commits01"><img src="https://avatars.githubusercontent.com/u/235033610?v=4" width="100px;" alt="neon-commits01"/><br /><sub><b>neon-commits01</b></sub></a></td>
+    <td align="center"><a href="https://github.com/jrb0001"><img src="https://avatars.githubusercontent.com/u/2380263?v=4" width="100px;" alt="jrb0001"/><br /><sub><b>jrb0001</b></sub></a></td>
+    <td align="center"><a href="https://github.com/joncorv"><img src="https://avatars.githubusercontent.com/u/151096562?v=4" width="100px;" alt="joncorv"/><br /><sub><b>joncorv</b></sub></a></td>
+    <td align="center"><a href="https://github.com/PineappleJammingg"><img src="https://avatars.githubusercontent.com/u/199402636?v=4" width="100px;" alt="PineappleJammingg"/><br /><sub><b>PineappleJammingg</b></sub></a></td>
+    <td align="center"><a href="https://github.com/AK78gz"><img src="https://avatars.githubusercontent.com/u/89071188?v=4" width="100px;" alt="AK78gz"/><br /><sub><b>AK78gz</b></sub></a></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="https://github.com/pwsandoval"><img src="https://avatars.githubusercontent.com/u/15174704?v=4" width="100px;" alt="pwsandoval"/><br /><sub><b>pwsandoval</b></sub></a></td>
     <td align="center"><a href="https://github.com/ritiek"><img src="https://avatars.githubusercontent.com/u/20314742?v=4" width="100px;" alt="ritiek"/><br /><sub><b>ritiek</b></sub></a></td>
     <td align="center"><a href="https://github.com/shubhsingh5901"><img src="https://avatars.githubusercontent.com/u/110416544?v=4" width="100px;" alt="shubhsingh5901"/><br /><sub><b>shubhsingh5901</b></sub></a></td>
     <td align="center"><a href="https://github.com/cinnamonstic"><img src="https://avatars.githubusercontent.com/u/182801542?v=4" width="100px;" alt="cinnamonstic"/><br /><sub><b>cinnamonstic</b></sub></a></td>
+    <td align="center"><a href="https://github.com/theroguevigilante"><img src="https://avatars.githubusercontent.com/u/206333897?v=4" width="100px;" alt="theroguevigilante"/><br /><sub><b>theroguevigilante</b></sub></a></td>
     <td align="center"><a href="https://github.com/tuned-willow"><img src="https://avatars.githubusercontent.com/u/250158319?v=4" width="100px;" alt="tuned-willow"/><br /><sub><b>tuned-willow</b></sub></a></td>
-    <td align="center"><a href="https://github.com/dandiggas"><img src="https://avatars.githubusercontent.com/u/78769670?v=4" width="100px;" alt="dandiggas"/><br /><sub><b>dandiggas</b></sub></a></td>  
   </tr>
 </table>
 <!-- readme: contributors -end -->

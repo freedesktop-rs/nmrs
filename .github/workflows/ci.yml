@@ -60,7 +60,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-clippy-
       
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
   test:
     name: Unit Tests
@@ -87,11 +87,114 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-test-
 
+      - name: Build release artifact
+        run: cargo build --locked --release --package nmrs
+
       - name: Run unit tests
-        run: cargo test --lib --all-features --workspace
+        run: cargo test --locked --lib --all-features --workspace
 
       - name: Run doc tests
-        run: cargo test --doc --all-features --workspace
+        run: cargo test --locked --doc --all-features --workspace
+
+  integration:
+    name: NetworkManager Integration
+    runs-on: [self-hosted, linux, x64]
+    # Pull requests wait for a maintainer to approve this environment.
+    environment:
+      name: ${{ github.event_name == 'pull_request' && 'self-hosted-pr-integration' || 'self-hosted-integration' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Load virtual WiFi radios
+        run: |
+          set -euo pipefail
+
+          sudo -n modprobe -r mac80211_hwsim || true
+          mapfile -t interfaces_before < <(
+            iw dev | awk '$1 == "Interface" { print $2 }' | sort -u
+          )
+
+          sudo -n modprobe mac80211_hwsim radios=2
+          udevadm settle --timeout=10
+
+          mapfile -t interfaces_after < <(
+            iw dev | awk '$1 == "Interface" { print $2 }' | sort -u
+          )
+          mapfile -t hwsim_interfaces < <(
+            comm -13 \
+              <(printf '%s\n' "${interfaces_before[@]}") \
+              <(printf '%s\n' "${interfaces_after[@]}")
+          )
+          if (( ${#hwsim_interfaces[@]} != 2 )); then
+            echo "Expected the hwsim module to create two interfaces, found ${#hwsim_interfaces[@]}" >&2
+            iw dev >&2 || true
+            exit 1
+          fi
+
+          printf 'NMRS_HOST_HWSIM_INTERFACES=%s\n' "${hwsim_interfaces[*]}" >> "${GITHUB_ENV}"
+
+      - name: Release virtual WiFi radios from host NetworkManager
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+
+          diagnose() {
+            echo "Host hwsim/NetworkManager diagnostics:" >&2
+            iw dev >&2 || true
+            nmcli device status >&2 || true
+            nmcli general permissions >&2 || true
+            journalctl -u NetworkManager --no-pager -n 100 >&2 || true
+          }
+          trap diagnose ERR
+
+          read -r -a hwsim_interfaces <<< "${NMRS_HOST_HWSIM_INTERFACES:?missing hwsim interface list}"
+          if (( ${#hwsim_interfaces[@]} != 2 )); then
+            echo "Expected exactly two recorded hwsim interfaces, found ${#hwsim_interfaces[@]}" >&2
+            exit 1
+          fi
+
+          if [[ ! -S /run/dbus/system_bus_socket ]]; then
+            echo "Host system D-Bus socket is unavailable" >&2
+            exit 1
+          fi
+
+          # The self-hosted runner can load hwsim but is not authorized by
+          # host polkit to control NetworkManager. Use the already-required
+          # privileged test image to make this narrowly scoped D-Bus change.
+          docker compose run --build --rm --no-deps \
+            -e NMRS_HOST_HWSIM_INTERFACES \
+            -v /run/dbus/system_bus_socket:/run/dbus/system_bus_socket:ro \
+            --entrypoint bash \
+            test-integration \
+            -euo pipefail -c '
+              read -r -a hwsim_interfaces <<< "${NMRS_HOST_HWSIM_INTERFACES:?missing hwsim interface list}"
+              if (( ${#hwsim_interfaces[@]} != 2 )); then
+                echo "Expected exactly two hwsim interfaces in the helper, found ${#hwsim_interfaces[@]}" >&2
+                exit 1
+              fi
+
+              for interface in "${hwsim_interfaces[@]}"; do
+                nmcli device set "${interface}" managed no
+              done
+              for interface in "${hwsim_interfaces[@]}"; do
+                managed="$(nmcli --get-values GENERAL.NM-MANAGED device show "${interface}")"
+                if [[ "${managed}" != "no" ]]; then
+                  echo "Host NetworkManager still manages ${interface}: NM-MANAGED=${managed}" >&2
+                  exit 1
+                fi
+              done
+            '
+
+      - name: Run integration tests with NetworkManager and virtual Ethernet
+        run: docker compose run --build --rm test-integration
+
+      - name: Run integration tests with NetworkManager and virtual WiFi
+        run: docker compose run --build --rm test-wifi-integration
+
+      - name: Unload virtual WiFi radios
+        if: always()
+        run: sudo -n modprobe -r mac80211_hwsim || true
 
   semver:
     name: Semantic Versioning Check
@@ -118,16 +221,8 @@ jobs:
         run: cargo semver-checks check-release -p nmrs
 
   build:
-    name: Build (${{ matrix.target }})
+    name: Build (aarch64-unknown-linux-gnu)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            packages: nmrs
-          - target: aarch64-unknown-linux-gnu
-            packages: nmrs
     steps:
       - uses: actions/checkout@v7
       
@@ -139,12 +234,11 @@ jobs:
             libdbus-1-dev
       
       - name: Install cross-compilation tools
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
       
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: aarch64-unknown-linux-gnu
       
       - uses: actions/cache@v6
         with:
@@ -152,16 +246,12 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-build-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-build-aarch64-unknown-linux-gnu-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-build-${{ matrix.target }}-
+            ${{ runner.os }}-build-aarch64-unknown-linux-gnu-
       
-      - name: Build ${{ matrix.packages }}
-        run: |
-          for package in ${{ matrix.packages }}; do
-            echo "Building $package for ${{ matrix.target }}"
-            cargo build --release --target ${{ matrix.target }} --package $package
-          done
+      - name: Build nmrs
+        run: cargo build --locked --release --target aarch64-unknown-linux-gnu --package nmrs
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           PKG_CONFIG_ALLOW_CROSS: 1

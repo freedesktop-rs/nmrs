@@ -74,12 +74,13 @@ impl NetworkSnapshot {
     pub fn wifi_groups(&self) -> Vec<WifiNetworkGroup> {
         let mut grouped: HashMap<(String, String), Vec<AccessPoint>> = HashMap::new();
         for ap in &self.access_points {
-            if !ap.ssid.is_empty() {
-                grouped
-                    .entry((ap.interface.clone(), ap.ssid.clone()))
-                    .or_default()
-                    .push(ap.clone());
+            if ap.is_hidden() {
+                continue;
             }
+            grouped
+                .entry((ap.interface.clone(), ap.ssid.clone()))
+                .or_default()
+                .push(ap.clone());
         }
 
         let mut groups = grouped
@@ -185,6 +186,16 @@ impl NetworkSnapshot {
             connectivity: self.connectivity.clone(),
             airplane_mode: self.airplane_mode,
         }
+    }
+
+    /// Returns individually reported APs whose raw SSID is empty.
+    #[must_use]
+    pub fn hidden_access_points(&self) -> Vec<AccessPoint> {
+        self.access_points
+            .iter()
+            .filter(|access_point| access_point.is_hidden())
+            .cloned()
+            .collect()
     }
 }
 
@@ -417,6 +428,12 @@ mod tests {
         }
     }
 
+    fn hidden_ap(interface: &str, bssid: &str, strength: u8) -> AccessPoint {
+        let mut access_point = ap(interface, "<Hidden Network>", bssid, strength);
+        access_point.ssid_bytes.clear();
+        access_point
+    }
+
     fn saved_wifi(
         index: usize,
         uuid: &str,
@@ -589,6 +606,38 @@ mod tests {
     }
 
     #[test]
+    fn attaches_interface_bound_profile_only_to_matching_group() {
+        let snapshot = snapshot(
+            vec![
+                ap("wlan0", "Cafe", "AA:AA:AA:AA:AA:01", 70),
+                ap("wlan1", "Cafe", "BB:BB:BB:BB:BB:01", 90),
+            ],
+            vec![
+                saved_wifi(10, "wlan1-profile", "Cafe", Some("wlan1"), None),
+                saved_wifi(11, "missing-interface", "Cafe", Some("wlan9"), None),
+            ],
+            Vec::new(),
+            Vec::new(),
+        );
+
+        let groups = snapshot.wifi_groups();
+        let wlan0 = groups
+            .iter()
+            .find(|group| group.interface == "wlan0")
+            .unwrap();
+        let wlan1 = groups
+            .iter()
+            .find(|group| group.interface == "wlan1")
+            .unwrap();
+
+        assert!(!wlan0.known);
+        assert!(wlan0.saved_profiles.is_empty());
+        assert!(wlan1.known);
+        assert_eq!(wlan1.saved_profiles.len(), 1);
+        assert_eq!(wlan1.saved_profiles[0].uuid, "wlan1-profile");
+    }
+
+    #[test]
     fn matches_bssid_pinned_saved_profiles() {
         let snapshot = snapshot(
             vec![
@@ -675,7 +724,7 @@ mod tests {
     fn hidden_networks_not_shown() {
         let snapshot = snapshot(
             vec![
-                ap("wlan0", "", "AA:AA:AA:AA:AA:01", 70),
+                hidden_ap("wlan0", "AA:AA:AA:AA:AA:01", 70),
                 ap("wlan1", "Cafe", "BB:BB:BB:BB:BB:01", 90),
             ],
             Vec::new(),
@@ -684,5 +733,25 @@ mod tests {
         );
         let groups = snapshot.wifi_groups();
         assert_eq!(groups.len(), 1);
+    }
+
+    #[test]
+    fn hidden_networks_available() {
+        let snapshot = snapshot(
+            vec![
+                hidden_ap("wlan0", "AA:AA:AA:AA:AA:01", 70),
+                ap("wlan1", "Cafe", "BB:BB:BB:BB:BB:01", 90),
+            ],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        let hidden_access_points = snapshot.hidden_access_points();
+        let groups = snapshot.wifi_groups();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].ssid, "Cafe");
+        assert_eq!(hidden_access_points.len(), 1);
+        assert!(hidden_access_points[0].is_hidden());
+        assert_eq!(hidden_access_points[0].ssid, "<Hidden Network>");
     }
 }

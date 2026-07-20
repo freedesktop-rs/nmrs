@@ -7,6 +7,8 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+use super::constants::device_type;
+
 /// Trait for device type-specific behavior.
 ///
 /// Implement this trait to add support for a new device type.
@@ -80,6 +82,23 @@ impl DeviceTypeInfo for EthernetDeviceType {
 
     fn display_name(&self) -> &'static str {
         "Ethernet"
+    }
+
+    fn connection_type(&self) -> &'static str {
+        "802-3-ethernet"
+    }
+}
+
+/// Linux virtual Ethernet pair device type implementation.
+struct VethDeviceType;
+
+impl DeviceTypeInfo for VethDeviceType {
+    fn nm_type_code(&self) -> u32 {
+        device_type::VETH
+    }
+
+    fn display_name(&self) -> &'static str {
+        "Veth"
     }
 
     fn connection_type(&self) -> &'static str {
@@ -223,6 +242,7 @@ fn registry() -> &'static HashMap<u32, Box<dyn DeviceTypeInfo>> {
 
         let types: Vec<Box<dyn DeviceTypeInfo>> = vec![
             Box::new(EthernetDeviceType),
+            Box::new(VethDeviceType),
             Box::new(WifiDeviceType),
             Box::new(WifiP2PDeviceType),
             Box::new(LoopbackDeviceType),
@@ -286,101 +306,56 @@ pub fn has_global_enabled_state(code: u32) -> bool {
         .unwrap_or(false)
 }
 
+/// Returns whether a raw NetworkManager device type uses wired Ethernet settings.
+pub fn is_wired(code: u32) -> bool {
+    connection_type_for_code(code) == Some("802-3-ethernet")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn wifi_type_info() {
-        let info = get_device_type_info(2).expect("WiFi should be registered");
-        assert_eq!(info.nm_type_code(), 2);
-        assert_eq!(info.display_name(), "Wi-Fi");
-        assert_eq!(info.connection_type(), "802-11-wireless");
-        assert!(info.supports_scanning());
-        assert!(info.requires_specific_object());
-        assert!(info.has_global_enabled_state());
-    }
+    fn registry_matches_networkmanager_metadata() {
+        let expected = [
+            (1, "Ethernet", "802-3-ethernet", false, false, false, true),
+            (2, "Wi-Fi", "802-11-wireless", true, true, true, false),
+            (11, "VLAN", "vlan", false, false, false, false),
+            (12, "Bond", "bond", false, false, false, false),
+            (13, "Bridge", "bridge", false, false, false, false),
+            (16, "TUN", "tun", false, false, false, false),
+            (20, "Veth", "802-3-ethernet", false, false, false, true),
+            (29, "WireGuard", "wireguard", false, false, false, false),
+            (30, "Wi-Fi P2P", "wifi-p2p", true, false, false, false),
+            (32, "Loopback", "loopback", false, false, false, false),
+        ];
 
-    #[test]
-    fn ethernet_type_info() {
-        let info = get_device_type_info(1).expect("Ethernet should be registered");
-        assert_eq!(info.nm_type_code(), 1);
-        assert_eq!(info.display_name(), "Ethernet");
-        assert_eq!(info.connection_type(), "802-3-ethernet");
-        assert!(!info.supports_scanning());
-        assert!(!info.requires_specific_object());
-    }
-
-    #[test]
-    fn wireguard_type_info() {
-        let info = get_device_type_info(29).expect("WireGuard should be registered");
-        assert_eq!(info.nm_type_code(), 29);
-        assert_eq!(info.display_name(), "WireGuard");
-        assert_eq!(info.connection_type(), "wireguard");
-    }
-
-    #[test]
-    fn loopback_type_info() {
-        let info = get_device_type_info(32).expect("Loopback should be registered");
-        assert_eq!(info.nm_type_code(), 32);
-        assert_eq!(info.display_name(), "Loopback");
-        assert_eq!(info.connection_type(), "loopback");
-        assert!(!info.supports_scanning());
-        assert!(!info.requires_specific_object());
-        assert!(!info.has_global_enabled_state());
-    }
-
-    #[test]
-    fn unknown_device_type() {
-        let info = get_device_type_info(999);
-        assert!(info.is_none());
-    }
-
-    #[test]
-    fn display_name_for_unknown() {
-        let name = display_name_for_code(999);
-        assert_eq!(name, "Other(999)");
-    }
-
-    #[test]
-    fn wifi_supports_scanning() {
-        assert!(supports_scanning(2));
-        assert!(!supports_scanning(1));
-    }
-
-    #[test]
-    fn wifi_requires_specific_object() {
-        assert!(requires_specific_object(2));
-        assert!(!requires_specific_object(1));
-    }
-
-    #[test]
-    fn wifi_has_global_enabled_state() {
-        assert!(has_global_enabled_state(2));
-        assert!(!has_global_enabled_state(1));
-    }
-
-    #[test]
-    fn all_registered_types_have_connection_type() {
-        for code in [1u32, 2, 11, 12, 13, 16, 29, 30, 32] {
-            let conn_type = connection_type_for_code(code);
-            assert!(
-                conn_type.is_some(),
-                "Device type {} should have a connection type",
-                code
-            );
+        assert_eq!(registry().len(), expected.len());
+        for (code, name, connection_type, scanning, specific_object, global_state, wired) in
+            expected
+        {
+            let info = get_device_type_info(code)
+                .unwrap_or_else(|| panic!("device type {code} should be registered"));
+            assert_eq!(info.nm_type_code(), code);
+            assert_eq!(info.display_name(), name);
+            assert_eq!(display_name_for_code(code), name);
+            assert_eq!(info.connection_type(), connection_type);
+            assert_eq!(connection_type_for_code(code), Some(connection_type));
+            assert_eq!(supports_scanning(code), scanning);
+            assert_eq!(requires_specific_object(code), specific_object);
+            assert_eq!(has_global_enabled_state(code), global_state);
+            assert_eq!(is_wired(code), wired);
         }
     }
 
     #[test]
-    fn registry_is_consistent() {
-        let reg = registry();
-        for (code, type_info) in reg.iter() {
-            assert_eq!(
-                *code,
-                type_info.nm_type_code(),
-                "Registry key must match type code"
-            );
-        }
+    fn unknown_code_has_safe_fallbacks() {
+        assert!(get_device_type_info(999).is_none());
+        assert_eq!(display_name_for_code(999), "Other(999)");
+        assert_eq!(connection_type_for_code(999), None);
+        assert!(!supports_scanning(999));
+        assert!(!requires_specific_object(999));
+        assert!(!has_global_enabled_state(999));
+        assert!(!is_wired(999));
     }
 }

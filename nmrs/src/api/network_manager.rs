@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use tokio::sync::{Mutex, watch};
+use tokio::sync::{Mutex, oneshot, watch};
 use zbus::Connection;
 use zvariant::OwnedValue;
 
@@ -12,9 +12,9 @@ use crate::api::models::snapshot::{
     saved_wifi_profiles as filter_saved_wifi_profiles,
 };
 use crate::api::models::{
-    ActiveConnection, AirplaneModeState, Device, MonitorHandle, Network, NetworkInfo,
-    NetworkSnapshot, RadioState, SavedConnection, SavedConnectionBrief, SettingsPatch, WifiDevice,
-    WifiSecurity, WiredDevice,
+    ActiveConnection, AirplaneModeState, ConnectionError, Device, MonitorHandle, Network,
+    NetworkInfo, NetworkSnapshot, RadioState, SavedConnection, SavedConnectionBrief, SettingsPatch,
+    WifiDevice, WifiSecurity, WiredDevice,
 };
 use crate::api::wifi_scope::WifiScope;
 use crate::core::active_connection as active_connections;
@@ -1541,10 +1541,16 @@ impl NetworkManager {
         F: Fn() + Send + 'static,
     {
         let (tx, rx) = watch::channel(());
+        let (ready_tx, ready_rx) = oneshot::channel();
         let conn = self.conn.clone();
         let task = tokio::spawn(async move {
-            network_monitor::monitor_network_changes(&conn, rx, callback).await
+            network_monitor::monitor_network_changes(&conn, rx, callback, ready_tx).await
         });
+
+        ready_rx.await.map_err(|_| {
+            ConnectionError::Stuck("network monitor task ended before becoming ready".into())
+        })??;
+
         Ok(MonitorHandle::new(tx, task))
     }
 
@@ -1602,10 +1608,16 @@ impl NetworkManager {
         F: Fn() + Send + 'static,
     {
         let (tx, rx) = watch::channel(());
+        let (ready_tx, ready_rx) = oneshot::channel();
         let conn = self.conn.clone();
         let task = tokio::spawn(async move {
-            device_monitor::monitor_device_changes(&conn, rx, callback).await
+            device_monitor::monitor_device_changes(&conn, rx, callback, ready_tx).await
         });
+
+        ready_rx.await.map_err(|_| {
+            ConnectionError::Stuck("device monitor task ended before becoming ready".into())
+        })??;
+
         Ok(MonitorHandle::new(tx, task))
     }
 }

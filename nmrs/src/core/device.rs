@@ -19,6 +19,7 @@ use crate::dbus::{
     NMWiredProxy, NMWirelessProxy,
 };
 use crate::types::constants::device_type;
+use crate::types::device_type_registry;
 use crate::util::utils::get_ip_addresses_from_active_connection;
 
 /// Lists all network devices managed by NetworkManager.
@@ -146,7 +147,7 @@ pub(crate) async fn list_devices(conn: &Connection) -> Result<Vec<Device>> {
                 (None, None)
             };
 
-        let speed_mbps = if raw_type == device_type::ETHERNET {
+        let speed_mbps = if device_type_registry::is_wired(raw_type) {
             async {
                 let wired = NMWiredProxy::builder(conn).path(p.clone())?.build().await?;
                 wired.speed().await
@@ -192,7 +193,7 @@ pub(crate) async fn list_wired_device_details(conn: &Connection) -> Result<Vec<W
             .build()
             .await?;
 
-        if d_proxy.device_type().await? != device_type::ETHERNET {
+        if !device_type_registry::is_wired(d_proxy.device_type().await?) {
             continue;
         }
 
@@ -387,8 +388,12 @@ pub(crate) async fn list_bluetooth_devices(conn: &Connection) -> Result<Vec<Blue
 pub(crate) async fn wait_for_wifi_ready(conn: &Connection) -> Result<()> {
     let nm = NMProxy::new(conn).await?;
     let devices = nm.get_devices().await?;
+    let mut pending_wifi_device = None;
+    let mut found_wifi_device = false;
 
-    // Find the Wi-Fi device
+    // Prefer a ready device. An unmanaged radio can appear before a usable one.
+    // A managed radio can temporarily be Unavailable while rfkill is lifted,
+    // so keep it as a wait candidate.
     for dev_path in devices {
         let dev = NMDeviceProxy::builder(conn)
             .path(dev_path.clone())?
@@ -399,9 +404,10 @@ pub(crate) async fn wait_for_wifi_ready(conn: &Connection) -> Result<()> {
             continue;
         }
 
-        debug!("Found Wi-Fi device, waiting for it to become ready");
+        found_wifi_device = true;
 
-        // Check current state first
+        debug!("Found Wi-Fi device, checking whether it is ready");
+
         let current_state = dev.state().await?;
         let state = DeviceState::from(current_state);
 
@@ -410,44 +416,19 @@ pub(crate) async fn wait_for_wifi_ready(conn: &Connection) -> Result<()> {
             return Ok(());
         }
 
-        // Wait for device to become ready using signal-based monitoring
+        if state != DeviceState::Unmanaged && pending_wifi_device.is_none() {
+            pending_wifi_device = Some(dev_path);
+        }
+    }
+
+    if let Some(dev_path) = pending_wifi_device {
+        let dev = NMDeviceProxy::builder(conn).path(dev_path)?.build().await?;
         return wait_for_wifi_device_ready(&dev).await;
     }
 
-    Err(ConnectionError::NoWifiDevice)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::models::BluetoothNetworkRole;
-
-    #[test]
-    fn test_default_bluetooth_address() {
-        // Test that the default address used for devices without hardware address is valid
-        let default_addr = "00:00:00:00:00:00";
-        assert_eq!(default_addr.len(), 17);
-        assert_eq!(default_addr.matches(':').count(), 5);
+    if found_wifi_device {
+        Err(ConnectionError::WifiNotReady)
+    } else {
+        Err(ConnectionError::NoWifiDevice)
     }
-
-    #[test]
-    fn test_bluetooth_device_construction() {
-        let panu = BluetoothNetworkRole::PanU as u32;
-        let device = BluetoothDevice::new(
-            "00:1A:7D:DA:71:13".into(),
-            Some("TestDevice".into()),
-            Some("Test".into()),
-            panu,
-            DeviceState::Activated,
-        );
-
-        assert_eq!(device.bdaddr, "00:1A:7D:DA:71:13");
-        assert_eq!(device.name, Some("TestDevice".into()));
-        assert_eq!(device.alias, Some("Test".into()));
-        assert!(matches!(device.bt_caps, _panu));
-        assert_eq!(device.state, DeviceState::Activated);
-    }
-
-    // Note: Most device listing functions require a real D-Bus connection
-    // and NetworkManager running, so they are better suited for integration tests.
 }

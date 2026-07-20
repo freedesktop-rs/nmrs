@@ -4,6 +4,47 @@ All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
 
+## [3.4.1] - 2026-07-19
+### Added
+
+- Isolated NetworkManager integration contracts now cover saved-profile events,
+  secret-agent registration, wired DHCP activation, and virtual WPA Wi-Fi
+  discovery/authentication/reconnection without touching developer profiles. ([#505](https://github.com/freedesktop-rs/nmrs/pull/505))
+- Expanded unit coverage for exact D-Bus settings payloads, activation races,
+  monitor lifecycle behavior, secret-agent concurrency, saved-profile decoding,
+  validation boundaries, OpenVPN parsing, and certificate storage cleanup. ([#505](https://github.com/freedesktop-rs/nmrs/pull/505))
+
+### Changed
+
+- Network, device, and settings monitors now return only after their initial
+  D-Bus subscriptions are installed, so a mutation immediately after startup
+  cannot race the subscription task. ([#505](https://github.com/freedesktop-rs/nmrs/pull/505))
+- Supplying a non-empty PSK or EAP configuration for an existing Wi-Fi profile
+  now applies the fresh credentials; an empty PSK continues to request the
+  stored secret. ([#505](https://github.com/freedesktop-rs/nmrs/pull/505))
+
+### Fixed
+
+- Preserve complete OpenVPN, VLAN, WireGuard, Bluetooth, Wi-Fi, and access-point
+  settings when constructing or decoding NetworkManager payloads. ([#505](https://github.com/freedesktop-rs/nmrs/pull/505))
+- Preserve saved Wi-Fi profiles when stored-secret activation fails, while
+  removing newly created profiles whose fresh authentication fails. ([#505](https://github.com/freedesktop-rs/nmrs/pull/505))
+- Recheck active-connection state at timeout boundaries and retain typed
+  NetworkManager failure reasons instead of reporting false timeouts. ([#505](https://github.com/freedesktop-rs/nmrs/pull/505))
+- Keep active-connection snapshots usable when NetworkManager removes an
+  enumerated connection object while its properties are being read. ([#505](https://github.com/freedesktop-rs/nmrs/pull/505))
+- Retain the discovering interface on inactive Wi-Fi scan results, matching
+  the documented `Network::device` contract. ([#505](https://github.com/freedesktop-rs/nmrs/pull/505))
+- Wait through NetworkManager's transient `Unavailable` state while a managed
+  Wi-Fi radio recovers from a rfkill transition. ([#505](https://github.com/freedesktop-rs/nmrs/pull/505))
+- Map secret-agent registration conflicts to the documented typed errors and
+  handle concurrent same-key requests, cancellation, closed responders, and
+  bounded-queue backpressure without false cancellation or hangs. ([#505](https://github.com/freedesktop-rs/nmrs/pull/505))
+- Ignore unmanaged interfaces during automatic device selection and recognize
+  NetworkManager veth devices as wired Ethernet for selection and reporting. ([#505](https://github.com/freedesktop-rs/nmrs/pull/505))
+- Harden IPv6, WireGuard, OpenVPN, rfkill, and certificate-storage validation,
+  decoding, error reporting, and temporary-file cleanup. ([#505](https://github.com/freedesktop-rs/nmrs/pull/505))
+
 ## [3.4.0] - 2026-07-08
 ### Added 
 - Expose existing secrets on SecretRequest for re-auth prefill ([#460](https://github.com/freedesktop-rs/nmrs/pull/460))
@@ -439,7 +480,8 @@ present)` constructor; `RadioState::new` keeps existing behavior and defaults
 [3.2.2]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v1.2.0...nmrs-v3.2.2
 [3.3.0]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v1.2.0...nmrs-v3.3.0
 [3.4.0]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v1.2.0...nmrs-v3.4.0
-[Unreleased]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.4.0...HEAD
+[3.4.1]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v1.2.0...nmrs-v3.4.1
+[Unreleased]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.4.1...HEAD
 [1.1.0]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v1.0.1...nmrs-v1.1.0
 [1.0.1]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v1.0.0...nmrs-v1.0.1
 [1.0.0]: https://github.com/freedesktop-rs/nmrs/compare/v0.5.0-beta...nmrs-v1.0.0

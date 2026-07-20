@@ -53,7 +53,12 @@ No. Concurrent connection operations (calling `connect()` from multiple tasks) a
 
 ### How do I handle saved connections?
 
-When nmrs connects to a network, NetworkManager saves the profile. On subsequent connections, the saved profile is reused automatically. You don't need to provide credentials again. Use `forget()` to delete a saved profile.
+When nmrs connects to a network, NetworkManager saves the profile. To reconnect
+with its stored settings, pass `WifiSecurity::Open` or an empty
+`WifiSecurity::WpaPsk` password. A non-empty PSK or an EAP configuration is an
+explicit fresh-credential request, so nmrs builds a fresh profile instead of
+ignoring it. If activation with a stored PSK fails, nmrs returns the error but
+keeps the saved profile. Use `forget()` to delete a saved profile intentionally.
 
 ## VPN
 

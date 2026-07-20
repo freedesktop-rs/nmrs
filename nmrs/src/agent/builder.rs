@@ -1,6 +1,7 @@
 //! Secret agent builder, handle, and lifecycle management.
 
 use std::collections::HashMap;
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 
 use futures::channel::mpsc;
@@ -16,6 +17,68 @@ use super::request::{CancelReason, SecretAgentCapabilities, SecretRequest, Secre
 const DEFAULT_IDENTIFIER: &str = "com.system76.CosmicApplets.nmrs.secret_agent";
 const DEFAULT_OBJECT_PATH: &str = "/org/freedesktop/NetworkManager/SecretAgent";
 const DEFAULT_QUEUE_DEPTH: usize = 32;
+const AGENT_MANAGER_ERROR_PREFIX: &str = "org.freedesktop.NetworkManager.AgentManager.";
+
+#[derive(Debug, PartialEq, Eq)]
+enum AgentManagerFailure {
+    AlreadyRegistered,
+    Registration,
+    NotRegistered,
+    Other,
+}
+
+fn classify_agent_manager_failure(name: &str, detail: Option<&str>) -> AgentManagerFailure {
+    if !name.starts_with(AGENT_MANAGER_ERROR_PREFIX) {
+        return AgentManagerFailure::Other;
+    }
+
+    match name.strip_prefix(AGENT_MANAGER_ERROR_PREFIX) {
+        Some("PermissionDenied")
+            if detail.is_some_and(|detail| {
+                detail.to_ascii_lowercase().contains("already registered")
+            }) =>
+        {
+            AgentManagerFailure::AlreadyRegistered
+        }
+        Some("NotRegistered") => AgentManagerFailure::NotRegistered,
+        _ => AgentManagerFailure::Registration,
+    }
+}
+
+fn classify_zbus_agent_manager_failure(error: &zbus::Error) -> AgentManagerFailure {
+    match error {
+        zbus::Error::MethodError(name, detail, _) => {
+            classify_agent_manager_failure(name.as_str(), detail.as_deref())
+        }
+        _ => AgentManagerFailure::Other,
+    }
+}
+
+fn registration_error(error: zbus::Error, operation: &str) -> ConnectionError {
+    match classify_zbus_agent_manager_failure(&error) {
+        AgentManagerFailure::AlreadyRegistered => ConnectionError::AgentAlreadyRegistered,
+        AgentManagerFailure::Registration | AgentManagerFailure::NotRegistered => {
+            ConnectionError::AgentRegistration {
+                context: format!("{operation}: {error}"),
+            }
+        }
+        AgentManagerFailure::Other => ConnectionError::DbusOperation {
+            context: operation.into(),
+            source: error,
+        },
+    }
+}
+
+fn unregistration_error(error: zbus::Error) -> ConnectionError {
+    if classify_zbus_agent_manager_failure(&error) == AgentManagerFailure::NotRegistered {
+        ConnectionError::AgentNotRegistered
+    } else {
+        ConnectionError::DbusOperation {
+            context: "unregistering secret agent".into(),
+            source: error,
+        }
+    }
+}
 
 /// Entry point for creating a NetworkManager secret agent.
 ///
@@ -151,6 +214,8 @@ impl SecretAgentBuilder {
             cancel_tx,
             store_tx,
             pending: Arc::new(Mutex::new(HashMap::new())),
+            next_request_id: AtomicU64::new(1),
+            response_timeout: crate::types::constants::timeouts::secret_agent_response_timeout(),
         };
 
         let conn = Connection::system()
@@ -184,9 +249,8 @@ impl SecretAgentBuilder {
         agent_proxy
             .register_with_capabilities(&self.identifier, self.capabilities.bits())
             .await
-            .map_err(|e| ConnectionError::DbusOperation {
-                context: "registering secret agent with NetworkManager".into(),
-                source: e,
+            .map_err(|error| {
+                registration_error(error, "registering secret agent with NetworkManager")
             })?;
 
         debug!(
@@ -237,9 +301,9 @@ impl SecretAgentHandle {
     /// Re-registers the agent with NetworkManager.
     ///
     /// Call this after detecting that NetworkManager restarted (e.g. its
-    /// D-Bus name owner changed). The call is idempotent while the bus
-    /// connection is healthy. The same long-lived handle can be kept for the
-    /// process lifetime and re-registered whenever NetworkManager comes back.
+    /// D-Bus name owner changed). Calling it while the agent is still registered
+    /// returns [`ConnectionError::AgentAlreadyRegistered`]. The same long-lived
+    /// handle can be kept and re-registered whenever NetworkManager comes back.
     ///
     /// # Errors
     ///
@@ -254,9 +318,8 @@ impl SecretAgentHandle {
         proxy
             .register_with_capabilities(&self.identifier, self.capabilities.bits())
             .await
-            .map_err(|e| ConnectionError::DbusOperation {
-                context: "re-registering secret agent with NetworkManager".into(),
-                source: e,
+            .map_err(|error| {
+                registration_error(error, "re-registering secret agent with NetworkManager")
             })?;
         debug!("Re-registered secret agent '{}'", self.identifier);
         Ok(())
@@ -277,13 +340,7 @@ impl SecretAgentHandle {
                 source: e,
             }
         })?;
-        proxy
-            .unregister()
-            .await
-            .map_err(|e| ConnectionError::DbusOperation {
-                context: "unregistering secret agent".into(),
-                source: e,
-            })?;
+        proxy.unregister().await.map_err(unregistration_error)?;
         debug!("Unregistered secret agent '{}'", self.identifier);
         Ok(())
     }
@@ -321,16 +378,61 @@ mod tests {
     use super::*;
 
     #[test]
+    fn agent_manager_errors_map_to_public_lifecycle_failures() {
+        let cases = [
+            (
+                "org.freedesktop.NetworkManager.AgentManager.PermissionDenied",
+                Some("An agent with this ID is already registered for this user."),
+                AgentManagerFailure::AlreadyRegistered,
+            ),
+            (
+                "org.freedesktop.NetworkManager.AgentManager.PermissionDenied",
+                Some("Not authorized"),
+                AgentManagerFailure::Registration,
+            ),
+            (
+                "org.freedesktop.NetworkManager.AgentManager.InvalidIdentifier",
+                Some("Identifier contains invalid character ':'"),
+                AgentManagerFailure::Registration,
+            ),
+            (
+                "org.freedesktop.NetworkManager.AgentManager.NotRegistered",
+                None,
+                AgentManagerFailure::NotRegistered,
+            ),
+            (
+                "org.freedesktop.DBus.Error.NoReply",
+                Some("timed out"),
+                AgentManagerFailure::Other,
+            ),
+        ];
+
+        for (name, detail, expected) in cases {
+            assert_eq!(classify_agent_manager_failure(name, detail), expected);
+        }
+    }
+
+    #[test]
     fn defaults_match_networkmanager_secret_agent_contract() {
         let builder = SecretAgentBuilder::default();
 
-        assert_eq!(
-            builder.object_path,
-            "/org/freedesktop/NetworkManager/SecretAgent"
-        );
-        assert_eq!(
-            builder.identifier,
-            "com.system76.CosmicApplets.nmrs.secret_agent"
-        );
+        assert_eq!(builder.object_path, DEFAULT_OBJECT_PATH);
+        assert_eq!(builder.identifier, DEFAULT_IDENTIFIER);
+        assert_eq!(builder.capabilities, SecretAgentCapabilities::VPN_HINTS);
+        assert_eq!(builder.queue_depth, DEFAULT_QUEUE_DEPTH);
+    }
+
+    #[test]
+    fn builder_methods_replace_every_registration_option() {
+        let builder = SecretAgent::builder()
+            .with_identifier("org.example.nmrs.agent")
+            .with_capabilities(SecretAgentCapabilities::empty())
+            .with_object_path("/org/example/nmrs/Agent")
+            .with_queue_depth(7);
+
+        assert_eq!(builder.identifier, "org.example.nmrs.agent");
+        assert_eq!(builder.capabilities, SecretAgentCapabilities::empty());
+        assert_eq!(builder.object_path, "/org/example/nmrs/Agent");
+        assert_eq!(builder.queue_depth, 7);
     }
 }
