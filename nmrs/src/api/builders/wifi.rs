@@ -279,7 +279,7 @@ mod tests {
             phase2: Phase2::Mschapv2,
             private_key_path: Some("file:///etc/ssl/private/client.key".into()),
             private_key_blob: None,
-            private_key_password: Some("password".into()),
+            private_key_password: Some(Passphrase::new("password".to_string())),
             client_cert_path: Some("file:///etc/ssl/certs/client.crt".into()),
             client_cert_blob: None,
         };
@@ -330,7 +330,7 @@ mod tests {
             phase2: Phase2::Mschapv2,
             private_key_path: None,
             private_key_blob: Some(b"private_key_blob".into()),
-            private_key_password: Some("password".into()),
+            private_key_password: Some(Passphrase::new("password".to_string())),
             client_cert_path: None,
             client_cert_blob: Some(b"client_cert_blob".into()),
         };

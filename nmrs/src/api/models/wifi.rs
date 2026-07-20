@@ -248,7 +248,7 @@ pub struct EapOptions {
     /// TLS: Private key of the client certificate encoded as PEM or PKCS#12, mutually exclusive with `private_key_path`
     pub private_key_blob: Option<Vec<u8>>,
     /// TLS: Password for the private key file
-    pub private_key_password: Option<String>,
+    pub private_key_password: Option<Passphrase>,
     /// TLS: Path to the client certificate file (file:// URL), mutually exclusive with `client_cert_blob`
     pub client_cert_path: Option<String>,
     /// TLS: Client certificate encoded as DER or PKCS#12, mutually exclusive with `client_cert_path`
@@ -304,7 +304,7 @@ impl EapOptions {
     /// use nmrs::{EapOptions, EapMethod};
     ///
     /// let opts = EapOptions::new_tls_path("user@example.com", "file:///etc/ssl/private/client.key", "file:///etc/ssl/certs/client.crt")
-    ///     .with_private_key_password("password")
+    ///     .with_private_key_password("password".to_string())
     ///     .with_ca_cert_path("file:///etc/ssl/certs/ca.pem");
     /// ```
     pub fn new_tls_path(
@@ -333,7 +333,7 @@ impl EapOptions {
     /// use nmrs::{EapOptions, EapMethod};
     ///
     /// let opts = EapOptions::new_tls_blob("user@example.com", vec![], vec![])
-    ///     .with_private_key_password("password")
+    ///     .with_private_key_password("password".to_string())
     ///     .with_ca_cert_blob(vec![]);
     /// ```
     pub fn new_tls_blob(
@@ -432,7 +432,7 @@ impl EapOptions {
 
     /// Sets the password for the private key file.
     #[must_use]
-    pub fn with_private_key_password(mut self, password: impl Into<String>) -> Self {
+    pub fn with_private_key_password(mut self, password: impl Into<Passphrase>) -> Self {
         self.private_key_password = Some(password.into());
         self
     }
@@ -486,7 +486,7 @@ impl EapOptions {
 ///     .identity("student@university.edu")
 ///     .method(EapMethod::Tls)
 ///     .private_key_path("file:///etc/ssl/private/student.key")
-///     .private_key_password("password")
+///     .private_key_password("password".to_string())
 ///     .client_cert_path("file:///etc/ssl/certs/student.crt")
 ///     .ca_cert_path("file:///etc/ssl/certs/university-ca.pem")
 ///     .build()
@@ -505,7 +505,7 @@ pub struct EapOptionsBuilder {
     phase2: Option<Phase2>,
     private_key_path: Option<String>,
     private_key_blob: Option<Vec<u8>>,
-    private_key_password: Option<String>,
+    private_key_password: Option<Passphrase>,
     client_cert_path: Option<String>,
     client_cert_blob: Option<Vec<u8>>,
 }
@@ -712,10 +712,10 @@ impl EapOptionsBuilder {
     /// use nmrs::EapOptions;
     ///
     /// let builder = EapOptions::builder()
-    ///     .private_key_password("password");
+    ///     .private_key_password("password".to_string());
     /// ```
     #[must_use]
-    pub fn private_key_password(mut self, password: impl Into<String>) -> Self {
+    pub fn private_key_password(mut self, password: impl Into<Passphrase>) -> Self {
         self.private_key_password = Some(password.into());
         self
     }

@@ -235,7 +235,7 @@ impl WifiConnectionBuilder {
                 }
 
                 if let Some(password) = opts.private_key_password {
-                    e1x.insert("private-key-password", Value::from(password));
+                    e1x.insert("private-key-password", Value::from(password.reveal()));
                 }
 
                 if let Some(cert) =

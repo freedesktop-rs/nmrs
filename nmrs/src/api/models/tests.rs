@@ -227,7 +227,7 @@ fn wifi_security_eap_192bit() {
             phase2: Phase2::Mschapv2,
             private_key_path: Some("file:///etc/ssl/private/client.key".into()),
             private_key_blob: None,
-            private_key_password: Some("password".into()),
+            private_key_password: Some(Passphrase::new("password".to_string())),
             client_cert_path: Some("file:///etc/ssl/certs/client.crt".into()),
             client_cert_blob: None,
         },
@@ -1076,7 +1076,7 @@ fn test_eap_options_builder_tls() {
         .method(EapMethod::Tls)
         .ca_cert_path("file:///etc/ssl/certs/ca.pem")
         .private_key_path("file:///etc/ssl/private/client.key")
-        .private_key_password("password")
+        .private_key_password("password".to_string())
         .client_cert_path("file:///etc/ssl/certs/client.pem")
         .build()
         .unwrap();
@@ -1090,7 +1090,10 @@ fn test_eap_options_builder_tls() {
         opts.private_key_path,
         Some("file:///etc/ssl/private/client.key".into())
     );
-    assert_eq!(opts.private_key_password, Some("password".into()));
+    assert_eq!(
+        opts.private_key_password,
+        Some(Passphrase::new("password".to_string()))
+    );
     assert_eq!(
         opts.client_cert_path,
         Some("file:///etc/ssl/certs/client.pem".into())
@@ -1137,7 +1140,7 @@ fn test_eap_options_builder_ca_cert_blob_overrides_path() {
         .ca_cert_path("file:///etc/ssl/certs/ca.pem")
         .ca_cert_blob(vec![1])
         .private_key_path("file:///etc/ssl/private/client.key")
-        .private_key_password("password")
+        .private_key_password("password".to_string())
         .client_cert_path("file:///etc/ssl/certs/client.pem")
         .build()
         .unwrap();
@@ -1155,7 +1158,7 @@ fn test_eap_options_builder_path_blob_private_key() {
         .ca_cert_path("file:///etc/ssl/certs/ca.pem")
         .private_key_path("file:///etc/ssl/private/client.key")
         .private_key_blob(vec![1])
-        .private_key_password("password")
+        .private_key_password("password".to_string())
         .client_cert_path("file:///etc/ssl/certs/client.pem")
         .build()
         .unwrap();
@@ -1172,7 +1175,7 @@ fn test_eap_options_builder_path_blob_client_cert() {
         .method(EapMethod::Tls)
         .ca_cert_path("file:///etc/ssl/certs/ca.pem")
         .private_key_path("file:///etc/ssl/private/client.key")
-        .private_key_password("password")
+        .private_key_password("password".to_string())
         .client_cert_path("file:///etc/ssl/certs/client.pem")
         .client_cert_blob(vec![1])
         .build()
