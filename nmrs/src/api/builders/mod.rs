@@ -91,7 +91,7 @@
 //! ).with_persistent_keepalive(25);
 //!
 //! let settings = WireGuardBuilder::new("MyVPN")
-//!     .private_key("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=")
+//!     .private_key("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=".to_string())
 //!     .address("10.0.0.2/24")
 //!     .add_peer(peer)
 //!     .dns(vec!["1.1.1.1".into()])

@@ -320,7 +320,7 @@ async fn networkmanager_profile_crud_and_settings_events() {
     let uuid_string = uuid.to_string();
     let outcome = AssertUnwindSafe(async {
         let settings = WireGuardBuilder::new(&id)
-            .private_key("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=")
+            .private_key("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=".to_string())
             .address("10.203.0.2/24")
             .add_peer(WireGuardPeer::new(
                 "HIgo9xNzJMWLKAShlKl6/bUT1VI9Q0SDBXGtLXkPFXc=",
@@ -625,7 +625,7 @@ async fn networkmanager_secret_agent_registration_lifecycle() {
         let profile_uuid_value = Uuid::parse_str(&profile_uuid)
             .expect("the generated integration profile UUID must parse");
         let mut settings = WireGuardBuilder::new(&profile_id)
-            .private_key(private_key)
+            .private_key(private_key.to_string())
             .address("10.207.0.2/24")
             .add_peer(WireGuardPeer::new(
                 "HIgo9xNzJMWLKAShlKl6/bUT1VI9Q0SDBXGtLXkPFXc=",

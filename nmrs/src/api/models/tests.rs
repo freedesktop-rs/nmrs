@@ -655,7 +655,7 @@ fn assert_wireguard_peer(
     public_key: &str,
     gateway: &str,
     allowed_ips: &[&str],
-    preshared_key: Option<&str>,
+    preshared_key: Option<Passphrase>,
     persistent_keepalive: Option<u32>,
 ) {
     assert_eq!(peer.public_key, public_key);
@@ -667,7 +667,7 @@ fn assert_wireguard_peer(
             .map(|address| (*address).to_string())
             .collect::<Vec<_>>()
     );
-    assert_eq!(peer.preshared_key.as_deref(), preshared_key);
+    assert_eq!(peer.preshared_key, preshared_key);
     assert_eq!(peer.persistent_keepalive, persistent_keepalive);
 }
 
@@ -683,7 +683,7 @@ fn test_vpn_credentials_builder_basic() {
         .name("TestVPN")
         .wireguard()
         .gateway("vpn.example.com:51820")
-        .private_key("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=")
+        .private_key("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=".to_string())
         .address("10.0.0.2/24")
         .add_peer(peer)
         .build()
@@ -694,7 +694,7 @@ fn test_vpn_credentials_builder_basic() {
     assert_eq!(creds.gateway, "vpn.example.com:51820");
     assert_eq!(
         creds.private_key,
-        "YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM="
+        Passphrase::new("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=".to_string())
     );
     assert_eq!(creds.address, "10.0.0.2/24");
     assert_eq!(creds.peers.len(), 1);
@@ -721,7 +721,7 @@ fn test_wireguard_config_basic() {
     let config = WireGuardConfig::new(
         "TestVPN",
         "vpn.example.com:51820",
-        "YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=",
+        "YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=".to_string(),
         "10.0.0.2/24",
         vec![peer],
     );
@@ -730,7 +730,7 @@ fn test_wireguard_config_basic() {
     assert_eq!(config.gateway, "vpn.example.com:51820");
     assert_eq!(
         config.private_key,
-        "YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM="
+        Passphrase::new("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=".to_string())
     );
     assert_eq!(config.address, "10.0.0.2/24");
     assert_eq!(config.peers.len(), 1);
@@ -752,7 +752,7 @@ fn test_wireguard_config_implements_vpn_config() {
     let config = WireGuardConfig::new(
         "TestVPN",
         "vpn.example.com:51820",
-        "private_key",
+        "private_key".to_string(),
         "10.0.0.2/24",
         vec![WireGuardPeer::new(
             "public_key",
@@ -782,7 +782,7 @@ fn test_wireguard_config_roundtrips_through_vpn_credentials() {
     let config = WireGuardConfig::new(
         "TestVPN",
         "vpn.example.com:51820",
-        "private_key",
+        "private_key".to_string(),
         "10.0.0.2/24",
         vec![
             WireGuardPeer::new(
@@ -790,7 +790,7 @@ fn test_wireguard_config_roundtrips_through_vpn_credentials() {
                 "vpn.example.com:51820",
                 vec!["0.0.0.0/0".into(), "10.0.0.0/8".into()],
             )
-            .with_preshared_key("preshared_key")
+            .with_preshared_key("preshared_key".to_string())
             .with_persistent_keepalive(25),
         ],
     )
@@ -811,7 +811,7 @@ fn test_wireguard_config_roundtrips_through_vpn_credentials() {
         "public_key",
         "vpn.example.com:51820",
         &["0.0.0.0/0", "10.0.0.0/8"],
-        Some("preshared_key"),
+        Some(Passphrase::new("preshared_key".to_string())),
         Some(25),
     );
     assert_eq!(roundtrip.dns, config.dns);
@@ -832,7 +832,7 @@ fn test_vpn_credentials_builder_with_optionals() {
         .name("TestVPN")
         .wireguard()
         .gateway("vpn.example.com:51820")
-        .private_key("private_key")
+        .private_key(Passphrase::new("private_key".to_string()))
         .address("10.0.0.2/24")
         .add_peer(peer)
         .with_dns(vec!["1.1.1.1".into(), "8.8.8.8".into()])
@@ -859,13 +859,13 @@ fn test_vpn_credentials_builder_multiple_peers() {
         "vpn2.example.com:51820",
         vec!["192.168.0.0/24".into()],
     )
-    .with_preshared_key("peer2-psk");
+    .with_preshared_key("peer2-psk".to_string());
 
     let creds = VpnCredentials::builder()
         .name("MultiPeerVPN")
         .wireguard()
         .gateway("vpn.example.com:51820")
-        .private_key("private_key")
+        .private_key(Passphrase::new("private_key".to_string()))
         .address("10.0.0.2/24")
         .add_peer(peer1)
         .add_peer(peer2)
@@ -886,7 +886,7 @@ fn test_vpn_credentials_builder_multiple_peers() {
         "key2",
         "vpn2.example.com:51820",
         &["192.168.0.0/24"],
-        Some("peer2-psk"),
+        Some(Passphrase::new("peer2-psk".to_string())),
         None,
     );
 }
@@ -897,14 +897,14 @@ fn test_vpn_credentials_builder_peers_method() {
         WireGuardPeer::new("key1", "vpn1.example.com:51820", vec!["0.0.0.0/0".into()])
             .with_persistent_keepalive(20),
         WireGuardPeer::new("key2", "vpn2.example.com:51821", vec!["::/0".into()])
-            .with_preshared_key("key2-psk"),
+            .with_preshared_key("key2-psk".to_string()),
     ];
 
     let creds = VpnCredentials::builder()
         .name("TestVPN")
         .wireguard()
         .gateway("vpn.example.com:51820")
-        .private_key("private_key")
+        .private_key(Passphrase::new("private_key".to_string()))
         .address("10.0.0.2/24")
         .peers(peers)
         .build()
@@ -924,7 +924,7 @@ fn test_vpn_credentials_builder_peers_method() {
         "key2",
         "vpn2.example.com:51821",
         &["::/0"],
-        Some("key2-psk"),
+        Some(Passphrase::new("key2-psk".to_string())),
         None,
     );
 }
@@ -936,7 +936,7 @@ fn test_vpn_credentials_builder_missing_name() {
     let err = VpnCredentials::builder()
         .wireguard()
         .gateway("vpn.example.com:51820")
-        .private_key("private_key")
+        .private_key(Passphrase::new("private_key".to_string()))
         .address("10.0.0.2/24")
         .add_peer(peer)
         .build()
@@ -955,7 +955,7 @@ fn test_vpn_credentials_builder_missing_vpn_type() {
     let err = VpnCredentials::builder()
         .name("TestVPN")
         .gateway("vpn.example.com:51820")
-        .private_key("private_key")
+        .private_key(Passphrase::new("private_key".to_string()))
         .address("10.0.0.2/24")
         .add_peer(peer)
         .build()
@@ -973,7 +973,7 @@ fn test_vpn_credentials_builder_missing_peers() {
         .name("TestVPN")
         .wireguard()
         .gateway("vpn.example.com:51820")
-        .private_key("private_key")
+        .private_key("private_key".to_string())
         .address("10.0.0.2/24")
         .build()
         .unwrap_err();
@@ -1275,7 +1275,7 @@ fn test_vpn_credentials_builder_equivalence_to_new() {
         VpnKind::WireGuard,
         "TestVPN",
         "vpn.example.com:51820",
-        "private_key",
+        "private_key".to_string(),
         "10.0.0.2/24",
         vec![peer.clone()],
     );
@@ -1284,7 +1284,7 @@ fn test_vpn_credentials_builder_equivalence_to_new() {
         .name("TestVPN")
         .wireguard()
         .gateway("vpn.example.com:51820")
-        .private_key("private_key")
+        .private_key(Passphrase::new("private_key".to_string()))
         .address("10.0.0.2/24")
         .add_peer(peer)
         .build()

@@ -341,7 +341,7 @@ fn validate_wireguard_peer(peer: &WireGuardPeer) -> Result<(), ConnectionError> 
 
     // Validate preshared key if provided
     if let Some(ref psk) = peer.preshared_key {
-        validate_wireguard_key(psk, "Peer preshared key")?;
+        validate_wireguard_key(psk.reveal_ref(), "Peer preshared key")?;
     }
 
     // Validate persistent keepalive if provided
@@ -500,7 +500,7 @@ pub fn validate_vpn_credentials(creds: &VpnCredentials) -> Result<(), Connection
     validate_wireguard_gateway(&creds.gateway, "VPN")?;
 
     // Validate private key
-    validate_wireguard_key(&creds.private_key, "Private key")?;
+    validate_wireguard_key(creds.private_key.reveal_ref(), "Private key")?;
 
     // Validate address (must be CIDR notation)
     validate_cidr(&creds.address)?;
@@ -820,7 +820,7 @@ pub fn validate_bssid(bssid: &str) -> Result<(), ConnectionError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{EapMethod, EapOptions, Phase2, Passphrase, VpnKind, VpnRoute};
+    use crate::{EapMethod, EapOptions, Passphrase, Phase2, VpnKind, VpnRoute};
 
     macro_rules! assert_error_message {
         ($result:expr, $variant:ident, $expected:expr) => {
@@ -842,7 +842,7 @@ mod tests {
             VpnKind::WireGuard,
             "WireGuard",
             "vpn.example.com:51820",
-            VALID_WIREGUARD_KEY,
+            VALID_WIREGUARD_KEY.to_string(),
             "10.0.0.2/24",
             vec![WireGuardPeer::new(
                 VALID_WIREGUARD_KEY,
@@ -1481,14 +1481,14 @@ mod tests {
     #[test]
     fn vpn_credentials_validate_private_key_address_and_peer_presence() {
         let mut credentials = base_vpn_credentials();
-        credentials.private_key = "short".into();
+        credentials.private_key = Passphrase::new("short".to_string());
         assert_error_message!(
             validate_vpn_credentials(&credentials),
             InvalidPrivateKey,
             "Private key must be 44 characters (base64 encoded), got 5"
         );
 
-        credentials.private_key = VALID_WIREGUARD_KEY.into();
+        credentials.private_key = Passphrase::new(VALID_WIREGUARD_KEY.to_string());
         credentials.address = "10.0.0.2".into();
         assert_error_message!(
             validate_vpn_credentials(&credentials),

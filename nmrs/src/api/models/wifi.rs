@@ -921,6 +921,15 @@ impl Passphrase {
     pub fn reveal(mut self) -> String {
         std::mem::take(&mut self.0)
     }
+
+    /// Returns a borrowed reference to the inner [`String`].
+    ///
+    /// # Security
+    /// The returned reference is **not** protected by zeroization or from logged and should not be
+    /// cloned.
+    pub fn reveal_ref(&self) -> &str {
+        &self.0
+    }
 }
 
 impl Debug for Passphrase {

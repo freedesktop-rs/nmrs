@@ -49,7 +49,7 @@
 //! let config = WireGuardConfig::new(
 //!     "MyVPN",
 //!     "vpn.example.com:51820",
-//!     "your_private_key",
+//!     "your_private_key".to_string(),
 //!     "10.0.0.2/24",
 //!     vec![peer],
 //! ).with_dns(vec!["1.1.1.1".into(), "8.8.8.8".into()]);

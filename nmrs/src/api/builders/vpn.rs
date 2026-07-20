@@ -27,7 +27,7 @@
 //! ).with_persistent_keepalive(25);
 //!
 //! let settings = WireGuardBuilder::new("MyVPN")
-//!     .private_key("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=")
+//!     .private_key("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=".to_string())
 //!     .address("10.0.0.2/24")
 //!     .add_peer(peer)
 //!     .dns(vec!["1.1.1.1".into()])
@@ -53,7 +53,7 @@
 //!     VpnKind::WireGuard,
 //!     "MyVPN",
 //!     "vpn.example.com:51820",
-//!     "YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=",
+//!     "YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=".to_string(),
 //!     "10.0.0.2/24",
 //!     vec![peer],
 //! ).with_dns(vec!["1.1.1.1".into()]);
@@ -94,7 +94,7 @@ pub fn build_wireguard_connection(
     opts: &ConnectionOptions,
 ) -> Result<HashMap<&'static str, HashMap<&'static str, Value<'static>>>, ConnectionError> {
     let mut builder = WireGuardBuilder::new(&creds.name)
-        .private_key(&creds.private_key)
+        .private_key(creds.private_key.clone())
         .address(&creds.address)
         .add_peers(creds.peers.iter().cloned())
         .options(opts);
@@ -408,7 +408,7 @@ mod tests {
             VpnKind::WireGuard,
             "TestVPN",
             "vpn.example.com:51820",
-            "YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=",
+            "YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=".to_string(),
             "10.0.0.2/24",
             vec![peer],
         )
@@ -530,7 +530,7 @@ mod tests {
             "peer2.example.com:51821",
             vec!["192.168.0.0/16".into()],
         )
-        .with_preshared_key("PSKABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklm=");
+        .with_preshared_key("PSKABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklm=".to_string());
 
         creds.peers.push(extra_peer);
         let opts = create_test_options();
@@ -724,7 +724,9 @@ mod tests {
     #[test]
     fn peer_with_preshared_key() {
         let mut creds = create_test_credentials();
-        creds.peers[0].preshared_key = Some("PSKABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklm=".into());
+        creds.peers[0].preshared_key = Some(Passphrase::new(
+            "PSKABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklm=".to_string(),
+        ));
         let opts = create_test_options();
 
         let settings = build_wireguard_connection(&creds, &opts).unwrap();
