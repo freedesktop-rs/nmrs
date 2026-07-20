@@ -922,7 +922,8 @@ impl Passphrase {
         std::mem::take(&mut self.0)
     }
 
-    /// Returns a borrowed reference to the inner [`String`].
+    /// Returns a borrowed reference to the inner [`String`]. See [`Passphrase::reveal`] for moving
+    /// the inner value.
     ///
     /// # Security
     /// The returned reference is **not** protected by zeroization or from logged and should not be
