@@ -709,7 +709,7 @@ pub enum OpenVpnProxy {
         server: String,
         port: u16,
         username: Option<String>,
-        password: Option<String>,
+        password: Option<Passphrase>,
         retry: bool,
     },
     /// SOCKS proxy.
