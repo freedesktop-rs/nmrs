@@ -107,12 +107,38 @@ To follow and/or discuss the development of nmrs, you can join the [public Disco
 
 # Some cool projects using nmrs
 
-- [cosmic-settings](https://github.com/pop-os/cosmic-settings) by [@pop-os](https://github.com/pop-os)
-- [cosmic-applets](https://github.com/pop-os/cosmic-applets) by [@pop-os](https://github.com/pop-os)
-- [nmrs-tui](https://github.com/y2w8/nmrs-tui) by [@y2w8](https://github.com/y2w8)
-- [gaypanel](https://codeberg.org/pastthepixels/gaypanel) by [@pastthepixels](https://codeberg.org/pastthepixels)
-- [nmrs-gui](https://github.com/freedesktop-rs/nmrs-gui) by [@freedesktop-rs](https://github.com/freedesktop-rs)
-- [android-auto](https://github.com/uglyoldbob/android-auto) by [uglyoldbob](https://github.com/uglyoldbob)
+<table>
+  <tr>
+    <td align="center">
+      <a href="https://github.com/pop-os/cosmic-settings"><img src="https://opengraph.githubassets.com/1/pop-os/cosmic-settings" width="300px" alt="cosmic-settings"/></a><br />
+      <a href="https://github.com/pop-os/cosmic-settings">cosmic-settings</a> by <a href="https://github.com/pop-os">@pop-os</a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/pop-os/cosmic-applets"><img src="https://opengraph.githubassets.com/1/pop-os/cosmic-applets" width="300px" alt="cosmic-applets"/></a><br />
+      <a href="https://github.com/pop-os/cosmic-applets">cosmic-applets</a> by <a href="https://github.com/pop-os">@pop-os</a>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <a href="https://github.com/y2w8/nmrs-tui"><img src="https://opengraph.githubassets.com/1/y2w8/nmrs-tui" width="300px" alt="nmrs-tui"/></a><br />
+      <a href="https://github.com/y2w8/nmrs-tui">nmrs-tui</a> by <a href="https://github.com/y2w8">@y2w8</a>
+    </td>
+    <td align="center">
+      <a href="https://codeberg.org/pastthepixels/gaypanel"><img src="https://opengraph.githubassets.com/1/pastthepixels/gaypanel" width="300px" alt="gaypanel"/></a><br />
+      <a href="https://codeberg.org/pastthepixels/gaypanel">gaypanel</a> by <a href="https://codeberg.org/pastthepixels">@pastthepixels</a>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <a href="https://github.com/freedesktop-rs/nmrs-gui"><img src="https://opengraph.githubassets.com/1/freedesktop-rs/nmrs-gui" width="300px" alt="nmrs-gui"/></a><br />
+      <a href="https://github.com/freedesktop-rs/nmrs-gui">nmrs-gui</a> by <a href="https://github.com/freedesktop-rs">@freedesktop-rs</a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/uglyoldbob/android-auto"><img src="https://opengraph.githubassets.com/1/uglyoldbob/android-auto" width="300px" alt="android-auto"/></a><br />
+      <a href="https://github.com/uglyoldbob/android-auto">android-auto</a> by <a href="https://github.com/uglyoldbob">@uglyoldbob</a>
+    </td>
+  </tr>
+</table>
 
 # Roadmap / Implementation Status
 
