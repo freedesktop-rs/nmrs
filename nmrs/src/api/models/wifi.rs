@@ -782,32 +782,38 @@ impl EapOptionsBuilder {
         let is_peap_or_ttls =
             self.method == Some(EapMethod::Peap) || self.method == Some(EapMethod::Ttls);
 
-        if self.ca_cert_path.is_some() && self.ca_cert_blob.is_some() {
+        if let (Some(_), Some(_)) = (&self.ca_cert_path, &self.ca_cert_blob) {
             return Err(ConnectionError::IncompleteBuilder(
                 "EAP CA certificate cannot be specified both as a path and blob".into(),
             ));
         }
-        if self.private_key_path.is_some() && self.private_key_blob.is_some() {
-            return Err(ConnectionError::IncompleteBuilder(
-                "EAP private key cannot be specified both as a path and blob".into(),
-            ));
-        }
-        if self.client_cert_path.is_some() && self.client_cert_blob.is_some() {
-            return Err(ConnectionError::IncompleteBuilder(
-                "EAP client certificate cannot be specified both as a path and blob".into(),
-            ));
-        }
-        if self.method == Some(EapMethod::Tls) {
-            if self.private_key_path.is_none() && self.private_key_blob.is_none() {
+
+        match (&self.method, &self.private_key_path, &self.private_key_blob) {
+            (_, Some(_), Some(_)) => {
+                return Err(ConnectionError::IncompleteBuilder(
+                    "EAP private key cannot be specified both as a path and blob".into(),
+                ));
+            }
+            (Some(EapMethod::Tls), None, None) => {
                 return Err(ConnectionError::IncompleteBuilder(
                     "EAP private key is required for TLS (use .private_key_path() or .private_key_blob())".into(),
                 ));
             }
-            if self.client_cert_path.is_none() && self.client_cert_blob.is_none() {
+            _ => {}
+        }
+
+        match (&self.method, &self.client_cert_path, &self.client_cert_blob) {
+            (_, Some(_), Some(_)) => {
+                return Err(ConnectionError::IncompleteBuilder(
+                    "EAP client certificate cannot be specified both as a path and blob".into(),
+                ));
+            }
+            (Some(EapMethod::Tls), None, None) => {
                 return Err(ConnectionError::IncompleteBuilder(
                     "EAP client certificate is required for TLS (use .client_cert_path() or .client_cert_blob())".into(),
                 ));
             }
+            _ => {}
         }
 
         Ok(EapOptions {
