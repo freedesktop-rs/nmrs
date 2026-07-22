@@ -11,9 +11,9 @@ use nmrs::builders::WireGuardBuilder;
 use nmrs::raw::zvariant::{OwnedObjectPath, OwnedValue, Value};
 use nmrs::{
     ActiveConnection, ActiveConnectionState, ConnectionError, DeviceState, MonitorHandle,
-    NetworkEvent, NetworkEventStream, NetworkManager, SettingsChange, SettingsEventStream,
-    SettingsPatch, SettingsSummary, TimeoutConfig, WifiKeyMgmt, WifiScope, WifiSecurity,
-    WireGuardPeer,
+    NetworkEvent, NetworkEventStream, NetworkManager, Passphrase, SettingsChange,
+    SettingsEventStream, SettingsPatch, SettingsSummary, TimeoutConfig, WifiKeyMgmt, WifiScope,
+    WifiSecurity, WireGuardPeer,
 };
 use serial_test::serial;
 use tokio::time::{sleep, timeout};
@@ -320,7 +320,7 @@ async fn networkmanager_profile_crud_and_settings_events() {
     let uuid_string = uuid.to_string();
     let outcome = AssertUnwindSafe(async {
         let settings = WireGuardBuilder::new(&id)
-            .private_key("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=")
+            .private_key("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=".to_string())
             .address("10.203.0.2/24")
             .add_peer(WireGuardPeer::new(
                 "HIgo9xNzJMWLKAShlKl6/bUT1VI9Q0SDBXGtLXkPFXc=",
@@ -625,7 +625,7 @@ async fn networkmanager_secret_agent_registration_lifecycle() {
         let profile_uuid_value = Uuid::parse_str(&profile_uuid)
             .expect("the generated integration profile UUID must parse");
         let mut settings = WireGuardBuilder::new(&profile_id)
-            .private_key(private_key)
+            .private_key(private_key.to_string())
             .address("10.207.0.2/24")
             .add_peer(WireGuardPeer::new(
                 "HIgo9xNzJMWLKAShlKl6/bUT1VI9Q0SDBXGtLXkPFXc=",
@@ -1083,7 +1083,7 @@ async fn wifi_wpa_saved_connection_lifecycle() {
     let interface = required_env("NMRS_WIFI_INTERFACE");
     let ssid = required_env("NMRS_EXPECT_WIFI_SSID");
     let absent_ssid = format!("{ssid}-absent");
-    let password = required_env("NMRS_WIFI_PASSWORD");
+    let password: Passphrase = required_env("NMRS_WIFI_PASSWORD").into();
     assert!(
         (8..=63).contains(&password.len()),
         "NMRS_WIFI_PASSWORD must be a valid WPA passphrase"
@@ -1298,7 +1298,7 @@ async fn wifi_wpa_saved_connection_lifecycle() {
             wifi.connect(
                 &ssid,
                 WifiSecurity::WpaPsk {
-                    psk: "nmrs-definitely-wrong-password".into(),
+                    psk: Passphrase::new("nmrs-definitely-wrong-password".to_string()),
                 },
             ),
         )
@@ -1485,7 +1485,12 @@ async fn wifi_wpa_saved_connection_lifecycle() {
         bounded(
             "reconnect with NetworkManager's saved PSK",
             WIFI_TIMEOUT,
-            wifi.connect(&ssid, WifiSecurity::WpaPsk { psk: String::new() }),
+            wifi.connect(
+                &ssid,
+                WifiSecurity::WpaPsk {
+                    psk: Passphrase::default(),
+                },
+            ),
         )
         .await
         .expect("saved-credential WPA reconnect failed");
@@ -1539,7 +1544,12 @@ async fn wifi_wpa_saved_connection_lifecycle() {
         let error = bounded(
             "reject an empty PSK without saved credentials",
             DBUS_TIMEOUT,
-            wifi.connect(&ssid, WifiSecurity::WpaPsk { psk: String::new() }),
+            wifi.connect(
+                &ssid,
+                WifiSecurity::WpaPsk {
+                    psk: Passphrase::default(),
+                },
+            ),
         )
         .await
         .expect_err("an empty PSK without a saved profile must fail");

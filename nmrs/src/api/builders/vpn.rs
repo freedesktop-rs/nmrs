@@ -27,7 +27,7 @@
 //! ).with_persistent_keepalive(25);
 //!
 //! let settings = WireGuardBuilder::new("MyVPN")
-//!     .private_key("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=")
+//!     .private_key("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=".to_string())
 //!     .address("10.0.0.2/24")
 //!     .add_peer(peer)
 //!     .dns(vec!["1.1.1.1".into()])
@@ -53,7 +53,7 @@
 //!     VpnKind::WireGuard,
 //!     "MyVPN",
 //!     "vpn.example.com:51820",
-//!     "YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=",
+//!     "YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=".to_string(),
 //!     "10.0.0.2/24",
 //!     vec![peer],
 //! ).with_dns(vec!["1.1.1.1".into()]);
@@ -94,7 +94,7 @@ pub fn build_wireguard_connection(
     opts: &ConnectionOptions,
 ) -> Result<HashMap<&'static str, HashMap<&'static str, Value<'static>>>, ConnectionError> {
     let mut builder = WireGuardBuilder::new(&creds.name)
-        .private_key(&creds.private_key)
+        .private_key(creds.private_key.clone())
         .address(&creds.address)
         .add_peers(creds.peers.iter().cloned())
         .options(opts);
@@ -328,8 +328,16 @@ pub fn build_openvpn_connection(
     let data_dict = string_pairs_to_dict(vpn_data)?;
 
     let mut vpn_secrets: Vec<(String, String)> = Vec::new();
-    push_opt_str(&mut vpn_secrets, "password", config.password.as_ref());
-    push_opt_str(&mut vpn_secrets, "cert-pass", config.key_password.as_ref());
+    push_opt_display(
+        &mut vpn_secrets,
+        "password",
+        config.password.clone().map(|p| p.reveal()),
+    );
+    push_opt_display(
+        &mut vpn_secrets,
+        "cert-pass",
+        config.key_password.clone().map(|p| p.reveal()),
+    );
 
     let mut vpn: HashMap<&'static str, Value<'static>> = HashMap::new();
     vpn.insert(
@@ -380,11 +388,12 @@ pub fn build_openvpn_connection(
 
     Ok(settings)
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::models::{
-        OpenVpnCompression, OpenVpnConfig, OpenVpnProxy, VpnKind, WireGuardPeer,
+    use crate::{
+        OpenVpnCompression, OpenVpnConfig, OpenVpnProxy, Passphrase, VpnKind, WireGuardPeer,
     };
 
     fn create_test_credentials() -> VpnCredentials {
@@ -399,7 +408,7 @@ mod tests {
             VpnKind::WireGuard,
             "TestVPN",
             "vpn.example.com:51820",
-            "YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=",
+            "YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=".to_string(),
             "10.0.0.2/24",
             vec![peer],
         )
@@ -521,7 +530,7 @@ mod tests {
             "peer2.example.com:51821",
             vec!["192.168.0.0/16".into()],
         )
-        .with_preshared_key("PSKABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklm=");
+        .with_preshared_key("PSKABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklm=".to_string());
 
         creds.peers.push(extra_peer);
         let opts = create_test_options();
@@ -715,7 +724,9 @@ mod tests {
     #[test]
     fn peer_with_preshared_key() {
         let mut creds = create_test_credentials();
-        creds.peers[0].preshared_key = Some("PSKABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklm=".into());
+        creds.peers[0].preshared_key = Some(Passphrase::new(
+            "PSKABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklm=".to_string(),
+        ));
         let opts = create_test_options();
 
         let settings = build_wireguard_connection(&creds, &opts).unwrap();
@@ -1120,7 +1131,7 @@ mod tests {
         let config = create_openvpn_config()
             .with_auth_type(OpenVpnAuthType::Password)
             .with_username("user")
-            .with_password("secret");
+            .with_password(Passphrase::new("secret".to_string()));
         let opts = create_test_options();
         let settings = build_openvpn_connection(&config, &opts).unwrap();
         let vpn = settings.get("vpn").unwrap();

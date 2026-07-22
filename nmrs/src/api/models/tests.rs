@@ -180,7 +180,7 @@ fn wifi_security_open() {
 #[test]
 fn wifi_security_psk() {
     let psk = WifiSecurity::WpaPsk {
-        psk: "password123".into(),
+        psk: Passphrase::new("password123".to_string()),
     };
     assert!(psk.secured());
     assert!(psk.is_psk());
@@ -192,7 +192,7 @@ fn wifi_security_eap() {
     let eap = WifiSecurity::WpaEap {
         opts: EapOptions {
             identity: "user@example.com".into(),
-            password: "secret".into(),
+            password: Passphrase::new("secret".to_string()),
             anonymous_identity: None,
             domain_suffix_match: None,
             ca_cert_path: None,
@@ -217,7 +217,7 @@ fn wifi_security_eap_192bit() {
     let eap = WifiSecurity::Wpa3Eap192bit {
         opts: EapOptions {
             identity: "user@example.com".into(),
-            password: "".into(),
+            password: Passphrase::new("".to_string()),
             anonymous_identity: None,
             domain_suffix_match: None,
             ca_cert_path: Some("file:///etc/ssl/certs/ca.crt".into()),
@@ -227,7 +227,7 @@ fn wifi_security_eap_192bit() {
             phase2: Phase2::Mschapv2,
             private_key_path: Some("file:///etc/ssl/private/client.key".into()),
             private_key_blob: None,
-            private_key_password: Some("password".into()),
+            private_key_password: Some(Passphrase::new("password".to_string())),
             client_cert_path: Some("file:///etc/ssl/certs/client.crt".into()),
             client_cert_blob: None,
         },
@@ -655,7 +655,7 @@ fn assert_wireguard_peer(
     public_key: &str,
     gateway: &str,
     allowed_ips: &[&str],
-    preshared_key: Option<&str>,
+    preshared_key: Option<Passphrase>,
     persistent_keepalive: Option<u32>,
 ) {
     assert_eq!(peer.public_key, public_key);
@@ -667,7 +667,7 @@ fn assert_wireguard_peer(
             .map(|address| (*address).to_string())
             .collect::<Vec<_>>()
     );
-    assert_eq!(peer.preshared_key.as_deref(), preshared_key);
+    assert_eq!(peer.preshared_key, preshared_key);
     assert_eq!(peer.persistent_keepalive, persistent_keepalive);
 }
 
@@ -683,7 +683,7 @@ fn test_vpn_credentials_builder_basic() {
         .name("TestVPN")
         .wireguard()
         .gateway("vpn.example.com:51820")
-        .private_key("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=")
+        .private_key("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=".to_string())
         .address("10.0.0.2/24")
         .add_peer(peer)
         .build()
@@ -694,7 +694,7 @@ fn test_vpn_credentials_builder_basic() {
     assert_eq!(creds.gateway, "vpn.example.com:51820");
     assert_eq!(
         creds.private_key,
-        "YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM="
+        Passphrase::new("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=".to_string())
     );
     assert_eq!(creds.address, "10.0.0.2/24");
     assert_eq!(creds.peers.len(), 1);
@@ -721,7 +721,7 @@ fn test_wireguard_config_basic() {
     let config = WireGuardConfig::new(
         "TestVPN",
         "vpn.example.com:51820",
-        "YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=",
+        "YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=".to_string(),
         "10.0.0.2/24",
         vec![peer],
     );
@@ -730,7 +730,7 @@ fn test_wireguard_config_basic() {
     assert_eq!(config.gateway, "vpn.example.com:51820");
     assert_eq!(
         config.private_key,
-        "YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM="
+        Passphrase::new("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=".to_string())
     );
     assert_eq!(config.address, "10.0.0.2/24");
     assert_eq!(config.peers.len(), 1);
@@ -752,7 +752,7 @@ fn test_wireguard_config_implements_vpn_config() {
     let config = WireGuardConfig::new(
         "TestVPN",
         "vpn.example.com:51820",
-        "private_key",
+        "private_key".to_string(),
         "10.0.0.2/24",
         vec![WireGuardPeer::new(
             "public_key",
@@ -782,7 +782,7 @@ fn test_wireguard_config_roundtrips_through_vpn_credentials() {
     let config = WireGuardConfig::new(
         "TestVPN",
         "vpn.example.com:51820",
-        "private_key",
+        "private_key".to_string(),
         "10.0.0.2/24",
         vec![
             WireGuardPeer::new(
@@ -790,7 +790,7 @@ fn test_wireguard_config_roundtrips_through_vpn_credentials() {
                 "vpn.example.com:51820",
                 vec!["0.0.0.0/0".into(), "10.0.0.0/8".into()],
             )
-            .with_preshared_key("preshared_key")
+            .with_preshared_key("preshared_key".to_string())
             .with_persistent_keepalive(25),
         ],
     )
@@ -811,7 +811,7 @@ fn test_wireguard_config_roundtrips_through_vpn_credentials() {
         "public_key",
         "vpn.example.com:51820",
         &["0.0.0.0/0", "10.0.0.0/8"],
-        Some("preshared_key"),
+        Some(Passphrase::new("preshared_key".to_string())),
         Some(25),
     );
     assert_eq!(roundtrip.dns, config.dns);
@@ -832,7 +832,7 @@ fn test_vpn_credentials_builder_with_optionals() {
         .name("TestVPN")
         .wireguard()
         .gateway("vpn.example.com:51820")
-        .private_key("private_key")
+        .private_key(Passphrase::new("private_key".to_string()))
         .address("10.0.0.2/24")
         .add_peer(peer)
         .with_dns(vec!["1.1.1.1".into(), "8.8.8.8".into()])
@@ -859,13 +859,13 @@ fn test_vpn_credentials_builder_multiple_peers() {
         "vpn2.example.com:51820",
         vec!["192.168.0.0/24".into()],
     )
-    .with_preshared_key("peer2-psk");
+    .with_preshared_key("peer2-psk".to_string());
 
     let creds = VpnCredentials::builder()
         .name("MultiPeerVPN")
         .wireguard()
         .gateway("vpn.example.com:51820")
-        .private_key("private_key")
+        .private_key(Passphrase::new("private_key".to_string()))
         .address("10.0.0.2/24")
         .add_peer(peer1)
         .add_peer(peer2)
@@ -886,7 +886,7 @@ fn test_vpn_credentials_builder_multiple_peers() {
         "key2",
         "vpn2.example.com:51820",
         &["192.168.0.0/24"],
-        Some("peer2-psk"),
+        Some(Passphrase::new("peer2-psk".to_string())),
         None,
     );
 }
@@ -897,14 +897,14 @@ fn test_vpn_credentials_builder_peers_method() {
         WireGuardPeer::new("key1", "vpn1.example.com:51820", vec!["0.0.0.0/0".into()])
             .with_persistent_keepalive(20),
         WireGuardPeer::new("key2", "vpn2.example.com:51821", vec!["::/0".into()])
-            .with_preshared_key("key2-psk"),
+            .with_preshared_key("key2-psk".to_string()),
     ];
 
     let creds = VpnCredentials::builder()
         .name("TestVPN")
         .wireguard()
         .gateway("vpn.example.com:51820")
-        .private_key("private_key")
+        .private_key(Passphrase::new("private_key".to_string()))
         .address("10.0.0.2/24")
         .peers(peers)
         .build()
@@ -924,7 +924,7 @@ fn test_vpn_credentials_builder_peers_method() {
         "key2",
         "vpn2.example.com:51821",
         &["::/0"],
-        Some("key2-psk"),
+        Some(Passphrase::new("key2-psk".to_string())),
         None,
     );
 }
@@ -936,7 +936,7 @@ fn test_vpn_credentials_builder_missing_name() {
     let err = VpnCredentials::builder()
         .wireguard()
         .gateway("vpn.example.com:51820")
-        .private_key("private_key")
+        .private_key(Passphrase::new("private_key".to_string()))
         .address("10.0.0.2/24")
         .add_peer(peer)
         .build()
@@ -955,7 +955,7 @@ fn test_vpn_credentials_builder_missing_vpn_type() {
     let err = VpnCredentials::builder()
         .name("TestVPN")
         .gateway("vpn.example.com:51820")
-        .private_key("private_key")
+        .private_key(Passphrase::new("private_key".to_string()))
         .address("10.0.0.2/24")
         .add_peer(peer)
         .build()
@@ -973,7 +973,7 @@ fn test_vpn_credentials_builder_missing_peers() {
         .name("TestVPN")
         .wireguard()
         .gateway("vpn.example.com:51820")
-        .private_key("private_key")
+        .private_key("private_key".to_string())
         .address("10.0.0.2/24")
         .build()
         .unwrap_err();
@@ -988,14 +988,14 @@ fn test_vpn_credentials_builder_missing_peers() {
 fn test_eap_options_builder_basic() {
     let opts = EapOptions::builder()
         .identity("user@example.com")
-        .password("password")
+        .password(Passphrase::new("password".to_string()))
         .method(EapMethod::Peap)
         .phase2(Phase2::Mschapv2)
         .build()
         .unwrap();
 
     assert_eq!(opts.identity, "user@example.com");
-    assert_eq!(opts.password, "password");
+    assert_eq!(opts.password, Passphrase::new("password".to_string()));
     assert_eq!(opts.method, EapMethod::Peap);
     assert_eq!(opts.phase2, Phase2::Mschapv2);
     assert!(opts.anonymous_identity.is_none());
@@ -1008,7 +1008,7 @@ fn test_eap_options_builder_basic() {
 fn test_eap_options_builder_with_optionals() {
     let opts = EapOptions::builder()
         .identity("user@company.com")
-        .password("password")
+        .password(Passphrase::new("password".to_string()))
         .method(EapMethod::Ttls)
         .phase2(Phase2::Pap)
         .anonymous_identity("anonymous@company.com")
@@ -1019,7 +1019,7 @@ fn test_eap_options_builder_with_optionals() {
         .unwrap();
 
     assert_eq!(opts.identity, "user@company.com");
-    assert_eq!(opts.password, "password");
+    assert_eq!(opts.password, Passphrase::new("password".to_string()));
     assert_eq!(opts.method, EapMethod::Ttls);
     assert_eq!(opts.phase2, Phase2::Pap);
     assert_eq!(
@@ -1038,7 +1038,7 @@ fn test_eap_options_builder_with_optionals() {
 fn test_eap_options_builder_peap_mschapv2() {
     let opts = EapOptions::builder()
         .identity("employee@corp.com")
-        .password("secret")
+        .password(Passphrase::new("secret".to_string()))
         .method(EapMethod::Peap)
         .phase2(Phase2::Mschapv2)
         .system_ca_certs(true)
@@ -1054,7 +1054,7 @@ fn test_eap_options_builder_peap_mschapv2() {
 fn test_eap_options_builder_ttls_pap() {
     let opts = EapOptions::builder()
         .identity("student@university.edu")
-        .password("password")
+        .password(Passphrase::new("password".to_string()))
         .method(EapMethod::Ttls)
         .phase2(Phase2::Pap)
         .ca_cert_path("file:///etc/ssl/certs/university.pem")
@@ -1076,7 +1076,7 @@ fn test_eap_options_builder_tls() {
         .method(EapMethod::Tls)
         .ca_cert_path("file:///etc/ssl/certs/ca.pem")
         .private_key_path("file:///etc/ssl/private/client.key")
-        .private_key_password("password")
+        .private_key_password("password".to_string())
         .client_cert_path("file:///etc/ssl/certs/client.pem")
         .build()
         .unwrap();
@@ -1090,7 +1090,10 @@ fn test_eap_options_builder_tls() {
         opts.private_key_path,
         Some("file:///etc/ssl/private/client.key".into())
     );
-    assert_eq!(opts.private_key_password, Some("password".into()));
+    assert_eq!(
+        opts.private_key_password,
+        Some(Passphrase::new("password".to_string()))
+    );
     assert_eq!(
         opts.client_cert_path,
         Some("file:///etc/ssl/certs/client.pem".into())
@@ -1137,7 +1140,7 @@ fn test_eap_options_builder_ca_cert_blob_overrides_path() {
         .ca_cert_path("file:///etc/ssl/certs/ca.pem")
         .ca_cert_blob(vec![1])
         .private_key_path("file:///etc/ssl/private/client.key")
-        .private_key_password("password")
+        .private_key_password("password".to_string())
         .client_cert_path("file:///etc/ssl/certs/client.pem")
         .build()
         .unwrap();
@@ -1155,7 +1158,7 @@ fn test_eap_options_builder_path_blob_private_key() {
         .ca_cert_path("file:///etc/ssl/certs/ca.pem")
         .private_key_path("file:///etc/ssl/private/client.key")
         .private_key_blob(vec![1])
-        .private_key_password("password")
+        .private_key_password("password".to_string())
         .client_cert_path("file:///etc/ssl/certs/client.pem")
         .build()
         .unwrap();
@@ -1172,7 +1175,7 @@ fn test_eap_options_builder_path_blob_client_cert() {
         .method(EapMethod::Tls)
         .ca_cert_path("file:///etc/ssl/certs/ca.pem")
         .private_key_path("file:///etc/ssl/private/client.key")
-        .private_key_password("password")
+        .private_key_password("password".to_string())
         .client_cert_path("file:///etc/ssl/certs/client.pem")
         .client_cert_blob(vec![1])
         .build()
@@ -1186,7 +1189,7 @@ fn test_eap_options_builder_path_blob_client_cert() {
 #[test]
 fn test_eap_options_builder_missing_identity() {
     let err = EapOptions::builder()
-        .password("password")
+        .password(Passphrase::new("password".to_string()))
         .method(EapMethod::Peap)
         .phase2(Phase2::Mschapv2)
         .build()
@@ -1217,7 +1220,7 @@ fn test_eap_options_builder_missing_password() {
 fn test_eap_options_builder_missing_method() {
     let err = EapOptions::builder()
         .identity("user@example.com")
-        .password("password")
+        .password(Passphrase::new("password".to_string()))
         .phase2(Phase2::Mschapv2)
         .build()
         .unwrap_err();
@@ -1232,7 +1235,7 @@ fn test_eap_options_builder_missing_method() {
 fn test_eap_options_builder_missing_phase2() {
     let err = EapOptions::builder()
         .identity("user@example.com")
-        .password("password")
+        .password(Passphrase::new("password".to_string()))
         .method(EapMethod::Peap)
         .build()
         .unwrap_err();
@@ -1245,13 +1248,13 @@ fn test_eap_options_builder_missing_phase2() {
 
 #[test]
 fn test_eap_options_builder_equivalence_to_new() {
-    let opts_new = EapOptions::new("user@example.com", "password")
+    let opts_new = EapOptions::new("user@example.com", Passphrase::new("password".to_string()))
         .with_method(EapMethod::Peap)
         .with_phase2(Phase2::Mschapv2);
 
     let opts_builder = EapOptions::builder()
         .identity("user@example.com")
-        .password("password")
+        .password(Passphrase::new("password".to_string()))
         .method(EapMethod::Peap)
         .phase2(Phase2::Mschapv2)
         .build()
@@ -1275,7 +1278,7 @@ fn test_vpn_credentials_builder_equivalence_to_new() {
         VpnKind::WireGuard,
         "TestVPN",
         "vpn.example.com:51820",
-        "private_key",
+        "private_key".to_string(),
         "10.0.0.2/24",
         vec![peer.clone()],
     );
@@ -1284,7 +1287,7 @@ fn test_vpn_credentials_builder_equivalence_to_new() {
         .name("TestVPN")
         .wireguard()
         .gateway("vpn.example.com:51820")
-        .private_key("private_key")
+        .private_key(Passphrase::new("private_key".to_string()))
         .address("10.0.0.2/24")
         .add_peer(peer)
         .build()

@@ -18,10 +18,11 @@
 //! For new code, consider using the builder API from `wifi_builder` module:
 //!
 //! ```rust
+//! use nmrs::Passphrase;
 //! use nmrs::builders::WifiConnectionBuilder;
 //!
 //! let settings = WifiConnectionBuilder::new("MyNetwork")
-//!     .wpa_psk("password")
+//!     .wpa_psk(Passphrase::new("password".to_string()))
 //!     .autoconnect(true)
 //!     .ipv4_auto()
 //!     .ipv6_auto()
@@ -70,7 +71,7 @@ pub fn build_wifi_connection(
 
     builder = match security {
         models::WifiSecurity::Open => builder.open(),
-        models::WifiSecurity::WpaPsk { psk } => builder.wpa_psk(psk),
+        models::WifiSecurity::WpaPsk { psk } => builder.wpa_psk(psk.clone()),
         models::WifiSecurity::WpaEap { opts } => builder.wpa_eap(opts.clone()),
         models::WifiSecurity::Wpa3Eap192bit { opts } => builder.wpa3_eap_192_bit(opts.clone()),
     };
@@ -111,7 +112,9 @@ pub fn build_ethernet_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{ConnectionOptions, EapMethod, EapOptions, Phase2, WifiSecurity};
+    use crate::models::{
+        ConnectionOptions, EapMethod, EapOptions, Passphrase, Phase2, WifiSecurity,
+    };
     use zvariant::Value;
 
     fn default_opts() -> ConnectionOptions {
@@ -156,7 +159,7 @@ mod tests {
         let conn = build_wifi_connection(
             "secure",
             &WifiSecurity::WpaPsk {
-                psk: "pw123".into(),
+                psk: Passphrase::new("pw123".to_string()),
             },
             &default_opts(),
         );
@@ -173,7 +176,9 @@ mod tests {
     fn psk_connection_links_wireless_to_security() {
         let conn = build_wifi_connection(
             "secure",
-            &WifiSecurity::WpaPsk { psk: "test".into() },
+            &WifiSecurity::WpaPsk {
+                psk: Passphrase::new("test".to_string()),
+            },
             &default_opts(),
         );
         let wireless = conn.get("802-11-wireless").unwrap();
@@ -187,7 +192,7 @@ mod tests {
     fn builds_eap_peap_connection() {
         let eap_opts = EapOptions {
             identity: "user@example.com".into(),
-            password: "secret123".into(),
+            password: Passphrase::new("secret123".to_string()),
             anonymous_identity: Some("anonymous@example.com".into()),
             domain_suffix_match: Some("example.com".into()),
             ca_cert_path: None,
@@ -230,7 +235,7 @@ mod tests {
     fn builds_eap_ttls_connection() {
         let eap_opts = EapOptions {
             identity: "student@uni.edu".into(),
-            password: "campus123".into(),
+            password: Passphrase::new("campus123".to_string()),
             anonymous_identity: None,
             domain_suffix_match: None,
             ca_cert_path: Some("file:///etc/ssl/certs/ca.pem".into()),
@@ -264,7 +269,7 @@ mod tests {
     fn builds_eap_tls_connection() {
         let eap_opts = EapOptions {
             identity: "student@uni.edu".into(),
-            password: String::new(),
+            password: Passphrase::default(),
             anonymous_identity: None,
             domain_suffix_match: None,
             ca_cert_path: Some("file:///etc/ssl/certs/ca.pem".into()),
@@ -274,7 +279,7 @@ mod tests {
             phase2: Phase2::Mschapv2,
             private_key_path: Some("file:///etc/ssl/private/client.key".into()),
             private_key_blob: None,
-            private_key_password: Some("password".into()),
+            private_key_password: Some(Passphrase::new("password".to_string())),
             client_cert_path: Some("file:///etc/ssl/certs/client.crt".into()),
             client_cert_blob: None,
         };
@@ -315,7 +320,7 @@ mod tests {
     fn builds_eap_192bit_connection() {
         let eap_opts = EapOptions {
             identity: "student@uni.edu".into(),
-            password: String::new(),
+            password: Passphrase::default(),
             anonymous_identity: None,
             domain_suffix_match: None,
             ca_cert_path: None,
@@ -325,7 +330,7 @@ mod tests {
             phase2: Phase2::Mschapv2,
             private_key_path: None,
             private_key_blob: Some(b"private_key_blob".into()),
-            private_key_password: Some("password".into()),
+            private_key_password: Some(Passphrase::new("password".to_string())),
             client_cert_path: None,
             client_cert_blob: Some(b"client_cert_blob".into()),
         };

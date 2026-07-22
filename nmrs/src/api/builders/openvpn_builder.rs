@@ -13,6 +13,7 @@ use std::path::Path;
 
 use uuid::Uuid;
 
+use crate::Passphrase;
 use crate::api::models::{
     ConnectionError, OpenVpnAuthType, OpenVpnCompression, OpenVpnConfig, OpenVpnProxy, VpnRoute,
     vpn_route_from_parser,
@@ -62,9 +63,9 @@ pub struct OpenVpnBuilder {
     ca_cert: Option<String>,
     client_cert: Option<String>,
     client_key: Option<String>,
-    key_password: Option<String>,
+    key_password: Option<Passphrase>,
     username: Option<String>,
-    password: Option<String>,
+    password: Option<Passphrase>,
     compression: Option<OpenVpnCompression>,
     proxy: Option<OpenVpnProxy>,
     tls_auth_key: Option<String>,
@@ -389,7 +390,7 @@ impl OpenVpnBuilder {
 
     /// Sets the password for an encrypted private key.
     #[must_use]
-    pub fn key_password(mut self, password: impl Into<String>) -> Self {
+    pub fn key_password(mut self, password: impl Into<Passphrase>) -> Self {
         self.key_password = Some(password.into());
         self
     }
@@ -403,7 +404,7 @@ impl OpenVpnBuilder {
 
     /// Sets the password for password authentication.
     #[must_use]
-    pub fn password(mut self, password: impl Into<String>) -> Self {
+    pub fn password(mut self, password: impl Into<Passphrase>) -> Self {
         self.password = Some(password.into());
         self
     }

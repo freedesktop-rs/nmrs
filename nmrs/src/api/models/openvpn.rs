@@ -1,6 +1,7 @@
 #![allow(deprecated)]
 
 use super::vpn::{VpnConfig, VpnKind};
+use crate::Passphrase;
 use crate::api::models::error::ConnectionError;
 use std::convert::TryFrom;
 use std::net::Ipv4Addr;
@@ -72,12 +73,12 @@ pub enum OpenVpnAuthType {
 /// # Example
 ///
 /// ```rust
-/// use nmrs::{OpenVpnConfig, OpenVpnAuthType};
+/// use nmrs::{OpenVpnConfig, OpenVpnAuthType, Passphrase};
 ///
 /// let config = OpenVpnConfig::new("MyVPN", "vpn.example.com", 1194, false)
 ///     .with_auth_type(OpenVpnAuthType::PasswordTls)
 ///     .with_username("user")
-///     .with_password("secret")
+///     .with_password(Passphrase::new("secret".to_string()))
 ///     .with_ca_cert("/path/to/ca.crt")
 ///     .with_dns(vec!["1.1.1.1".into()]);
 /// ```
@@ -111,11 +112,11 @@ pub struct OpenVpnConfig {
     /// Path to client private key.
     pub client_key: Option<String>,
     /// Password for encrypted private key.
-    pub key_password: Option<String>,
+    pub key_password: Option<Passphrase>,
     /// Username for password authentication.
     pub username: Option<String>,
     /// Password for password authentication.
-    pub password: Option<String>,
+    pub password: Option<Passphrase>,
     /// Compression algorithm. See [`OpenVpnCompression`] for security considerations.
     pub compression: Option<OpenVpnCompression>,
     /// Proxy configuration.
@@ -275,7 +276,7 @@ impl OpenVpnConfig {
 
     /// Sets the password for an encrypted private key.
     #[must_use]
-    pub fn with_key_password(mut self, password: impl Into<String>) -> Self {
+    pub fn with_key_password(mut self, password: impl Into<Passphrase>) -> Self {
         self.key_password = Some(password.into());
         self
     }
@@ -289,7 +290,7 @@ impl OpenVpnConfig {
 
     /// Sets the password for password authentication.
     #[must_use]
-    pub fn with_password(mut self, password: impl Into<String>) -> Self {
+    pub fn with_password(mut self, password: impl Into<Passphrase>) -> Self {
         self.password = Some(password.into());
         self
     }
@@ -708,7 +709,7 @@ pub enum OpenVpnProxy {
         server: String,
         port: u16,
         username: Option<String>,
-        password: Option<String>,
+        password: Option<Passphrase>,
         retry: bool,
     },
     /// SOCKS proxy.

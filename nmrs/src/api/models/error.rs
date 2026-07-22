@@ -15,13 +15,13 @@ use super::state_reason::StateReason;
 /// ## Basic Error Handling
 ///
 /// ```no_run
-/// use nmrs::{NetworkManager, WifiSecurity, ConnectionError};
+/// use nmrs::{NetworkManager, WifiSecurity, ConnectionError, Passphrase};
 ///
 /// # async fn example() -> nmrs::Result<()> {
 /// let nm = NetworkManager::new().await?;
 ///
 /// match nm.connect("MyNetwork", None, WifiSecurity::WpaPsk {
-///     psk: "password".into()
+///     psk: Passphrase::new("password".to_string())
 /// }).await {
 ///     Ok(_) => println!("Connected!"),
 ///     Err(ConnectionError::AuthFailed) => {

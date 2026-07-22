@@ -8,7 +8,7 @@
 //! ## WiFi Connection
 //!
 //! ```rust
-//! use nmrs::{NetworkManager, WifiSecurity};
+//! use nmrs::{NetworkManager, Passphrase, WifiSecurity};
 //!
 //! # async fn example() -> nmrs::Result<()> {
 //! let nm = NetworkManager::new().await?;
@@ -21,7 +21,7 @@
 //!
 //! // Connect to a network on the first Wi-Fi device
 //! nm.connect("MyNetwork", None, WifiSecurity::WpaPsk {
-//!     psk: "password123".into()
+//!     psk: Passphrase::new("password123".to_string())
 //! }).await?;
 //!
 //! // Check current connection
@@ -49,7 +49,7 @@
 //! let config = WireGuardConfig::new(
 //!     "MyVPN",
 //!     "vpn.example.com:51820",
-//!     "your_private_key",
+//!     "your_private_key".to_string(),
 //!     "10.0.0.2/24",
 //!     vec![peer],
 //! ).with_dns(vec!["1.1.1.1".into(), "8.8.8.8".into()]);
@@ -62,7 +62,7 @@
 //! ## VPN Connection (OpenVPN)
 //!
 //! ```rust
-//! use nmrs::{NetworkManager, OpenVpnConfig, OpenVpnAuthType};
+//! use nmrs::{NetworkManager, OpenVpnConfig, OpenVpnAuthType, Passphrase};
 //!
 //! # async fn example() -> nmrs::Result<()> {
 //! let nm = NetworkManager::new().await?;
@@ -70,7 +70,7 @@
 //! let config = OpenVpnConfig::new("CorpVPN", "vpn.example.com", 1194, false)
 //!     .with_auth_type(OpenVpnAuthType::PasswordTls)
 //!     .with_username("user")
-//!     .with_password("secret")
+//!     .with_password(Passphrase::new("secret".to_string()))
 //!     .with_ca_cert("/etc/openvpn/ca.crt")
 //!     .with_client_cert("/etc/openvpn/client.crt")
 //!     .with_client_key("/etc/openvpn/client.key");
@@ -78,7 +78,7 @@
 //! nm.connect_vpn(config).await?;
 //!
 //! // Or import an .ovpn file directly:
-//! nm.import_ovpn("corp.ovpn", Some("user"), Some("secret")).await?;
+//! nm.import_ovpn("corp.ovpn", Some("user"), Some(Passphrase::new("secret".to_string()))).await?;
 //!
 //! // List VPN connections
 //! let vpns = nm.list_vpn_connections().await?;
@@ -161,7 +161,7 @@
 //! ## Connecting to Different Network Types
 //!
 //! ```rust
-//! use nmrs::{NetworkManager, WifiSecurity, EapOptions, EapMethod, Phase2};
+//! use nmrs::{NetworkManager, WifiSecurity, EapOptions, EapMethod, Passphrase, Phase2};
 //!
 //! # async fn example() -> nmrs::Result<()> {
 //! let nm = NetworkManager::new().await?;
@@ -171,11 +171,11 @@
 //!
 //! // WPA-PSK (password-protected)
 //! nm.connect("HomeWiFi", None, WifiSecurity::WpaPsk {
-//!     psk: "my_password".into()
+//!     psk: Passphrase::new("my_password".to_string())
 //! }).await?;
 //!
 //! // WPA-EAP (Enterprise)
-//! let eap_opts = EapOptions::new("user@company.com", "password")
+//! let eap_opts = EapOptions::new("user@company.com", Passphrase::new("password".to_string()))
 //!     .with_domain_suffix_match("company.com")
 //!     .with_system_ca_certs(true)
 //!     .with_method(EapMethod::Peap)
@@ -197,13 +197,13 @@
 //! The [`ConnectionError`] type provides specific variants for different failure modes:
 //!
 //! ```rust
-//! use nmrs::{NetworkManager, WifiSecurity, ConnectionError};
+//! use nmrs::{NetworkManager, WifiSecurity, ConnectionError, Passphrase};
 //!
 //! # async fn example() -> nmrs::Result<()> {
 //! let nm = NetworkManager::new().await?;
 //!
 //! match nm.connect("MyNetwork", None, WifiSecurity::WpaPsk {
-//!     psk: "wrong_password".into()
+//!     psk: Passphrase::new("wrong_password".to_string())
 //! }).await {
 //!     Ok(_) => println!("Connected successfully"),
 //!     Err(ConnectionError::AuthFailed) => {
@@ -442,13 +442,13 @@ pub use api::models::{
     ConnectionError, ConnectionOptions, ConnectionStateReason, ConnectivityReport,
     ConnectivityState, Device, DeviceState, DeviceType, EapMethod, EapOptions, MonitorHandle,
     Network, NetworkEvent, NetworkEventStream, NetworkInfo, NetworkSnapshot, OpenVpnAuthType,
-    OpenVpnCompression, OpenVpnConfig, OpenVpnConnectionType, OpenVpnProxy, Phase2, RadioState,
-    SavedConnection, SavedConnectionBrief, SavedVpnSummary, SecurityFeatures, SettingsChange,
-    SettingsEventStream, SettingsPatch, SettingsSummary, StateReason, TimeoutConfig, VlanConfig,
-    VpnConfig, VpnConfiguration, VpnConnection, VpnConnectionInfo, VpnCredentials, VpnDetails,
-    VpnKind, VpnRoute, VpnSecretFlags, VpnType, WifiDevice, WifiKeyMgmt, WifiNetworkGroup,
-    WifiSecurity, WifiSecuritySummary, WireGuardConfig, WireGuardPeer, WiredDevice,
-    connection_state_reason_to_error, reason_to_error,
+    OpenVpnCompression, OpenVpnConfig, OpenVpnConnectionType, OpenVpnProxy, Passphrase, Phase2,
+    RadioState, SavedConnection, SavedConnectionBrief, SavedVpnSummary, SecurityFeatures,
+    SettingsChange, SettingsEventStream, SettingsPatch, SettingsSummary, StateReason,
+    TimeoutConfig, VlanConfig, VpnConfig, VpnConfiguration, VpnConnection, VpnConnectionInfo,
+    VpnCredentials, VpnDetails, VpnKind, VpnRoute, VpnSecretFlags, VpnType, WifiDevice,
+    WifiKeyMgmt, WifiNetworkGroup, WifiSecurity, WifiSecuritySummary, WireGuardConfig,
+    WireGuardPeer, WiredDevice, connection_state_reason_to_error, reason_to_error,
 };
 pub use api::network_manager::NetworkManager;
 pub use api::wifi_scope::WifiScope;
