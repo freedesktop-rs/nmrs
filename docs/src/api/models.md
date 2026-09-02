@@ -567,12 +567,14 @@ pub struct BluetoothDevice {
 pub struct BluetoothIdentity {
     pub bdaddr: String,
     pub bt_device_type: BluetoothNetworkRole,
-    pub adapter: Option<String>,        // e.g. Some("hci1"); defaults to "hci0"
+    pub adapter: Option<String>,        // e.g. Some("hci1"); None looks the adapter up via BlueZ
 }
 ```
 
 Constructors: `new(bdaddr, role)` and `with_adapter(bdaddr, role, adapter)`.
-Both validate the MAC and return [`ConnectionError`] on bad input.
+Both validate the MAC and return [`ConnectionError`] on bad input. `new` leaves
+`adapter` as `None`, so the adapter owning the address is resolved through
+BlueZ; `with_adapter` pins it.
 
 ### BluetoothNetworkRole
 

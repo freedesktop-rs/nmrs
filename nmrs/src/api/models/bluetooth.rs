@@ -40,7 +40,8 @@ pub struct BluetoothIdentity {
     pub bdaddr: String,
     /// Bluetooth device type (DUN or PANU)
     pub bt_device_type: BluetoothNetworkRole,
-    /// Optional Bluetooth adapter name (e.g., "hci1"). Defaults to "hci0".
+    /// Optional Bluetooth adapter name (e.g., "hci1"). When `None`, the
+    /// adapter owning `bdaddr` is looked up through BlueZ.
     pub adapter: Option<String>,
 }
 
@@ -80,6 +81,10 @@ impl BluetoothIdentity {
     }
 
     /// Creates a new `BluetoothIdentity` with a specific adapter.
+    ///
+    /// Pinning the adapter skips the BlueZ lookup that [`Self::new`] relies on,
+    /// so the device is addressed on `adapter` even if BlueZ reports it
+    /// elsewhere.
     ///
     /// # Arguments
     ///
