@@ -102,21 +102,30 @@ declared, missing services and unexpected D-Bus errors fail the test.
 
 ### Deterministic WiFi integration
 
-The WiFi contract requires two `mac80211_hwsim` radios. The container configures
-one as a WPA2 access point, supplies DHCP with dnsmasq, and gives only the other
-radio to its private NetworkManager. It asserts discovery, WPA authentication,
-network and device callback delivery, DHCP, disconnect, saved-credential
-reconnect, forget, and the missing-password error after cleanup.
+The WiFi contract requires three `mac80211_hwsim` radios. The container
+configures the first as a WPA2 access point and the second as an SAE-only
+access point, each with its own hostapd, subnet, and dnsmasq, and gives only the
+third radio to its private NetworkManager. It asserts discovery, WPA
+authentication, network and device callback delivery, DHCP, disconnect,
+saved-credential reconnect, forget, and the missing-password error after
+cleanup.
+
+WPA3-Personal access points reject `key-mgmt=wpa-psk`, so the SAE-only radio is
+what proves `WifiSecurity::WpaPsk` upgrades to SAE instead of failing, and that
+`WifiSecurity::Sae` authenticates. It requires a `hostapd` built with SAE
+support.
 
 ```bash
-sudo modprobe mac80211_hwsim radios=2
+sudo modprobe mac80211_hwsim radios=3
 docker compose run --build --rm test-wifi-integration
 sudo modprobe -r mac80211_hwsim
 ```
 
 The WiFi runner sets `NMRS_REQUIRE_WIFI=1`, `NMRS_WIFI_INTERFACE`,
-`NMRS_EXPECT_WIFI_SSID`, and `NMRS_WIFI_PASSWORD`. If a declared facility is
-missing, the test fails rather than being reported as a pass.
+`NMRS_EXPECT_WIFI_SSID`, and `NMRS_WIFI_PASSWORD`, plus
+`NMRS_REQUIRE_WIFI_SAE=1`, `NMRS_EXPECT_WIFI_SAE_SSID`, and
+`NMRS_WIFI_SAE_PASSWORD` for the SAE BSS. If a declared facility is missing, the
+test fails rather than being reported as a pass.
 
 To run the NM-only contracts against a deliberately selected local daemon, opt
 in explicitly:

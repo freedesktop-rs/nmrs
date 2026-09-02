@@ -89,8 +89,8 @@ touches the host's NetworkManager profiles.
 It starts a private D-Bus system bus, `udevd`, and NetworkManager, then
 provisions whichever fixtures the selected mode needs:
 
-- a `mac80211_hwsim` virtual Wi-Fi network (`hostapd` + `wpa_supplicant` +
-  `dnsmasq`) on SSID `nmrs-hwsim`
+- two `mac80211_hwsim` virtual Wi-Fi networks (`hostapd` + `wpa_supplicant` +
+  `dnsmasq`): WPA2-PSK on SSID `nmrs-hwsim` and SAE-only on `nmrs-hwsim-sae`
 - a wired `veth` pair (`nmrs-client` / `nmrs-server`) with its own `dnsmasq`
   for DHCP
 - a WireGuard interface for native-tunnel activation
@@ -118,7 +118,7 @@ The `wifi-integration` mode needs two `mac80211_hwsim` radios on the host and
 runs with `network_mode: host`:
 
 ```bash
-sudo modprobe mac80211_hwsim radios=2
+sudo modprobe mac80211_hwsim radios=3
 docker compose run --build --rm test-wifi-integration
 sudo modprobe -r mac80211_hwsim
 ```

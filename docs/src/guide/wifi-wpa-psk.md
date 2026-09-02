@@ -22,6 +22,26 @@ async fn main() -> nmrs::Result<()> {
 
 The `WifiSecurity::WpaPsk` variant works with WPA, WPA2, and WPA3 Personal networks. NetworkManager negotiates the strongest supported protocol automatically.
 
+## WPA3-Personal (SAE)
+
+`WpaPsk` emits `key-mgmt=wpa-psk`, which WPA3-Personal access points reject when
+they advertise SAE without PSK. `connect()` detects that case from the access
+point's own security flags and switches to SAE for you, so the snippet above
+works unchanged on an SAE-only network.
+
+Transition-mode access points advertise both SAE and PSK and accept `WpaPsk`, so
+those are left as-is. To request SAE explicitly — when building settings
+yourself, or to pin key management regardless of what the AP advertises — use
+the variant directly:
+
+```rust
+nm.connect("Wpa3Only", None, WifiSecurity::Sae {
+    psk: "my_secure_password".into(),
+}).await?;
+```
+
+Unlike WPA-PSK, SAE has no 8-character minimum passphrase length.
+
 ## Password Requirements
 
 - A new profile requires a non-empty password. An empty PSK requests the stored

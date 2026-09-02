@@ -5,6 +5,7 @@ use zbus::Connection;
 use zvariant::OwnedObjectPath;
 
 use crate::api::builders::wifi::{build_ethernet_connection, try_build_wifi_connection};
+use crate::api::models::access_point::{SecurityFeatures, decode_security};
 use crate::api::models::{ConnectionError, ConnectionOptions, TimeoutConfig, WifiSecurity};
 use crate::core::connection_settings::{delete_connection, get_saved_connection_path};
 use crate::core::state_wait::{wait_for_connection_activation, wait_for_device_disconnect};
@@ -84,6 +85,7 @@ pub(crate) async fn connect(
     }
 
     let specific_object = scan_and_resolve_ap(conn, &wifi, ssid).await?;
+    let creds = upgrade_security_for_ap(conn, &specific_object, creds).await;
 
     match decision {
         SavedDecision::UseSaved(saved) => {
@@ -749,6 +751,7 @@ pub(crate) async fn connect_to_bssid(
             futures_timer::Delay::new(timeouts::scan_wait()).await;
 
             let specific_object = find_ap_by_bssid(conn, &wifi, ssid, target_bssid).await?;
+            let creds = upgrade_security_for_ap(conn, &specific_object, creds).await;
 
             match decision {
                 SavedDecision::UseSaved(saved) => {
@@ -1040,16 +1043,11 @@ fn decide_saved_connection(
     creds: &WifiSecurity,
 ) -> Result<SavedDecision> {
     match saved {
-        Some(path)
-            if matches!(creds, WifiSecurity::Open)
-                || matches!(creds, WifiSecurity::WpaPsk { psk } if psk.is_empty()) =>
-        {
+        Some(path) if matches!(creds, WifiSecurity::Open) || wants_stored_secret(creds) => {
             Ok(SavedDecision::UseSaved(path))
         }
         Some(_) => Ok(SavedDecision::RebuildFresh),
-        None if matches!(creds, WifiSecurity::WpaPsk { psk } if psk.is_empty()) => {
-            Err(ConnectionError::MissingPassword)
-        }
+        None if wants_stored_secret(creds) => Err(ConnectionError::MissingPassword),
         None => Ok(SavedDecision::RebuildFresh),
     }
 }
@@ -1057,7 +1055,73 @@ fn decide_saved_connection(
 /// Whether a failed saved-profile activation can be retried without relying on
 /// that profile's stored secret.
 fn can_rebuild_after_saved_failure(creds: &WifiSecurity) -> bool {
-    !matches!(creds, WifiSecurity::WpaPsk { psk } if psk.is_empty())
+    !wants_stored_secret(creds)
+}
+
+/// Whether the caller supplied an empty passphrase, meaning "use the secret
+/// already stored in the saved profile".
+fn wants_stored_secret(creds: &WifiSecurity) -> bool {
+    matches!(
+        creds,
+        WifiSecurity::WpaPsk { psk } | WifiSecurity::Sae { psk } if psk.is_empty()
+    )
+}
+
+/// Rewrites `WpaPsk` credentials to `Sae` when the target AP is SAE-only.
+///
+/// `WifiSecurity::WpaPsk` emits `key-mgmt=wpa-psk`, which NetworkManager
+/// rejects outright on WPA3-Personal APs that advertise SAE without PSK.
+/// Transition-mode APs advertise both and still accept PSK, so those are left
+/// alone.
+///
+/// AP security flags are advisory here: if they cannot be read, the caller's
+/// credentials are used unchanged and NetworkManager reports any mismatch.
+async fn upgrade_security_for_ap(
+    conn: &Connection,
+    ap: &OwnedObjectPath,
+    creds: WifiSecurity,
+) -> WifiSecurity {
+    let WifiSecurity::WpaPsk { psk } = &creds else {
+        return creds;
+    };
+    if psk.is_empty() {
+        return creds;
+    }
+
+    let Ok(proxy) = NMAccessPointProxy::builder(conn).path(ap.clone()) else {
+        return creds;
+    };
+    let Ok(proxy) = proxy.build().await else {
+        return creds;
+    };
+    let (Ok(flags), Ok(wpa), Ok(rsn)) = (
+        proxy.flags().await,
+        proxy.wpa_flags().await,
+        proxy.rsn_flags().await,
+    ) else {
+        trace!("Could not read AP security flags; keeping the supplied credentials");
+        return creds;
+    };
+
+    upgrade_security_for_features(creds, &decode_security(flags, wpa, rsn))
+}
+
+/// Decides the key management to use given what the AP advertises.
+///
+/// Only a non-empty `WpaPsk` on an SAE-only AP is rewritten. Transition-mode
+/// APs advertise SAE *and* PSK and accept `wpa-psk`, so they are left alone
+/// rather than switched to SAE behind the caller's back.
+fn upgrade_security_for_features(creds: WifiSecurity, security: &SecurityFeatures) -> WifiSecurity {
+    let WifiSecurity::WpaPsk { psk } = creds else {
+        return creds;
+    };
+
+    if psk.is_empty() || !security.sae || security.psk {
+        return WifiSecurity::WpaPsk { psk };
+    }
+
+    debug!("AP advertises SAE without PSK; using key-mgmt=sae instead of wpa-psk");
+    WifiSecurity::Sae { psk }
 }
 
 /// Checks if currently connected to the specified SSID.
@@ -1300,13 +1364,108 @@ mod tests {
         assert!(!can_rebuild_after_saved_failure(&WifiSecurity::WpaPsk {
             psk: String::new(),
         }));
+        assert!(!can_rebuild_after_saved_failure(&WifiSecurity::Sae {
+            psk: String::new(),
+        }));
         assert!(can_rebuild_after_saved_failure(&WifiSecurity::Open));
         assert!(can_rebuild_after_saved_failure(&WifiSecurity::WpaPsk {
+            psk: "password".into(),
+        }));
+        assert!(can_rebuild_after_saved_failure(&WifiSecurity::Sae {
             psk: "password".into(),
         }));
         assert!(can_rebuild_after_saved_failure(&enterprise_credentials()));
         assert!(can_rebuild_after_saved_failure(
             &wpa3_enterprise_credentials()
         ));
+    }
+
+    #[test]
+    fn empty_sae_passphrase_requests_the_stored_secret() {
+        let path = saved_path();
+
+        assert_eq!(
+            decide_saved_connection(
+                Some(path.clone()),
+                &WifiSecurity::Sae { psk: String::new() }
+            )
+            .unwrap(),
+            SavedDecision::UseSaved(path)
+        );
+        assert!(matches!(
+            decide_saved_connection(None, &WifiSecurity::Sae { psk: String::new() }),
+            Err(ConnectionError::MissingPassword)
+        ));
+    }
+
+    fn sae_only_ap() -> SecurityFeatures {
+        SecurityFeatures {
+            privacy: true,
+            sae: true,
+            ccmp: true,
+            ..SecurityFeatures::default()
+        }
+    }
+
+    fn transition_mode_ap() -> SecurityFeatures {
+        SecurityFeatures {
+            psk: true,
+            ..sae_only_ap()
+        }
+    }
+
+    #[test]
+    fn psk_credentials_become_sae_on_sae_only_access_points() {
+        let upgraded = upgrade_security_for_features(
+            WifiSecurity::WpaPsk {
+                psk: "password".into(),
+            },
+            &sae_only_ap(),
+        );
+
+        assert_eq!(
+            upgraded,
+            WifiSecurity::Sae {
+                psk: "password".into()
+            }
+        );
+    }
+
+    #[test]
+    fn psk_credentials_survive_transition_mode_and_psk_only_access_points() {
+        let creds = WifiSecurity::WpaPsk {
+            psk: "password".into(),
+        };
+
+        for ap in [transition_mode_ap(), SecurityFeatures::default()] {
+            assert_eq!(
+                upgrade_security_for_features(creds.clone(), &ap),
+                creds,
+                "PSK must be preserved where the AP accepts it: {ap:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn upgrade_leaves_every_other_credential_kind_untouched() {
+        let cases = [
+            WifiSecurity::Open,
+            // Empty PSK means "use the stored secret", which the saved profile
+            // already carries with the right key management.
+            WifiSecurity::WpaPsk { psk: String::new() },
+            WifiSecurity::Sae {
+                psk: "password".into(),
+            },
+            enterprise_credentials(),
+            wpa3_enterprise_credentials(),
+        ];
+
+        for creds in cases {
+            assert_eq!(
+                upgrade_security_for_features(creds.clone(), &sae_only_ap()),
+                creds,
+                "only a non-empty WpaPsk should be rewritten: {creds:?}"
+            );
+        }
     }
 }

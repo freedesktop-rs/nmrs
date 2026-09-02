@@ -10,16 +10,26 @@ readonly dbus_log="${runtime_dir}/dbus.log"
 readonly udev_log="${runtime_dir}/udev.log"
 readonly networkmanager_log="${runtime_dir}/networkmanager.log"
 readonly hostapd_log="${runtime_dir}/hostapd.log"
+readonly sae_hostapd_log="${runtime_dir}/sae-hostapd.log"
 readonly dnsmasq_log="${runtime_dir}/dnsmasq.log"
+readonly sae_dnsmasq_log="${runtime_dir}/sae-dnsmasq.log"
 readonly wired_dnsmasq_log="${runtime_dir}/wired-dnsmasq.log"
 readonly wpa_supplicant_log="${runtime_dir}/wpa_supplicant.log"
 readonly hostapd_config="${runtime_dir}/hostapd.conf"
+readonly sae_hostapd_config="${runtime_dir}/sae-hostapd.conf"
 readonly networkmanager_config="${runtime_dir}/NetworkManager.conf"
 readonly dnsmasq_leases="${runtime_dir}/dnsmasq.leases"
+readonly sae_dnsmasq_leases="${runtime_dir}/sae-dnsmasq.leases"
 readonly wired_dnsmasq_leases="${runtime_dir}/wired-dnsmasq.leases"
 readonly hwsim_ssid="nmrs-hwsim"
 readonly hwsim_password="nmrs-hwsim-password"
 readonly hwsim_gateway="192.168.250.1"
+# Second access point on its own radio, advertising SAE without PSK.
+# WPA3-Personal rejects `key-mgmt=wpa-psk`, which is what the SAE integration
+# test exercises.
+readonly hwsim_sae_ssid="nmrs-hwsim-sae"
+readonly hwsim_sae_password="nmrs-hwsim-sae-password"
+readonly hwsim_sae_gateway="192.168.252.1"
 readonly wired_client_interface="nmrs-client"
 readonly wired_server_interface="nmrs-server"
 readonly wired_gateway="192.168.251.1"
@@ -28,10 +38,13 @@ dbus_pid=""
 udev_pid=""
 networkmanager_pid=""
 hostapd_pid=""
+sae_hostapd_pid=""
 dnsmasq_pid=""
+sae_dnsmasq_pid=""
 wired_dnsmasq_pid=""
 wpa_supplicant_pid=""
 hwsim_station_interface=""
+hwsim_sae_ap_interface=""
 wired_veth_created=false
 
 stop_process() {
@@ -49,8 +62,10 @@ cleanup() {
     stop_process "${networkmanager_pid}"
     stop_process "${wpa_supplicant_pid}"
     stop_process "${dnsmasq_pid}"
+    stop_process "${sae_dnsmasq_pid}"
     stop_process "${wired_dnsmasq_pid}"
     stop_process "${hostapd_pid}"
+    stop_process "${sae_hostapd_pid}"
     if [[ "${wired_veth_created}" == true ]] && ip link show "${wired_client_interface}" >/dev/null 2>&1; then
         ip link delete "${wired_client_interface}" || true
     fi
@@ -65,7 +80,9 @@ cleanup() {
             "${networkmanager_log}" \
             "${wpa_supplicant_log}" \
             "${hostapd_log}" \
+            "${sae_hostapd_log}" \
             "${dnsmasq_log}" \
+            "${sae_dnsmasq_log}" \
             "${wired_dnsmasq_log}"; do
             if [[ -s "${log_file}" ]]; then
                 printf '\n===== %s =====\n' "$(basename "${log_file}")" >&2
@@ -87,6 +104,37 @@ print_hostapd_log() {
     cat "${hostapd_log}" >&2 || true
 }
 
+print_sae_hostapd_log() {
+    echo "The SAE hostapd did not become ready. Its log follows:" >&2
+    cat "${sae_hostapd_log}" >&2 || true
+}
+
+# Starts one hostapd per access point and waits for its beacon.
+start_hostapd() {
+    local config="$1" log="$2" pid
+
+    hostapd "${config}" >"${log}" 2>&1 &
+    pid=$!
+
+    for _ in $(seq 1 15); do
+        if grep --quiet 'AP-ENABLED' "${log}"; then
+            break
+        fi
+
+        if ! kill -0 "${pid}" 2>/dev/null; then
+            return 1
+        fi
+
+        sleep 1
+    done
+
+    if ! grep --quiet 'AP-ENABLED' "${log}"; then
+        return 1
+    fi
+
+    printf '%s\n' "${pid}"
+}
+
 print_wpa_supplicant_log() {
     echo "wpa_supplicant did not become ready. Its log follows:" >&2
     cat "${wpa_supplicant_log}" >&2 || true
@@ -95,6 +143,11 @@ print_wpa_supplicant_log() {
 print_dnsmasq_log() {
     echo "dnsmasq did not become ready. Its log follows:" >&2
     cat "${dnsmasq_log}" >&2 || true
+}
+
+print_sae_dnsmasq_log() {
+    echo "The SAE dnsmasq did not become ready. Its log follows:" >&2
+    cat "${sae_dnsmasq_log}" >&2 || true
 }
 
 start_dbus() {
@@ -211,14 +264,15 @@ setup_hwsim_access_point() {
                 fi
             done | sort
     )
-    if (( ${#wifi_interfaces[@]} != 2 )); then
-        echo "Expected exactly two mac80211_hwsim interfaces, found ${#wifi_interfaces[@]}" >&2
+    if (( ${#wifi_interfaces[@]} != 3 )); then
+        echo "Expected exactly three mac80211_hwsim interfaces, found ${#wifi_interfaces[@]}" >&2
         iw dev >&2 || true
         exit 1
     fi
 
     ap_interface="${wifi_interfaces[0]}"
-    hwsim_station_interface="${wifi_interfaces[1]}"
+    hwsim_sae_ap_interface="${wifi_interfaces[1]}"
+    hwsim_station_interface="${wifi_interfaces[2]}"
 
     printf '%s\n' \
         "interface=${ap_interface}" \
@@ -231,29 +285,36 @@ setup_hwsim_access_point() {
         'wpa_key_mgmt=WPA-PSK' \
         'rsn_pairwise=CCMP' >"${hostapd_config}"
 
-    hostapd "${hostapd_config}" >"${hostapd_log}" 2>&1 &
-    hostapd_pid=$!
+    # SAE-only: no WPA-PSK in wpa_key_mgmt, and PMF required, as WPA3-Personal
+    # mandates. NetworkManager rejects a wpa-psk profile against it, which is
+    # what makes it a useful fixture. It gets its own radio and hostapd
+    # process; a second BSS on the PSK radio did not initialize under hwsim.
+    printf '%s\n' \
+        "interface=${hwsim_sae_ap_interface}" \
+        'driver=nl80211' \
+        "ssid=${hwsim_sae_ssid}" \
+        'hw_mode=g' \
+        'channel=1' \
+        'wpa=2' \
+        "sae_password=${hwsim_sae_password}" \
+        'wpa_key_mgmt=SAE' \
+        'rsn_pairwise=CCMP' \
+        'ieee80211w=2' \
+        'sae_require_mfp=1' >"${sae_hostapd_config}"
 
-    for _ in $(seq 1 15); do
-        if grep --quiet 'AP-ENABLED' "${hostapd_log}"; then
-            break
-        fi
-
-        if ! kill -0 "${hostapd_pid}" 2>/dev/null; then
-            print_hostapd_log
-            exit 1
-        fi
-
-        sleep 1
-    done
-
-    if ! grep --quiet 'AP-ENABLED' "${hostapd_log}"; then
+    if ! hostapd_pid="$(start_hostapd "${hostapd_config}" "${hostapd_log}")"; then
         print_hostapd_log
+        exit 1
+    fi
+    if ! sae_hostapd_pid="$(start_hostapd "${sae_hostapd_config}" "${sae_hostapd_log}")"; then
+        print_sae_hostapd_log
         exit 1
     fi
 
     ip link set "${ap_interface}" up
     ip address replace "${hwsim_gateway}/24" dev "${ap_interface}"
+    ip link set "${hwsim_sae_ap_interface}" up
+    ip address replace "${hwsim_sae_gateway}/24" dev "${hwsim_sae_ap_interface}"
 
     # NetworkManager's activation does not complete until DHCP succeeds. Run a
     # DHCP-only dnsmasq bound to the hwsim AP interface; port=0 avoids exposing
@@ -286,6 +347,39 @@ setup_hwsim_access_point() {
 
     if ! kill -0 "${dnsmasq_pid}" 2>/dev/null; then
         print_dnsmasq_log
+        exit 1
+    fi
+
+    # The SAE radio is a separate L2 segment, so it needs its own DHCP server
+    # on its own subnet. A second instance keeps the PSK setup untouched.
+    dnsmasq \
+        --no-daemon \
+        --conf-file=/dev/null \
+        --interface="${hwsim_sae_ap_interface}" \
+        --bind-interfaces \
+        --port=0 \
+        --dhcp-authoritative \
+        --dhcp-range=192.168.252.10,192.168.252.50,255.255.255.0,1h \
+        --dhcp-option=3,"${hwsim_sae_gateway}" \
+        --dhcp-leasefile="${sae_dnsmasq_leases}" \
+        --log-dhcp >"${sae_dnsmasq_log}" 2>&1 &
+    sae_dnsmasq_pid=$!
+
+    for _ in $(seq 1 10); do
+        if grep --quiet 'DHCP, IP range' "${sae_dnsmasq_log}"; then
+            break
+        fi
+
+        if ! kill -0 "${sae_dnsmasq_pid}" 2>/dev/null; then
+            print_sae_dnsmasq_log
+            exit 1
+        fi
+
+        sleep 1
+    done
+
+    if ! kill -0 "${sae_dnsmasq_pid}" 2>/dev/null; then
+        print_sae_dnsmasq_log
         exit 1
     fi
 
@@ -457,6 +551,9 @@ if [[ "${mode}" == "wifi-integration" ]]; then
     export NMRS_EXPECT_WIFI_SSID="${hwsim_ssid}"
     export NMRS_WIFI_PASSWORD="${hwsim_password}"
     export NMRS_WIFI_INTERFACE="${hwsim_station_interface}"
+    export NMRS_REQUIRE_WIFI_SAE=1
+    export NMRS_EXPECT_WIFI_SAE_SSID="${hwsim_sae_ssid}"
+    export NMRS_WIFI_SAE_PASSWORD="${hwsim_sae_password}"
 elif [[ "${mode}" == "all" || "${mode}" == "integration" ]]; then
     nmcli device set "${wired_client_interface}" managed yes
 

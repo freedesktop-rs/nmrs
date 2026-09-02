@@ -115,7 +115,7 @@ jobs:
             iw dev | awk '$1 == "Interface" { print $2 }' | sort -u
           )
 
-          sudo -n modprobe mac80211_hwsim radios=2
+          sudo -n modprobe mac80211_hwsim radios=3
           udevadm settle --timeout=10
 
           mapfile -t interfaces_after < <(
@@ -126,8 +126,8 @@ jobs:
               <(printf '%s\n' "${interfaces_before[@]}") \
               <(printf '%s\n' "${interfaces_after[@]}")
           )
-          if (( ${#hwsim_interfaces[@]} != 2 )); then
-            echo "Expected the hwsim module to create two interfaces, found ${#hwsim_interfaces[@]}" >&2
+          if (( ${#hwsim_interfaces[@]} != 3 )); then
+            echo "Expected the hwsim module to create three interfaces, found ${#hwsim_interfaces[@]}" >&2
             iw dev >&2 || true
             exit 1
           fi
@@ -149,8 +149,8 @@ jobs:
           trap diagnose ERR
 
           read -r -a hwsim_interfaces <<< "${NMRS_HOST_HWSIM_INTERFACES:?missing hwsim interface list}"
-          if (( ${#hwsim_interfaces[@]} != 2 )); then
-            echo "Expected exactly two recorded hwsim interfaces, found ${#hwsim_interfaces[@]}" >&2
+          if (( ${#hwsim_interfaces[@]} != 3 )); then
+            echo "Expected exactly three recorded hwsim interfaces, found ${#hwsim_interfaces[@]}" >&2
             exit 1
           fi
 
@@ -169,8 +169,8 @@ jobs:
             test-integration \
             -euo pipefail -c '
               read -r -a hwsim_interfaces <<< "${NMRS_HOST_HWSIM_INTERFACES:?missing hwsim interface list}"
-              if (( ${#hwsim_interfaces[@]} != 2 )); then
-                echo "Expected exactly two hwsim interfaces in the helper, found ${#hwsim_interfaces[@]}" >&2
+              if (( ${#hwsim_interfaces[@]} != 3 )); then
+                echo "Expected exactly three hwsim interfaces in the helper, found ${#hwsim_interfaces[@]}" >&2
                 exit 1
               fi
 

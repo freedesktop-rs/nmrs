@@ -51,7 +51,7 @@ pub struct WifiNetworkGroup {
 ///     println!("SSID: {}", net.ssid);
 ///     println!("  Signal: {}%", net.strength.unwrap_or(0));
 ///     println!("  Secured: {}", net.secured);
-///     
+///
 ///     if let Some(freq) = net.frequency {
 ///         let band = if freq > 5000 { "5GHz" } else { "2.4GHz" };
 ///         println!("  Band: {}", band);
@@ -118,12 +118,12 @@ pub struct Network {
 ///
 /// if let Some(network) = networks.first() {
 ///     let info = nm.show_details(network).await?;
-///     
+///
 ///     println!("Network: {}", info.ssid);
 ///     println!("Signal: {} {}", info.strength, info.bars);
 ///     println!("Security: {}", info.security);
 ///     println!("Status: {}", info.status);
-///     
+///
 ///     if let Some(rate) = info.rate_mbps {
 ///         println!("Speed: {} Mbps", rate);
 ///     }
@@ -917,7 +917,9 @@ impl EapOptionsBuilder {
 /// # Variants
 ///
 /// - [`Open`](WifiSecurity::Open) - No authentication required (open network)
-/// - [`WpaPsk`](WifiSecurity::WpaPsk) - WPA/WPA2/WPA3 Personal (password-based)
+/// - [`WpaPsk`](WifiSecurity::WpaPsk) - WPA/WPA2 Personal, and WPA3 Personal on
+///   transition-mode APs that still advertise PSK (password-based)
+/// - [`Sae`](WifiSecurity::Sae) - WPA3 Personal on SAE-only APs (password-based)
 /// - [`WpaEap`](WifiSecurity::WpaEap) - WPA/WPA2 Enterprise (802.1X authentication)
 ///
 /// # Examples
@@ -970,7 +972,12 @@ impl EapOptionsBuilder {
 pub enum WifiSecurity {
     /// Open network (no authentication)
     Open,
-    /// WPA-PSK (password-based authentication)
+    /// WPA-PSK (password-based authentication).
+    ///
+    /// Emits `key-mgmt=wpa-psk`, which SAE-only WPA3-Personal access points
+    /// reject. [`connect`](crate::NetworkManager::connect) upgrades this to
+    /// [`Sae`](Self::Sae) automatically when the target AP advertises SAE
+    /// without PSK.
     WpaPsk {
         /// Pre-shared key (password)
         psk: String,
@@ -985,6 +992,15 @@ pub enum WifiSecurity {
     Wpa3Eap192bit {
         /// EAP configuration options
         opts: EapOptions,
+    },
+    /// SAE (WPA3-Personal, password-based authentication).
+    ///
+    /// Emits `key-mgmt=sae`. Use this for access points that advertise SAE
+    /// without PSK; transition-mode APs that advertise both accept
+    /// [`WpaPsk`](Self::WpaPsk).
+    Sae {
+        /// Pre-shared key (password)
+        psk: String,
     },
 }
 
@@ -1004,6 +1020,10 @@ impl fmt::Debug for WifiSecurity {
                 .debug_struct("Wpa3Eap192bit")
                 .field("opts", opts)
                 .finish(),
+            Self::Sae { .. } => formatter
+                .debug_struct("Sae")
+                .field("psk", &Redacted)
+                .finish(),
         }
     }
 }
@@ -1019,6 +1039,15 @@ impl WifiSecurity {
     #[must_use]
     pub fn is_psk(&self) -> bool {
         matches!(self, WifiSecurity::WpaPsk { .. })
+    }
+
+    /// Returns `true` if this is an SAE (WPA3-Personal) security type.
+    ///
+    /// [`is_psk`](Self::is_psk) covers only `key-mgmt=wpa-psk`; callers that
+    /// treat both as "needs a passphrase" should check both.
+    #[must_use]
+    pub fn is_sae(&self) -> bool {
+        matches!(self, WifiSecurity::Sae { .. })
     }
 
     /// Returns `true` if this is a WPA-EAP (Enterprise/802.1X) security type.

@@ -303,11 +303,17 @@ pub struct NetworkInfo {
 pub enum WifiSecurity {
     Open,
     WpaPsk { psk: String },
+    Sae { psk: String },
     WpaEap { opts: EapOptions },
+    Wpa3Eap192bit { opts: EapOptions },
 }
 ```
 
-Methods: `secured()`, `is_psk()`, `is_eap()`
+Methods: `secured()`, `is_psk()`, `is_sae()`, `is_eap()`
+
+`WpaPsk` emits `key-mgmt=wpa-psk` and `Sae` emits `key-mgmt=sae`. SAE-only
+WPA3-Personal access points reject the former; `connect()` upgrades `WpaPsk` to
+`Sae` automatically when the target AP advertises SAE without PSK.
 
 ### EapOptions
 

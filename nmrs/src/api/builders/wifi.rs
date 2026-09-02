@@ -76,6 +76,7 @@ pub fn build_wifi_connection(
     let builder = match security {
         models::WifiSecurity::Open => base_wifi_builder(ssid, opts).open(),
         models::WifiSecurity::WpaPsk { psk } => base_wifi_builder(ssid, opts).wpa_psk(psk),
+        models::WifiSecurity::Sae { psk } => base_wifi_builder(ssid, opts).sae(psk),
         models::WifiSecurity::WpaEap { opts: eap } => {
             base_wifi_builder(ssid, opts).wpa_eap(eap.clone())
         }
@@ -120,6 +121,7 @@ pub fn try_build_wifi_connection(
     let builder = match security {
         models::WifiSecurity::Open => base.open(),
         models::WifiSecurity::WpaPsk { psk } => base.wpa_psk(psk),
+        models::WifiSecurity::Sae { psk } => base.sae(psk),
         models::WifiSecurity::WpaEap { opts: eap } => base.try_wpa_eap(eap.clone())?,
         models::WifiSecurity::Wpa3Eap192bit { opts: eap } => {
             base.try_wpa3_eap_192_bit(eap.clone())?
@@ -225,6 +227,23 @@ mod tests {
             Ok(_) => panic!("conflicting EAP certificate inputs should be rejected"),
             Err(error) => panic!("expected InvalidInput, got {error:?}"),
         }
+    }
+
+    #[test]
+    fn sae_security_maps_to_the_sae_builder() {
+        let conn = build_wifi_connection(
+            "wpa3net",
+            &WifiSecurity::Sae {
+                psk: "password123".into(),
+            },
+            &default_opts(),
+        );
+
+        let security = conn
+            .get("802-11-wireless-security")
+            .expect("SAE must produce a security section");
+        assert_eq!(security.get("key-mgmt"), Some(&Value::from("sae")));
+        assert!(security.get("auth-alg").is_none());
     }
 
     #[test]

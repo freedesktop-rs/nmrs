@@ -10,8 +10,8 @@ use nmrs::agent::{SecretAgent, SecretAgentFlags, SecretAgentHandle, SecretSettin
 use nmrs::builders::WireGuardBuilder;
 use nmrs::raw::zvariant::{OwnedObjectPath, OwnedValue, Value};
 use nmrs::{
-    ActiveConnection, ActiveConnectionState, ConnectByUuidConfig, ConnectionError, DeviceState,
-    MonitorHandle, NetworkEvent, NetworkEventStream, NetworkManager, SettingsChange,
+    ActiveConnection, ActiveConnectionState, ConnectByUuidConfig, ConnectType, ConnectionError,
+    DeviceState, MonitorHandle, NetworkEvent, NetworkEventStream, NetworkManager, SettingsChange,
     SettingsEventStream, SettingsPatch, SettingsSummary, TimeoutConfig, WifiKeyMgmt, WifiScope,
     WifiSecurity, WireGuardPeer,
 };
@@ -116,6 +116,36 @@ async fn cleanup_saved_profile(nm: &NetworkManager, uuid: &str) -> Vec<String> {
         Ok(Err(ConnectionError::SavedConnectionNotFound(missing))) if missing == uuid => Vec::new(),
         Ok(Err(error)) => vec![format!("delete saved profile {uuid}: {error}")],
         Err(_) => vec![format!("delete saved profile {uuid}: timed out")],
+    }
+}
+
+/// Reads back the key management NetworkManager actually stored for `ssid`.
+///
+/// Asserting on the stored profile rather than on connectivity alone is what
+/// distinguishes an SAE profile from a PSK profile that happened to associate.
+async fn saved_wifi_key_mgmt(nm: &NetworkManager, ssid: &str) -> WifiKeyMgmt {
+    let uuid = bounded(
+        "resolve the saved WiFi UUID",
+        DBUS_TIMEOUT,
+        nm.get_saved_connection_uuid(ssid),
+    )
+    .await
+    .expect("failed to resolve the saved WiFi UUID")
+    .unwrap_or_else(|| panic!("a successful connection to {ssid:?} created no saved profile"));
+    let saved = bounded(
+        "decode the saved WiFi profile",
+        DBUS_TIMEOUT,
+        nm.get_saved_connection(&uuid),
+    )
+    .await
+    .expect("failed to decode the saved WiFi profile");
+
+    match saved.summary {
+        SettingsSummary::Wifi {
+            security: Some(security),
+            ..
+        } => security.key_mgmt,
+        other => panic!("expected a secured WiFi settings summary, got {other:?}"),
     }
 }
 
@@ -1117,6 +1147,215 @@ async fn wired_connection_lifecycle() {
     .await;
 
     let cleanup_failures = cleanup_wired_profile(&nm, &interface).await;
+    finish_after_cleanup(outcome, cleanup_failures);
+}
+
+/// Proves WPA3-Personal (SAE) authentication against the SAE-only hwsim BSS.
+///
+/// The regression this guards (issue #486): `WifiSecurity::WpaPsk` emits
+/// `key-mgmt=wpa-psk`, which NetworkManager rejects outright on an access point
+/// advertising SAE without PSK, with
+/// `802-11-wireless-security.key-mgmt: Access point does not support PSK but
+/// setting requires it`. Connecting must succeed and must leave behind a
+/// profile NetworkManager stored as SAE, not merely a profile that connected.
+#[tokio::test]
+#[serial]
+#[ignore = "requires the isolated mac80211_hwsim WiFi harness"]
+async fn wifi_sae_only_access_point_accepts_psk_and_sae_credentials() {
+    required_capability("NMRS_REQUIRE_WIFI_SAE");
+    let interface = required_env("NMRS_WIFI_INTERFACE");
+    let ssid = required_env("NMRS_EXPECT_WIFI_SAE_SSID");
+    let password = required_env("NMRS_WIFI_SAE_PASSWORD");
+
+    let nm = network_manager().await;
+    let initial_wifi_enabled = bounded(
+        "read the initial WiFi radio state",
+        DBUS_TIMEOUT,
+        nm.wifi_state(),
+    )
+    .await
+    .expect("failed to capture the WiFi radio state before the test")
+    .enabled;
+    let wifi = nm.wifi(&interface);
+
+    let outcome = AssertUnwindSafe(async {
+        bounded(
+            "enable the WiFi radio",
+            DBUS_TIMEOUT,
+            nm.set_wireless_enabled(true),
+        )
+        .await
+        .expect("the harness declared WiFi available, but enabling it failed");
+        bounded(
+            "wait for the WiFi device to become ready",
+            DBUS_TIMEOUT,
+            nm.wait_for_wifi_ready(),
+        )
+        .await
+        .expect("the harness WiFi device did not become ready");
+        bounded(
+            "remove any stale SAE test profile",
+            DBUS_TIMEOUT,
+            wifi.forget(&ssid),
+        )
+        .await
+        .expect("failed to remove a stale SAE test profile");
+
+        // Pin the harness precondition: without this, a PSK-capable AP would
+        // let the WpaPsk connect below pass for the wrong reason.
+        bounded("scan for the SAE network", WIFI_TIMEOUT, wifi.scan())
+            .await
+            .expect("failed to scan for the SAE network");
+        // A single scan often reports nothing yet, so poll as the WPA test does.
+        let network = timeout(Duration::from_secs(15), async {
+            loop {
+                let networks = wifi
+                    .list_networks()
+                    .await
+                    .expect("listing WiFi scan results failed");
+                if let Some(network) = networks.into_iter().find(|network| network.ssid == ssid) {
+                    return network;
+                }
+                sleep(Duration::from_millis(500)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("the SAE harness network {ssid:?} was not discovered"));
+        assert_eq!(network.device, interface);
+        assert!(
+            network.security_features.sae,
+            "the harness AP must advertise SAE: {:?}",
+            network.security_features
+        );
+        assert!(
+            !network.security_features.psk,
+            "the harness AP must not advertise PSK, or this test proves nothing: {:?}",
+            network.security_features
+        );
+        assert_eq!(
+            network.security_features.preferred_connect_type(),
+            ConnectType::Sae
+        );
+
+        // 1. PSK credentials against an SAE-only AP: the reported failure.
+        bounded(
+            "connect to the SAE-only AP with WpaPsk credentials",
+            WIFI_TIMEOUT,
+            wifi.connect(
+                &ssid,
+                WifiSecurity::WpaPsk {
+                    psk: password.clone(),
+                },
+            ),
+        )
+        .await
+        .expect("WpaPsk credentials must reach an SAE-only AP, not be rejected by NetworkManager");
+        assert!(
+            bounded(
+                "check the SAE connection state",
+                DBUS_TIMEOUT,
+                nm.is_connected(&ssid),
+            )
+            .await
+            .expect("failed to query the SAE connection state")
+        );
+        assert_eq!(
+            saved_wifi_key_mgmt(&nm, &ssid).await,
+            WifiKeyMgmt::Sae,
+            "PSK credentials on an SAE-only AP must be stored as SAE, not wpa-psk"
+        );
+
+        // 2. The same network requested explicitly as SAE.
+        bounded(
+            "forget the upgraded SAE profile",
+            WIFI_TIMEOUT,
+            wifi.forget(&ssid),
+        )
+        .await
+        .expect("failed to forget the upgraded SAE profile");
+        bounded(
+            "connect with explicit SAE credentials",
+            WIFI_TIMEOUT,
+            wifi.connect(
+                &ssid,
+                WifiSecurity::Sae {
+                    psk: password.clone(),
+                },
+            ),
+        )
+        .await
+        .expect("explicit SAE credentials failed against the SAE-only AP");
+        assert_eq!(saved_wifi_key_mgmt(&nm, &ssid).await, WifiKeyMgmt::Sae);
+
+        let saved_uuid = bounded(
+            "resolve the saved SAE UUID",
+            DBUS_TIMEOUT,
+            nm.get_saved_connection_uuid(&ssid),
+        )
+        .await
+        .expect("failed to resolve the saved SAE UUID")
+        .expect("a successful SAE connection had no saved UUID");
+        let active = active_connections(&nm).await;
+        let typed_wifi = active
+            .iter()
+            .find_map(|connection| match connection {
+                ActiveConnection::Wifi(wifi) if wifi.ssid == ssid => Some(wifi.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                panic!("typed active connections omitted the SAE network: {active:?}")
+            });
+        assert_eq!(typed_wifi.uuid, saved_uuid);
+        assert_eq!(typed_wifi.interface.as_deref(), Some(interface.as_str()));
+        assert_eq!(typed_wifi.state, ActiveConnectionState::Activated);
+        assert!(
+            typed_wifi
+                .ip4_address
+                .as_deref()
+                .is_some_and(|address| address.starts_with("192.168.252.")),
+            "the SAE connection did not complete DHCP on the SAE BSS: {:?}",
+            typed_wifi.ip4_address
+        );
+
+        // 3. An empty SAE passphrase reuses the secret NetworkManager stored.
+        bounded(
+            "disconnect from the SAE network",
+            DBUS_TIMEOUT,
+            wifi.disconnect(),
+        )
+        .await
+        .expect("failed to disconnect from the SAE network");
+        bounded(
+            "reconnect with the stored SAE secret",
+            WIFI_TIMEOUT,
+            wifi.connect(&ssid, WifiSecurity::Sae { psk: String::new() }),
+        )
+        .await
+        .expect("stored-secret SAE reconnect failed");
+        assert!(
+            bounded(
+                "check the stored-secret SAE reconnect",
+                DBUS_TIMEOUT,
+                nm.is_connected(&ssid),
+            )
+            .await
+            .expect("failed to query the stored-secret SAE reconnect")
+        );
+        assert_eq!(saved_wifi_key_mgmt(&nm, &ssid).await, WifiKeyMgmt::Sae);
+    })
+    .catch_unwind()
+    .await;
+
+    let mut cleanup_failures = cleanup_wifi_profile(&wifi, &ssid).await;
+    match timeout(DBUS_TIMEOUT, nm.set_wireless_enabled(initial_wifi_enabled)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => cleanup_failures.push(format!(
+            "restore WiFi radio enabled={initial_wifi_enabled}: {error}"
+        )),
+        Err(_) => cleanup_failures.push(format!(
+            "restore WiFi radio enabled={initial_wifi_enabled}: timed out"
+        )),
+    }
     finish_after_cleanup(outcome, cleanup_failures);
 }
 
