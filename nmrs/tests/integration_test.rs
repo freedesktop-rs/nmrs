@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::future::Future;
+use std::net::Ipv4Addr;
 use std::panic::{AssertUnwindSafe, resume_unwind};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -432,6 +433,13 @@ async fn networkmanager_profile_crud_and_settings_events() {
         assert_eq!(profile.id, id);
         assert_eq!(profile.connection_type, "wireguard");
         assert!(!profile.autoconnect);
+        match profile.ipv4 {
+            Some(ipv4) => {
+                assert_eq!(ipv4.address_data[0].address, Ipv4Addr::new(10, 203, 0, 2));
+                assert_eq!(ipv4.address_data[0].prefix, 24);
+            }
+            None => panic!("expected an ipv4 section")
+        }
         match profile.summary {
             SettingsSummary::WireGuard {
                 mtu,

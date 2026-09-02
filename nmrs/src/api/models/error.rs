@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 use crate::core::ovpn_parser::error::OvpnParseError;
+use crate::models::IpAddressParseError;
 
 use super::connection_state::ConnectionStateReason;
 use super::state_reason::StateReason;
@@ -280,4 +281,7 @@ pub enum ConnectionError {
     /// No interface was found with the given name
     #[error("no interface named '{0}'")]
     InterfaceNotFound(String),
+
+    #[error("invalid IP address: {0}")]
+    AddressParse(IpAddressParseError),
 }

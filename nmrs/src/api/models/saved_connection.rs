@@ -7,9 +7,14 @@
 //! [`GetSecrets`](https://networkmanager.dev/docs/api/latest/gdbus-org.freedesktop.NetworkManager.Settings.Connection.html#gdbus-method-org-freedesktop-NetworkManager-Settings-Connection.GetSecrets)
 //! when a [secret agent](crate::agent) is registered. See feature `01-secret-agent`.
 
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    net::{Ipv4Addr, Ipv6Addr},
+};
 
 use zvariant::{OwnedObjectPath, OwnedValue};
+
+use crate::{builders::Route, models::IpAddress};
 
 /// Full saved profile with a structured [`SettingsSummary`].
 #[non_exhaustive]
@@ -39,6 +44,10 @@ pub struct SavedConnection {
     pub filename: Option<String>,
     /// Decoded type-specific fields (no secrets).
     pub summary: SettingsSummary,
+    /// IPv4 specific settings.
+    pub ipv4: Option<IpSettings<Ipv4Addr>>,
+    /// IPv6 specific settings.
+    pub ipv6: Option<IpSettings<Ipv6Addr>>,
 }
 
 /// Cheap listing: path plus `connection` identity fields only (still one `GetSettings` per profile).
@@ -213,4 +222,57 @@ pub enum SettingsSummary {
         /// Keys from the top-level settings dict (`connection`, `ipv4`, …).
         sections: Vec<String>,
     },
+}
+
+/// Settings from the ipv4/6 section.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct IpSettings<A> {
+    /// The method by which the connection obtains its IP address for this protocol.
+    pub method: IpMethod,
+    /// The list of IP addresses.
+    pub address_data: Vec<IpAddress<A>>,
+    /// The gateway associated with this protocol configuration.
+    pub gateway: Option<A>,
+    /// The list of DNS search domains.
+    pub dns_search: Vec<String>,
+    /// The list of IP routes.
+    pub route_data: Vec<Route>,
+    /// If true, this connection will never be assigned the default route.
+    pub never_default: bool,
+    /// Ignore the automatically configured DNS servers, and only use the saved configuration.
+    pub ignore_auto_dns: bool,
+}
+
+/// How the connection obtains its IP address.
+#[derive(Debug, Clone)]
+pub enum IpMethod {
+    /// IP configuration is automatically defined according to the hardware interface.
+    Auto,
+    /// IP configuration is manually specified in the connection settings.
+    Manual,
+    /// The connection does not use or require an IP address of this type.
+    Disabled,
+    /// The connection should only be configured for link-local operation.
+    LinkLocal,
+    /// Allows other devices to connect through this device to the default network.
+    Shared,
+    /// IP configuration is ignored for this protocol
+    Ignore,
+    /// Unknown method
+    Other(String),
+}
+
+impl From<String> for IpMethod {
+    fn from(value: String) -> Self {
+        match value.as_str() {
+            "auto" => Self::Auto,
+            "manual" => Self::Manual,
+            "disabled" => Self::Disabled,
+            "link-local" => Self::LinkLocal,
+            "shared" => Self::Shared,
+            "ignore" => Self::Ignore,
+            _ => Self::Other(value),
+        }
+    }
 }

@@ -1,18 +1,21 @@
 //! Decode and manage NetworkManager saved connection settings.
 
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use futures::stream::{self, StreamExt};
 use log::warn;
 use zbus::Connection;
-use zvariant::{OwnedObjectPath, OwnedValue, Str};
+use zvariant::{Array, OwnedObjectPath, OwnedValue, Str, Value};
 
 use crate::Result;
 use crate::api::models::{
     ConnectionError, SavedConnection, SavedConnectionBrief, SettingsPatch, SettingsSummary,
     VpnSecretFlags, WifiKeyMgmt, WifiSecuritySummary,
 };
+use crate::builders::Route;
 use crate::dbus::{NMSettingsConnectionProxy, NMSettingsProxy};
+use crate::models::{IpAddress, IpMethod, IpSettings};
 use crate::util::utils::decode_ssid_or_empty;
 
 /// Builds the `a{sa{sv}}` delta for [`SettingsPatch`] (unit-tested).
@@ -111,6 +114,10 @@ fn take_str(m: &HashMap<String, OwnedValue>, key: &str) -> Option<String> {
     m.get(key).and_then(owned_to_str)
 }
 
+fn take_str_ref<'a>(m: &'a HashMap<String, OwnedValue>, key: &str) -> Option<&'a str> {
+    m.get(key).and_then(|s| s.try_into().ok())
+}
+
 fn take_bool(m: &HashMap<String, OwnedValue>, key: &str) -> Option<bool> {
     m.get(key).and_then(owned_to_bool)
 }
@@ -172,6 +179,8 @@ pub(crate) fn decode_saved(
     let permissions = take_str_vec(conn, "permissions");
 
     let summary = decode_summary(&connection_type, &settings);
+    let ipv4 = settings.get("ipv4").map(decode_ip);
+    let ipv6 = settings.get("ipv6").map(decode_ip);
 
     Ok(SavedConnection {
         path,
@@ -186,6 +195,8 @@ pub(crate) fn decode_saved(
         unsaved,
         filename,
         summary,
+        ipv4,
+        ipv6,
     })
 }
 
@@ -425,6 +436,65 @@ fn decode_bluetooth(settings: &HashMap<String, HashMap<String, OwnedValue>>) -> 
     let bdaddr = take_str(&b, "bdaddr").unwrap_or_default();
     let bt_type = take_str(&b, "type").unwrap_or_else(|| "panu".into());
     SettingsSummary::Bluetooth { bdaddr, bt_type }
+}
+
+fn decode_ip<A>(settings: &HashMap<String, OwnedValue>) -> IpSettings<A>
+where
+    A: FromStr,
+{
+    let method = take_str(settings, "method");
+    let method = match method {
+        Some(method) => method.into(),
+        None => IpMethod::Auto,
+    };
+    let mut address_data = Vec::new();
+    if let Some(value) = settings.get("address-data")
+        && let Ok(array) = TryInto::<&Array>::try_into(value)
+    {
+        for entry in array.iter() {
+            if let Value::Dict(dict) = entry
+                && let Ok(Some(address)) = dict.get::<_, &str>(&"address")
+                && let Ok(Some(prefix)) = dict.get::<_, u32>(&"prefix")
+            {
+                if let Ok(address) = address.parse() {
+                    address_data.push(IpAddress::new(address, prefix as u8));
+                }
+            }
+        }
+    };
+    let gateway = take_str_ref(settings, "gateway").and_then(|gateway| gateway.parse().ok());
+    let dns_search = take_str_vec(settings, "dns-search");
+    let mut route_data = Vec::new();
+    if let Some(value) = settings.get("route-data")
+        && let Ok(array) = TryInto::<&Array>::try_into(value)
+    {
+        for entry in array.iter() {
+            if let Value::Dict(dict) = entry
+                && let Ok(Some(dest)) = dict.get::<_, String>(&"dest")
+                && let Ok(Some(prefix)) = dict.get(&"prefix")
+            {
+                let mut route = Route::new(dest, prefix);
+                if let Ok(Some(next_hop)) = dict.get::<_, String>(&"next_hop") {
+                    route = route.next_hop(next_hop);
+                }
+                if let Ok(Some(metric)) = dict.get(&"metric") {
+                    route = route.metric(metric)
+                }
+                route_data.push(route);
+            }
+        }
+    };
+    let never_default = take_bool(settings, "never-default").unwrap_or(false);
+    let ignore_auto_dns = take_bool(settings, "ignore-auto-dns").unwrap_or(false);
+    IpSettings {
+        method,
+        address_data,
+        gateway,
+        dns_search,
+        route_data,
+        never_default,
+        ignore_auto_dns,
+    }
 }
 
 async fn fetch_one_full(
