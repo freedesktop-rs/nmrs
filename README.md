@@ -282,5 +282,12 @@ Thank you to everyone who has helped build, test, document, and review `nmrs`.
     <td align="center"><a href="https://github.com/theroguevigilante"><img src="https://avatars.githubusercontent.com/u/206333897?v=4" width="100px;" alt="theroguevigilante"/><br /><sub><b>theroguevigilante</b></sub></a></td>
     <td align="center"><a href="https://github.com/tuned-willow"><img src="https://avatars.githubusercontent.com/u/250158319?v=4" width="100px;" alt="tuned-willow"/><br /><sub><b>tuned-willow</b></sub></a></td>
   </tr>
+  <tr>
+    <td align="center"><a href="https://github.com/rootrascal"><img src="https://avatars.githubusercontent.com/u/30204467?v=4" width="100px;" alt="rootrascal"/><br /><sub><b>rootrascal</b></sub></a></td>
+    <td align="center"><a href="https://github.com/joshwd36"><img src="https://avatars.githubusercontent.com/u/4719780?v=4" width="100px;" alt="joshwd36"/><br /><sub><b>joshwd36</b></sub></a></td>
+    <td align="center"><a href="https://github.com/VrtxOmega"><img src="https://avatars.githubusercontent.com/u/272921586?v=4" width="100px;" alt="VrtxOmega"/><br /><sub><b>VrtxOmega</b></sub></a></td>
+    <td align="center"><a href="https://github.com/neriGabriel"><img src="https://avatars.githubusercontent.com/u/16361235?v=4" width="100px;" alt="neriGabriel"/><br /><sub><b>neriGabriel</b></sub></a></td>
+    <td align="center"><a href="https://github.com/Nuga-agun"><img src="https://avatars.githubusercontent.com/u/235713354?v=4" width="100px;" alt="Nuga-agun"/><br /><sub><b>Nuga-agun</b></sub></a></td>
+  </tr>
 </table>
 <!-- readme: contributors -end -->
