@@ -5,6 +5,9 @@ All notable changes to the `nmrs` crate will be documented in this file.
 ## [Unreleased]
 ### Added
 
+- `WifiSecurity::Sae` and `WifiConnectionBuilder::sae()` emit
+  `key-mgmt=sae` for WPA3-Personal access points, plus `WifiSecurity::is_sae()`
+  to distinguish them from WPA-PSK. ([#486](https://github.com/freedesktop-rs/nmrs/issues/486))
 - `connect_by_uuid()` and `disconnect_by_uuid()` activate and deactivate any
   saved connection by UUID, not just VPN profiles. `connect_by_uuid()` takes a
   `ConnectByUuidConfig` so the interface stored in the profile can be
@@ -19,6 +22,13 @@ All notable changes to the `nmrs` crate will be documented in this file.
 
 ### Fixed
 
+- Connecting with `WifiSecurity::WpaPsk` to a WPA3-Personal access point that
+  advertises SAE without PSK no longer fails with
+  `802-11-wireless-security.key-mgmt: Access point does not support PSK but
+  setting requires it`. `connect()` reads the target access point's security
+  flags and emits `key-mgmt=sae` for SAE-only APs; transition-mode APs that
+  still advertise PSK are unchanged.
+  ([#486](https://github.com/freedesktop-rs/nmrs/issues/486))
 - `disconnect_vpn_by_uuid()` again returns `Ok(())` when no saved connection
   matches the UUID. Delegating to `disconnect_by_uuid()` leaked that case out
   as `ConnectionError::SavedConnectionNotFound`, which callers of the

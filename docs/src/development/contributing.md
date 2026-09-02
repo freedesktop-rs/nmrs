@@ -91,7 +91,7 @@ The WiFi contract uses one hwsim radio for a WPA2 access point with DHCP and a
 second radio as NetworkManager's station:
 
 ```bash
-sudo modprobe mac80211_hwsim radios=2
+sudo modprobe mac80211_hwsim radios=3
 docker compose run --build --rm test-wifi-integration
 sudo modprobe -r mac80211_hwsim
 ```

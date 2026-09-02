@@ -142,7 +142,7 @@ with `mac80211_hwsim`. One radio advertises a WPA2-PSK test network using
 other radio.
 
 ```bash
-sudo modprobe mac80211_hwsim radios=2
+sudo modprobe mac80211_hwsim radios=3
 docker compose run --build --rm test-wifi-integration
 sudo modprobe -r mac80211_hwsim
 ```
@@ -160,8 +160,9 @@ It also mounts the host's `/run/udev` read-only so NetworkManager can manage
 the newly created hwsim links.
 
 The self-hosted runner service account needs passwordless `sudo` permission for
-`modprobe mac80211_hwsim radios=2` and `modprobe -r mac80211_hwsim`; CI invokes
-both commands with `sudo -n`.
+`modprobe mac80211_hwsim radios=3` and `modprobe -r mac80211_hwsim`; CI invokes
+both commands with `sudo -n`. The sudoers rule matches the exact argument list,
+so changing the radio count means updating the rule on the runner as well.
 
 ### Approving Wi-Fi CI Runs
 
