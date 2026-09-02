@@ -222,6 +222,31 @@ impl WifiConnectionBuilder {
         self
     }
 
+    /// Configures SAE (WPA3-Personal) security with the given passphrase.
+    ///
+    /// Emits `key-mgmt=sae`, which is what SAE-only access points require.
+    /// Transition-mode APs that advertise both SAE and PSK also accept
+    /// [`wpa_psk`](Self::wpa_psk).
+    ///
+    /// Unlike [`wpa_psk`](Self::wpa_psk) this sets no `auth-alg`;
+    /// NetworkManager rejects `auth-alg=open` combined with SAE. Protected
+    /// management frames are left unset so NetworkManager applies its own
+    /// SAE default.
+    #[must_use]
+    pub fn sae(mut self, psk: impl Into<String>) -> Self {
+        let mut security = HashMap::new();
+        security.insert("key-mgmt", Value::from("sae"));
+        security.insert("psk", Value::from(psk.into()));
+        security.insert("psk-flags", Value::from(0u32));
+
+        self.inner = self
+            .inner
+            .without_section("802-1x")
+            .with_section("802-11-wireless-security", security);
+        self.security_configured = true;
+        self
+    }
+
     /// Configures WPA-EAP (Enterprise) security with 802.1X authentication.
     ///
     /// Supports PEAP, TTLS, and TLS methods with various inner authentication protocols.
@@ -607,6 +632,53 @@ mod tests {
         assert_eq!(
             wireless.get("security"),
             Some(&Value::from("802-11-wireless-security"))
+        );
+    }
+
+    #[test]
+    fn builds_sae_wifi() {
+        let settings = WifiConnectionBuilder::new("Wpa3Net")
+            .sae("password123")
+            .ipv4_auto()
+            .ipv6_auto()
+            .build();
+
+        let security = settings
+            .get("802-11-wireless-security")
+            .expect("SAE must produce a security section");
+        assert_eq!(security.get("key-mgmt"), Some(&Value::from("sae")));
+        assert_eq!(
+            security.get("psk"),
+            Some(&Value::from("password123".to_string()))
+        );
+        assert_eq!(security.get("psk-flags"), Some(&Value::from(0u32)));
+
+        // NetworkManager rejects a profile that pairs SAE with an auth-alg.
+        assert!(
+            security.get("auth-alg").is_none(),
+            "SAE must not set auth-alg"
+        );
+        assert!(!settings.contains_key("802-1x"));
+
+        let wireless = settings.get("802-11-wireless").unwrap();
+        assert_eq!(
+            wireless.get("security"),
+            Some(&Value::from("802-11-wireless-security"))
+        );
+    }
+
+    #[test]
+    fn sae_replaces_previously_configured_psk_security() {
+        let settings = WifiConnectionBuilder::new("Wpa3Net")
+            .wpa_psk("password123")
+            .sae("password123")
+            .build();
+
+        let security = settings.get("802-11-wireless-security").unwrap();
+        assert_eq!(security.get("key-mgmt"), Some(&Value::from("sae")));
+        assert!(
+            security.get("auth-alg").is_none(),
+            "the earlier wpa_psk auth-alg must not survive"
         );
     }
 

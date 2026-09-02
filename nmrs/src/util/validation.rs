@@ -138,6 +138,26 @@ pub fn validate_wifi_security(security: &WifiSecurity) -> Result<(), ConnectionE
             Ok(())
         }
 
+        // SAE has no 8-character floor: WPA3-Personal passphrases may be
+        // shorter than WPA2-PSK requires, so only the upper bound applies.
+        WifiSecurity::Sae { psk } => {
+            // Allow empty PSK only if user wants to use saved credentials
+            if psk.is_empty() {
+                return Ok(());
+            }
+
+            let psk_len = psk.len();
+
+            if psk_len > MAX_WPA_PSK_LENGTH {
+                return Err(ConnectionError::InvalidAddress(format!(
+                    "SAE password too long: {} characters (maximum {} characters)",
+                    psk_len, MAX_WPA_PSK_LENGTH
+                )));
+            }
+
+            Ok(())
+        }
+
         WifiSecurity::WpaEap { opts } => {
             validate_wifi_eap(opts)?;
 
@@ -972,6 +992,44 @@ mod tests {
             validate_wifi_security(&psk),
             InvalidAddress,
             "WPA-PSK password too long: 64 characters (maximum 63 characters)"
+        );
+    }
+
+    #[test]
+    fn test_validate_wifi_security_sae_valid() {
+        let sae = WifiSecurity::Sae {
+            psk: "password123".to_string(),
+        };
+        assert!(validate_wifi_security(&sae).is_ok());
+    }
+
+    #[test]
+    fn test_validate_wifi_security_sae_allows_short_passphrase() {
+        // SAE has no 8-character minimum, unlike WPA-PSK.
+        let sae = WifiSecurity::Sae {
+            psk: "short".to_string(),
+        };
+        assert!(validate_wifi_security(&sae).is_ok());
+    }
+
+    #[test]
+    fn test_validate_wifi_security_sae_empty() {
+        let sae = WifiSecurity::Sae {
+            psk: "".to_string(),
+        };
+        // Empty passphrase is allowed (for saved credentials)
+        assert!(validate_wifi_security(&sae).is_ok());
+    }
+
+    #[test]
+    fn test_validate_wifi_security_sae_too_long() {
+        let sae = WifiSecurity::Sae {
+            psk: "a".repeat(64),
+        };
+        assert_error_message!(
+            validate_wifi_security(&sae),
+            InvalidAddress,
+            "SAE password too long: 64 characters (maximum 63 characters)"
         );
     }
 
