@@ -3,6 +3,8 @@
 All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
+
+## [3.5.1] - 2026-09-02
 ### Added
 
 - `WifiSecurity::Sae` and `WifiConnectionBuilder::sae()` emit
@@ -533,7 +535,8 @@ present)` constructor; `RadioState::new` keeps existing behavior and defaults
 
 - EAP connections default to no certificates (advanced certificate management coming in future releases)
 
-[Unreleased]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.0...HEAD
+[Unreleased]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.1...HEAD
+[3.5.1]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.0...nmrs-v3.5.1
 [3.5.0]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.4.2...nmrs-v3.5.0
 [3.4.2]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.4.1...nmrs-v3.4.2
 [3.4.1]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.4.0...nmrs-v3.4.1
