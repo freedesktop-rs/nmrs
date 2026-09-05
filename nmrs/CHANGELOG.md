@@ -3,6 +3,8 @@
 All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
+
+## [3.5.2] - 2026-09-05
 ### Fixed
 - `#[deprecated(since = ...)]` on `connect_vpn_by_uuid()` and `disconnect_vpn_by_uuid()` said `3.6.0`; corrected to `3.5.1`, the release that actually deprecated them.([#544](https://github.com/freedesktop-rs/nmrs/pull/544))
 - `disconnect()` no longer fails with `org.freedesktop.NetworkManager.Device.NotActive` when the device finishes deactivating between the state check and the `Disconnect` call. The error is treated as already-disconnected and the call still waits for the device to settle. ([#544](https://github.com/freedesktop-rs/nmrs/pull/544))
@@ -539,7 +541,8 @@ present)` constructor; `RadioState::new` keeps existing behavior and defaults
 
 - EAP connections default to no certificates (advanced certificate management coming in future releases)
 
-[Unreleased]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.1...HEAD
+[Unreleased]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.2...HEAD
+[3.5.2]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.1...nmrs-v3.5.2
 [3.5.1]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.0...nmrs-v3.5.1
 [3.5.0]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.4.2...nmrs-v3.5.0
 [3.4.2]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.4.1...nmrs-v3.4.2
