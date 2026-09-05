@@ -537,8 +537,19 @@ pub(crate) async fn disconnect_wifi_and_wait(
     .await?;
 
     trace!("Sending disconnect request");
-    raw.call_method("Disconnect", &()).await?;
-    trace!("Disconnect method called successfully");
+    match raw.call_method("Disconnect", &()).await {
+        Ok(_) => trace!("Disconnect method called successfully"),
+        // The device can finish deactivating between the state check above
+        // and this call (e.g. after `DeactivateConnection`), in which case
+        // NetworkManager rejects `Disconnect` with `Device.NotActive`. That
+        // is the outcome we want, so fall through to the state wait.
+        Err(zbus::Error::MethodError(name, _, _))
+            if name.as_str() == "org.freedesktop.NetworkManager.Device.NotActive" =>
+        {
+            debug!("Device already inactive when Disconnect was called");
+        }
+        Err(e) => return Err(e.into()),
+    }
 
     // Wait for disconnect using signal-based monitoring
     let timeout = timeout_config.map(|c| c.disconnect_timeout);
