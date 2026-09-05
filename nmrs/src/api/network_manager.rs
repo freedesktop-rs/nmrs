@@ -883,7 +883,7 @@ impl NetworkManager {
     /// # Ok(())
     /// # }
     /// ```
-    #[deprecated(since = "3.6.0", note = "Use `connect_by_uuid` instead")]
+    #[deprecated(since = "3.5.1", note = "Use `connect_by_uuid` instead")]
     pub async fn connect_vpn_by_uuid(&self, uuid: &str) -> Result<()> {
         let _guard = self.connect_guard.lock().await;
         connect_by_uuid(
@@ -915,7 +915,7 @@ impl NetworkManager {
     /// [`disconnect_by_uuid`](Self::disconnect_by_uuid), which reports the
     /// missing profile as
     /// [`SavedConnectionNotFound`](crate::ConnectionError::SavedConnectionNotFound).
-    #[deprecated(since = "3.6.0", note = "Use `disconnect_by_uuid` instead")]
+    #[deprecated(since = "3.5.1", note = "Use `disconnect_by_uuid` instead")]
     pub async fn disconnect_vpn_by_uuid(&self, uuid: &str) -> Result<()> {
         let _guard = self.connect_guard.lock().await;
         match disconnect_by_uuid(&self.conn, uuid).await {

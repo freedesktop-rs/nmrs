@@ -3,6 +3,8 @@
 All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
+### Fixed
+- `#[deprecated(since = ...)]` on `connect_vpn_by_uuid()` and `disconnect_vpn_by_uuid()` said `3.6.0`; corrected to `3.5.1`, the release that actually deprecated them.
 
 ## [3.5.1] - 2026-09-02
 ### Added
