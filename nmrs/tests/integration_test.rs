@@ -1540,13 +1540,21 @@ async fn wifi_wpa_saved_connection_lifecycle() {
         )
         .await
         .expect("failed to re-enable WiFi after the network-monitor contract");
+        // After an rfkill cycle the device object may be destroyed and
+        // re-created at a new path; retry until NM settles.
         bounded(
             "wait for WiFi after the network-monitor contract",
             DBUS_TIMEOUT,
-            nm.wait_for_wifi_ready(),
+            async {
+                loop {
+                    match nm.wait_for_wifi_ready().await {
+                        Ok(()) => break,
+                        Err(_) => sleep(Duration::from_millis(100)).await,
+                    }
+                }
+            },
         )
-        .await
-        .expect("the WiFi device did not recover after re-enabling it");
+        .await;
         bounded(
             "rescan after the network-monitor contract",
             DBUS_TIMEOUT,
