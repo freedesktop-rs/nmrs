@@ -6,6 +6,7 @@ All notable changes to the `nmrs` crate will be documented in this file.
 ### Fixed
 - `#[deprecated(since = ...)]` on `connect_vpn_by_uuid()` and `disconnect_vpn_by_uuid()` said `3.6.0`; corrected to `3.5.1`, the release that actually deprecated them.([#544](https://github.com/freedesktop-rs/nmrs/pull/544))
 - `disconnect()` no longer fails with `org.freedesktop.NetworkManager.Device.NotActive` when the device finishes deactivating between the state check and the `Disconnect` call. The error is treated as already-disconnected and the call still waits for the device to settle. ([#544](https://github.com/freedesktop-rs/nmrs/pull/544))
+- Saved-profile lookups (`get_saved_connection_path()`, `get_saved_connection_uuid()`, `has_saved_connection()`, and the Wi-Fi/wired/VPN/Bluetooth connect paths built on them) no longer fail when a profile restricted to another user via `connection.permissions` exists. `GetSettings` returns `Settings.PermissionDenied` for those; they are now skipped instead of aborting the whole scan, which previously made known networks prompt for a password and then fail to connect. ([#545](https://github.com/freedesktop-rs/nmrs/pull/545))
 
 ## [3.5.1] - 2026-09-02
 ### Added

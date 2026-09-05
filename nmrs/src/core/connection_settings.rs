@@ -36,12 +36,20 @@ async fn find_saved_connection_by_name(
     for cpath in conns {
         let cproxy = connection_settings_proxy(conn, cpath.clone()).await?;
 
-        let msg = cproxy.call_method("GetSettings", &()).await.map_err(|e| {
-            ConnectionError::DbusOperation {
-                context: format!("failed to get settings for {}", cpath.as_str()),
-                source: e,
+        // `ListConnections` includes profiles restricted to other users via
+        // `connection.permissions`; `GetSettings` on those fails with
+        // `Settings.PermissionDenied`. Skip them instead of failing the
+        // whole lookup, matching the other profile scans in this crate.
+        let msg = match cproxy.call_method("GetSettings", &()).await {
+            Ok(msg) => msg,
+            Err(e) => {
+                trace!(
+                    "skipping saved connection {}: GetSettings failed: {e}",
+                    cpath.as_str()
+                );
+                continue;
             }
-        })?;
+        };
 
         let body = msg.body();
         let all: HashMap<String, HashMap<String, Value>> = body.deserialize()?;
