@@ -1136,13 +1136,28 @@ async fn wired_connection_lifecycle() {
         )
         .await
         .expect("failed to restore managed state");
-        bounded(
-            "restore autoconnect on the managed veth client",
-            DBUS_TIMEOUT,
-            nm.set_device_autoconnect(&interface, true),
-        )
+        // Remanaging clears the autoconnect block that an explicit disconnect
+        // leaves behind, so NetworkManager reactivates the saved profile as soon
+        // as the device is ready. Keep device autoconnect off until the profile
+        // is deleted and wait for the device to settle; otherwise that
+        // reactivation races the disconnect assertions below.
+        timeout(EVENT_TIMEOUT, async {
+            loop {
+                let devices = bounded("refresh remanaged device", DBUS_TIMEOUT, nm.list_devices())
+                    .await
+                    .expect("failed to refresh devices after restoring managed state");
+                let device = devices
+                    .iter()
+                    .find(|device| device.interface == interface)
+                    .expect("veth disappeared after restoring managed state");
+                if device.managed == Some(true) && device.state == DeviceState::Disconnected {
+                    break;
+                }
+                sleep(Duration::from_millis(25)).await;
+            }
+        })
         .await
-        .expect("failed to restore device autoconnect");
+        .expect("the remanaged veth never settled to Disconnected");
 
         bounded(
             "disconnect the managed veth client",
@@ -1236,6 +1251,26 @@ async fn wired_connection_lifecycle() {
             .expect("failed to resolve wired profile after deletion")
             .is_none()
         );
+
+        bounded(
+            "restore autoconnect on the managed veth client",
+            DBUS_TIMEOUT,
+            nm.set_device_autoconnect(&interface, true),
+        )
+        .await
+        .expect("failed to restore device autoconnect");
+        let devices = bounded(
+            "read restored autoconnect",
+            DBUS_TIMEOUT,
+            nm.list_wired_devices(),
+        )
+        .await
+        .expect("failed to refresh wired devices");
+        let device = devices
+            .iter()
+            .find(|device| device.interface == interface)
+            .expect("veth disappeared after restoring autoconnect");
+        assert_eq!(device.autoconnect, Some(true));
     })
     .catch_unwind()
     .await;

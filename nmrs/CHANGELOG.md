@@ -10,6 +10,14 @@ All notable changes to the `nmrs` crate will be documented in this file.
   `NetworkManager::set_device_autoconnect()` / `set_device_managed()` provide
   high-level control of both writable properties. ([#541](https://github.com/freedesktop-rs/nmrs/issues/541))
 
+### Fixed
+
+- `wired_connection_lifecycle` restored device autoconnect immediately after
+  remanaging the veth, which let NetworkManager reactivate the saved profile and
+  race the disconnect assertions that follow. Autoconnect is now restored once
+  the profile is deleted, and the test waits for the remanaged device to settle.
+  ([#547](https://github.com/freedesktop-rs/nmrs/pull/547))
+
 ## [3.5.2] - 2026-09-05
 ### Fixed
 - `#[deprecated(since = ...)]` on `connect_vpn_by_uuid()` and `disconnect_vpn_by_uuid()` said `3.6.0`; corrected to `3.5.1`, the release that actually deprecated them.([#544](https://github.com/freedesktop-rs/nmrs/pull/544))
