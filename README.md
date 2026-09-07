@@ -151,18 +151,22 @@ If something is missing that you'd like to see, please file a PR or issue, addin
 - [x] Per-interface Wi-Fi scoping with `nm.wifi("wlan0")`
 - [x] Open networks
 - [x] WPA-PSK personal networks
+- [x] WPA3-Personal SAE
 - [x] WPA-EAP PEAP/MSCHAPv2
 - [x] WPA-EAP TTLS/PAP
 - [x] EAP-TLS with certificate/key paths or blobs
 - [x] WPA3-Enterprise 192-bit mode
-- [x] Hidden networks
+- [x] Hidden-network profiles via `WifiConnectionBuilder::hidden`
 - [x] BSSID-specific connection
 - [x] Race-free `try_connect` / `try_connect_to_bssid`
+- [x] Hotspot (AP) and ad-hoc modes with shared IPv4
+- [ ] Hidden networks in `connect()` (directed scan for a non-broadcast SSID)
 - [ ] Wi-Fi P2P connection management
 
 ### Wired, Bluetooth, And VLAN
 
 - [x] Ethernet DHCP connections
+- [x] Wired device details with MAC, link speed, and assigned addresses
 - [x] Bluetooth PAN/DUN device discovery and connection
 - [x] VLAN profile builder and validation
 - [x] Loopback device detection
@@ -186,30 +190,35 @@ If something is missing that you'd like to see, please file a PR or issue, addin
 
 - [x] Saved connection listing, raw access, decoded summaries, update, delete, and reload
 - [x] Profile reuse for saved Wi-Fi and Ethernet connections
+- [x] Activate/deactivate any saved profile by UUID with `connect_by_uuid` / `disconnect_by_uuid`
 - [x] Secret agent for NetworkManager credential prompts
 - [x] Real-time network and device monitoring
+- [x] Typed `network_events()` / `settings_events()` streams and point-in-time `snapshot()`
+- [x] Per-device autoconnect and managed controls
 - [x] Wi-Fi, WWAN, Bluetooth, and aggregate airplane-mode radio state
 - [x] Connectivity state, forced connectivity checks, and captive-portal URL detection
-- [x] IPv4, IPv6, DHCPv4, and DHCPv6 settings
+- [x] IPv4 and IPv6 method, addresses, DNS, gateway, and routes
+- [ ] DHCP client options and lease details (DHCP4Config / DHCP6Config)
 
 ### Device And D-Bus Surface
 
 - [x] NetworkManager facade
+- [x] Generic `ConnectionBuilder`, `add_connection` / `add_and_activate_connection`, and raw `zbus` access
 - [x] Device enumeration and typed device models for Ethernet, Wi-Fi, Bluetooth, VLAN, Loopback, and Wi-Fi P2P
-- [x] Device metadata registry for Bond, Bridge, TUN, WireGuard, and other known NetworkManager type codes
+- [x] Device metadata registry for Bond, Bridge, TUN, Veth, WireGuard, and other known NetworkManager type codes
 - [x] Access Point
 - [x] Active Connection
 - [x] Settings
 - [x] Settings Connection
 - [x] Agent Manager
-- [x] VPN Connection
+- [x] Device.Wireless, Device.Wired, and Device.Bluetooth
+- [x] BlueZ `Adapter1` / `Device1`
+- [ ] VPN Connection (VPN state is currently read through Active Connection)
 - [ ] Checkpoint
 - [ ] DNS Manager
 - [ ] PPP
 - [ ] Modem / WWAN connection management
 - [ ] WiMAX NSP
-
-</details>
 
 ## Contributing
 
