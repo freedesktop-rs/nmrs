@@ -32,7 +32,7 @@ use crate::core::custom_connection::{
 };
 use crate::core::device::{
     is_connecting, list_bluetooth_devices, list_devices, list_wired_device_details,
-    wait_for_wifi_ready,
+    set_device_autoconnect, set_device_managed, wait_for_wifi_ready,
 };
 use crate::core::saved_connection as saved_profiles;
 use crate::core::scan::{current_network, list_access_points, list_networks, scan_networks};
@@ -366,6 +366,63 @@ impl NetworkManager {
     /// List all network devices managed by NetworkManager.
     pub async fn list_devices(&self) -> Result<Vec<Device>> {
         list_devices(&self.conn).await
+    }
+
+    /// Allows or prevents automatic connection activation on one device.
+    ///
+    /// This changes NetworkManager's per-device `Autoconnect` property. Setting
+    /// it to `false` does not disconnect a connection that is already active;
+    /// it only prevents future automatic activation until the property is set
+    /// to `true` or a connection is activated manually.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InterfaceNotFound`](crate::ConnectionError::InterfaceNotFound)
+    /// if no device has the supplied interface name. D-Bus and authorization
+    /// failures are returned as [`ConnectionError`](crate::ConnectionError).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use nmrs::NetworkManager;
+    ///
+    /// # async fn example() -> nmrs::Result<()> {
+    /// let nm = NetworkManager::new().await?;
+    /// nm.set_device_autoconnect("eth0", false).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn set_device_autoconnect(&self, interface: &str, autoconnect: bool) -> Result<()> {
+        set_device_autoconnect(&self.conn, interface, autoconnect).await
+    }
+
+    /// Sets whether NetworkManager manages one device.
+    ///
+    /// Setting this to `false` makes NetworkManager stop managing the device
+    /// and may tear down its active connection. The setting is temporary and
+    /// is lost when NetworkManager restarts. This uses the writable `Managed`
+    /// property so it also works with NetworkManager releases older than 1.58;
+    /// the newer `SetManaged` D-Bus method is required only for persistence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InterfaceNotFound`](crate::ConnectionError::InterfaceNotFound)
+    /// if no device has the supplied interface name. D-Bus and authorization
+    /// failures are returned as [`ConnectionError`](crate::ConnectionError).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use nmrs::NetworkManager;
+    ///
+    /// # async fn example() -> nmrs::Result<()> {
+    /// let nm = NetworkManager::new().await?;
+    /// nm.set_device_managed("eth0", false).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn set_device_managed(&self, interface: &str, managed: bool) -> Result<()> {
+        set_device_managed(&self.conn, interface, managed).await
     }
 
     /// List all bluetooth devices.

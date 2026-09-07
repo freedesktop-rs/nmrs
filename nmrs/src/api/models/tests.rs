@@ -629,6 +629,7 @@ fn device_with_type(device_type: DeviceType) -> Device {
         device_type,
         state: DeviceState::Activated,
         managed: Some(true),
+        autoconnect: Some(true),
         driver: Some("test".into()),
         ip4_address: None,
         ip6_address: None,

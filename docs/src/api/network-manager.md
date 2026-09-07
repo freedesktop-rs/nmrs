@@ -170,6 +170,8 @@ devices that NetworkManager reports as `veth`.
 | `list_wired_devices()` | `Result<Vec<Device>>` | List Ethernet devices |
 | `list_wired_device_details()` | `Result<Vec<WiredDevice>>` | List Ethernet devices with link speed, active connection id, and IPs |
 | `get_device_by_interface(name)` | `Result<OwnedObjectPath>` | Find device by interface name |
+| `set_device_autoconnect(name, bool)` | `Result<()>` | Allow or prevent automatic connection activation on one device |
+| `set_device_managed(name, bool)` | `Result<()>` | Temporarily make NetworkManager manage or ignore one device |
 | `is_connecting()` | `Result<bool>` | Check if any device is connecting |
 | `list_active_connections()` | `Result<Vec<ActiveConnection>>` | List typed active wired, Wi-Fi, VPN, and other connections |
 | `snapshot()` | `Result<NetworkSnapshot>` | Read point-in-time applet state after a `NetworkEvent` |

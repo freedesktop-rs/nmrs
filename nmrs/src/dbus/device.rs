@@ -42,6 +42,10 @@ pub trait NMDevice {
     #[zbus(property)]
     fn managed(&self) -> Result<bool>;
 
+    /// Set whether NetworkManager manages this device until the daemon restarts.
+    #[zbus(property)]
+    fn set_managed(&self, value: bool) -> Result<()>;
+
     /// The kernel driver in use.
     #[zbus(property)]
     fn driver(&self) -> Result<String>;

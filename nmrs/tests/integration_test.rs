@@ -195,6 +195,16 @@ async fn disconnect_device(nm: &NetworkManager, interface: &str) -> nmrs::Result
 
 async fn cleanup_wired_profile(nm: &NetworkManager, interface: &str) -> Vec<String> {
     let mut failures = Vec::new();
+    match timeout(DBUS_TIMEOUT, nm.set_device_managed(interface, true)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => failures.push(format!("restore managed state for {interface}: {error}")),
+        Err(_) => failures.push(format!("restore managed state for {interface}: timed out")),
+    }
+    match timeout(DBUS_TIMEOUT, nm.set_device_autoconnect(interface, true)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => failures.push(format!("restore autoconnect for {interface}: {error}")),
+        Err(_) => failures.push(format!("restore autoconnect for {interface}: timed out")),
+    }
     match timeout(DBUS_TIMEOUT, disconnect_device(nm, interface)).await {
         Ok(Ok(())) => {}
         Ok(Err(error)) => failures.push(format!("disconnect {interface}: {error}")),
@@ -967,9 +977,28 @@ async fn wired_connection_lifecycle() {
             .find(|device| device.interface == interface)
             .unwrap_or_else(|| {
                 panic!("managed veth interface {interface:?} was missing: {devices:?}")
-            });
+        });
         assert_eq!(device.managed, Some(true));
+        assert_eq!(device.autoconnect, Some(true));
         assert!(!device.path.is_empty());
+
+        let missing_interface = "nmrs-missing-interface";
+        let error = bounded(
+            "reject autoconnect changes for a missing interface",
+            DBUS_TIMEOUT,
+            nm.set_device_autoconnect(missing_interface, false),
+        )
+        .await
+        .expect_err("missing interface unexpectedly accepted an autoconnect change");
+        assert!(matches!(error, ConnectionError::InterfaceNotFound(name) if name == missing_interface));
+        let error = bounded(
+            "reject managed-state changes for a missing interface",
+            DBUS_TIMEOUT,
+            nm.set_device_managed(missing_interface, false),
+        )
+        .await
+        .expect_err("missing interface unexpectedly accepted a managed-state change");
+        assert!(matches!(error, ConnectionError::InterfaceNotFound(name) if name == missing_interface));
 
         let details = bounded(
             "list detailed wired devices",
@@ -1049,6 +1078,71 @@ async fn wired_connection_lifecycle() {
                 .as_deref()
                 .is_some_and(|address| address.starts_with("192.168.251."))
         );
+
+        bounded(
+            "disable autoconnect on the active veth client",
+            DBUS_TIMEOUT,
+            nm.set_device_autoconnect(&interface, false),
+        )
+        .await
+        .expect("failed to disable device autoconnect");
+        let devices = bounded("refresh devices", DBUS_TIMEOUT, nm.list_wired_devices())
+            .await
+            .expect("failed to refresh wired devices");
+        let device = devices
+            .iter()
+            .find(|device| device.interface == interface)
+            .expect("veth disappeared after disabling autoconnect");
+        assert_eq!(device.autoconnect, Some(false));
+        assert!(active_connections(&nm).await.iter().any(
+            |connection| matches!(connection, ActiveConnection::Wired(wired) if wired.uuid == saved_uuid)
+        ));
+
+        bounded(
+            "make the active veth client unmanaged",
+            DBUS_TIMEOUT,
+            nm.set_device_managed(&interface, false),
+        )
+        .await
+        .expect("failed to make device unmanaged");
+        timeout(EVENT_TIMEOUT, async {
+            loop {
+                let devices = bounded("refresh unmanaged device", DBUS_TIMEOUT, nm.list_devices())
+                    .await
+                    .expect("failed to refresh devices after changing managed state");
+                let device = devices
+                    .iter()
+                    .find(|device| device.interface == interface)
+                    .expect("veth disappeared after changing managed state");
+                let connection_is_active = active_connections(&nm).await.iter().any(
+                    |connection| matches!(connection, ActiveConnection::Wired(wired) if wired.uuid == saved_uuid),
+                );
+                if device.managed == Some(false)
+                    && device.state == DeviceState::Unmanaged
+                    && !connection_is_active
+                {
+                    break;
+                }
+                sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("managed=false did not deactivate the veth connection");
+
+        bounded(
+            "restore the managed veth client",
+            DBUS_TIMEOUT,
+            nm.set_device_managed(&interface, true),
+        )
+        .await
+        .expect("failed to restore managed state");
+        bounded(
+            "restore autoconnect on the managed veth client",
+            DBUS_TIMEOUT,
+            nm.set_device_autoconnect(&interface, true),
+        )
+        .await
+        .expect("failed to restore device autoconnect");
 
         bounded(
             "disconnect the managed veth client",

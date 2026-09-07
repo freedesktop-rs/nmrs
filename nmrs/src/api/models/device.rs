@@ -53,6 +53,8 @@ pub struct Device {
     pub state: DeviceState,
     /// Whether NetworkManager manages this device
     pub managed: Option<bool>,
+    /// Whether NetworkManager may automatically activate a connection on this device.
+    pub autoconnect: Option<bool>,
     /// Kernel driver name
     pub driver: Option<String>,
     /// Assigned IPv4 address with CIDR notation (only present when connected)

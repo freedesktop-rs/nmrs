@@ -93,6 +93,16 @@ pub(crate) async fn list_devices(conn: &Connection) -> Result<Vec<Device>> {
                 None
             }
         };
+        let autoconnect = match d_proxy.autoconnect().await {
+            Ok(value) => Some(value),
+            Err(e) => {
+                trace!(
+                    "Failed to get 'autoconnect' property for device {}: {}",
+                    interface, e
+                );
+                None
+            }
+        };
         let driver = match d_proxy.driver().await {
             Ok(d) => Some(d),
             Err(e) => {
@@ -165,6 +175,7 @@ pub(crate) async fn list_devices(conn: &Connection) -> Result<Vec<Device>> {
             device_type,
             state,
             managed,
+            autoconnect,
             driver,
             ip4_address,
             ip6_address,
@@ -173,6 +184,52 @@ pub(crate) async fn list_devices(conn: &Connection) -> Result<Vec<Device>> {
         });
     }
     Ok(devices)
+}
+
+/// Sets whether NetworkManager may automatically activate connections on a device.
+pub(crate) async fn set_device_autoconnect(
+    conn: &Connection,
+    interface: &str,
+    autoconnect: bool,
+) -> Result<()> {
+    let path = get_device_by_interface(conn, interface)
+        .await
+        .map_err(|error| match error {
+            ConnectionError::NotFound => ConnectionError::InterfaceNotFound(interface.to_string()),
+            other => other,
+        })?;
+    let device = NMDeviceProxy::builder(conn).path(path)?.build().await?;
+
+    device
+        .set_autoconnect(autoconnect)
+        .await
+        .map_err(|source| ConnectionError::DbusOperation {
+            context: format!("failed to set Autoconnect on {interface}"),
+            source,
+        })
+}
+
+/// Sets whether NetworkManager manages a device.
+pub(crate) async fn set_device_managed(
+    conn: &Connection,
+    interface: &str,
+    managed: bool,
+) -> Result<()> {
+    let path = get_device_by_interface(conn, interface)
+        .await
+        .map_err(|error| match error {
+            ConnectionError::NotFound => ConnectionError::InterfaceNotFound(interface.to_string()),
+            other => other,
+        })?;
+    let device = NMDeviceProxy::builder(conn).path(path)?.build().await?;
+
+    device
+        .set_managed(managed)
+        .await
+        .map_err(|source| ConnectionError::DbusOperation {
+            context: format!("failed to set Managed on {interface}"),
+            source,
+        })
 }
 
 /// Lists wired Ethernet devices with Ethernet-specific details.

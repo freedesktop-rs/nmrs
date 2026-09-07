@@ -16,6 +16,7 @@ pub struct Device {
     pub device_type: DeviceType,
     pub state: DeviceState,
     pub managed: Option<bool>,
+    pub autoconnect: Option<bool>,
     pub driver: Option<String>,
     pub ip4_address: Option<String>,
     pub ip6_address: Option<String>,
