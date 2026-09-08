@@ -325,22 +325,38 @@ impl SecretAgentHandle {
         Ok(())
     }
 
-    /// Unregisters the agent from NetworkManager.
+    /// Unregisters the agent from NetworkManager and stops serving its object.
     ///
     /// After this call, the request stream returned by
-    /// [`SecretAgentBuilder::register`] will complete.
+    /// [`SecretAgentBuilder::register`] will complete and the agent's object
+    /// path is released, even if NetworkManager is no longer reachable.
     ///
     /// # Errors
     ///
-    /// Returns an error if the D-Bus `Unregister` call fails.
+    /// Returns an error if the D-Bus `Unregister` call fails or if the agent's
+    /// object could not be removed from the object server.
     pub async fn unregister(self) -> crate::Result<()> {
-        let proxy = AgentManagerProxy::new(&self.conn).await.map_err(|e| {
-            ConnectionError::DbusOperation {
-                context: "creating AgentManager proxy for unregistration".into(),
+        let unregistered = async {
+            let proxy = AgentManagerProxy::new(&self.conn).await.map_err(|e| {
+                ConnectionError::DbusOperation {
+                    context: "creating AgentManager proxy for unregistration".into(),
+                    source: e,
+                }
+            })?;
+            proxy.unregister().await.map_err(unregistration_error)
+        }
+        .await;
+
+        self.conn
+            .object_server()
+            .remove::<SecretAgentInterface, _>(&*self.object_path)
+            .await
+            .map_err(|e| ConnectionError::DbusOperation {
+                context: format!("removing SecretAgent interface at {}", self.object_path),
                 source: e,
-            }
-        })?;
-        proxy.unregister().await.map_err(unregistration_error)?;
+            })?;
+
+        unregistered?;
         debug!("Unregistered secret agent '{}'", self.identifier);
         Ok(())
     }
@@ -434,5 +450,111 @@ mod tests {
         assert_eq!(builder.capabilities, SecretAgentCapabilities::empty());
         assert_eq!(builder.object_path, "/org/example/nmrs/Agent");
         assert_eq!(builder.queue_depth, 7);
+    }
+
+    async fn session_connection() -> Connection {
+        zbus::connection::Builder::session()
+            .expect("session bus address")
+            .build()
+            .await
+            .expect("session bus connection")
+    }
+
+    async fn serve_agent(conn: &Connection, object_path: &str) -> SecretAgentHandle {
+        let (request_tx, _request_rx) = mpsc::channel(DEFAULT_QUEUE_DEPTH);
+        let (cancel_tx, cancel_rx) = mpsc::unbounded();
+        let (store_tx, store_rx) = mpsc::unbounded();
+
+        conn.object_server()
+            .at(
+                object_path,
+                SecretAgentInterface {
+                    request_tx,
+                    cancel_tx,
+                    store_tx,
+                    pending: Arc::new(Mutex::new(HashMap::new())),
+                    next_request_id: AtomicU64::new(1),
+                    response_timeout:
+                        crate::types::constants::timeouts::secret_agent_response_timeout(),
+                },
+            )
+            .await
+            .expect("serving the agent interface");
+
+        SecretAgentHandle {
+            conn: conn.clone(),
+            identifier: DEFAULT_IDENTIFIER.to_owned(),
+            capabilities: SecretAgentCapabilities::VPN_HINTS,
+            object_path: object_path.to_owned(),
+            cancel_rx,
+            store_rx,
+        }
+    }
+
+    async fn introspect(conn: &Connection, path: &str) -> String {
+        zbus::fdo::IntrospectableProxy::builder(conn)
+            .destination(conn.unique_name().expect("unique name").clone())
+            .expect("destination")
+            .path(path.to_owned())
+            .expect("object path")
+            .build()
+            .await
+            .expect("introspectable proxy")
+            .introspect()
+            .await
+            .unwrap_or_default()
+    }
+
+    async fn exported_nodes(conn: &Connection) -> Vec<String> {
+        introspect(conn, "/")
+            .await
+            .lines()
+            .filter(|line| line.trim_start().starts_with("<node name="))
+            .map(|line| line.trim().to_owned())
+            .collect()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unregister_releases_the_agent_object_path() {
+        let conn = session_connection().await;
+        let handle = serve_agent(&conn, DEFAULT_OBJECT_PATH).await;
+
+        assert!(
+            introspect(&conn, DEFAULT_OBJECT_PATH)
+                .await
+                .contains("org.freedesktop.NetworkManager.SecretAgent")
+        );
+
+        let _ = handle.unregister().await;
+
+        assert!(
+            !introspect(&conn, DEFAULT_OBJECT_PATH)
+                .await
+                .contains("org.freedesktop.NetworkManager.SecretAgent")
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unregister_leaves_no_objects_exported_on_the_agent_connection() {
+        let conn = session_connection().await;
+        let handle = serve_agent(&conn, DEFAULT_OBJECT_PATH).await;
+
+        let _ = handle.unregister().await;
+
+        assert_eq!(exported_nodes(&conn).await, Vec::<String>::new());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unregister_releases_a_custom_object_path() {
+        let conn = session_connection().await;
+        let handle = serve_agent(&conn, "/org/example/nmrs/Agent").await;
+
+        let _ = handle.unregister().await;
+
+        assert!(
+            !introspect(&conn, "/org/example/nmrs/Agent")
+                .await
+                .contains("org.freedesktop.NetworkManager.SecretAgent")
+        );
     }
 }
