@@ -22,12 +22,7 @@ pub(crate) async fn set_global_dns_configuration(
     conn: &Connection,
     config: &GlobalDnsConfiguration,
 ) -> Result<()> {
-    if !config.is_empty() && !config.domains.contains_key("*") {
-        return Err(ConnectionError::InvalidInput {
-            field: "domains".into(),
-            reason: "missing default domain \"*\"".into(),
-        });
-    }
+    config.validate()?;
 
     let nm = NMProxy::new(conn).await?;
     nm.set_global_dns_configuration(config.to_dbus())

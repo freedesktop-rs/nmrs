@@ -1208,7 +1208,18 @@ impl NetworkManager {
     /// Writes the global DNS override.
     ///
     /// Pass [`GlobalDnsConfiguration::default()`] (or any empty value) to clear
-    /// the override. A non-empty value must include the `"*"` default domain.
+    /// the override. A non-empty value must include the `"*"` default domain
+    /// with at least one nameserver.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConnectionError::InvalidInput`] if a non-empty config is missing
+    /// the `"*"` domain or that domain has no servers.
+    ///
+    /// NetworkManager itself refuses the write when a `[global-dns]` section is
+    /// already set in `NetworkManager.conf` (file config wins over D-Bus). The
+    /// caller also needs the `settings.modify.global-dns` polkit action;
+    /// otherwise the D-Bus set fails with an authorization error.
     ///
     /// # Example
     ///

@@ -3,11 +3,16 @@
 use std::collections::HashMap;
 use zvariant::{OwnedValue, Value};
 
+use super::error::ConnectionError;
+
 /// One domain entry under `domains`.
 #[non_exhaustive]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GlobalDnsDomain {
+    /// Nameservers for this domain (plain IPs or `dns+udp` / `dns+tls` URIs).
     pub servers: Vec<String>,
+
+    /// Domain-specific resolver options.
     pub options: Vec<String>,
 }
 
@@ -40,8 +45,14 @@ impl GlobalDnsDomain {
 #[non_exhaustive]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GlobalDnsConfiguration {
+    /// Global search domains, applied when the override is active.
     pub searches: Vec<String>,
+
+    /// Global resolver options (for example `timeout:2`, `rotate`).
     pub options: Vec<String>,
+
+    /// Per-domain configuration. The `"*"` key is the default domain and is
+    /// required on any non-empty override.
     pub domains: HashMap<String, GlobalDnsDomain>,
 }
 
@@ -94,6 +105,38 @@ impl GlobalDnsConfiguration {
                 .domains
                 .values()
                 .all(|domain| domain.servers.is_empty() && domain.options.is_empty())
+    }
+
+    /// Validates a value before writing it to NetworkManager.
+    ///
+    /// Empty configs are valid and clear the override. A non-empty config must
+    /// include the default `"*"` domain, and that domain must list at least one
+    /// nameserver.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConnectionError::InvalidInput`] when the default domain or its
+    /// servers list is missing.
+    pub fn validate(&self) -> Result<(), ConnectionError> {
+        if self.is_empty() {
+            return Ok(());
+        }
+
+        let Some(default_domain) = self.domains.get("*") else {
+            return Err(ConnectionError::InvalidInput {
+                field: "domains".into(),
+                reason: "missing default domain \"*\"".into(),
+            });
+        };
+
+        if default_domain.servers.is_empty() {
+            return Err(ConnectionError::InvalidInput {
+                field: "domains.*.servers".into(),
+                reason: "default domain \"*\" must include at least one nameserver".into(),
+            });
+        }
+
+        Ok(())
     }
 
     /// Nameservers configured on the default `"*"` domain.
@@ -238,5 +281,35 @@ mod tests {
             OwnedValue::from(Str::from("x")),
         )]));
         assert!(decoded.is_empty());
+    }
+
+    #[test]
+    fn validate_accepts_empty_and_default_servers() {
+        GlobalDnsConfiguration::default().validate().unwrap();
+        GlobalDnsConfiguration::from_servers(vec!["1.1.1.1".into()])
+            .validate()
+            .unwrap();
+    }
+
+    #[test]
+    fn validate_rejects_missing_default_domain() {
+        let config = GlobalDnsConfiguration::new().with_searches(vec!["example.test".into()]);
+        assert!(matches!(
+            config.validate().unwrap_err(),
+            ConnectionError::InvalidInput { field, reason }
+                if field == "domains" && reason.contains("missing default domain")
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_default_domain_without_servers() {
+        let config = GlobalDnsConfiguration::new()
+            .with_searches(vec!["example.test".into()])
+            .with_domain("*", GlobalDnsDomain::new());
+        assert!(matches!(
+            config.validate().unwrap_err(),
+            ConnectionError::InvalidInput { field, reason }
+                if field == "domains.*.servers" && reason.contains("nameserver")
+        ));
     }
 }
