@@ -4,11 +4,17 @@ All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
 
+
 ### Added
 
 - Device snapshots now expose per-device autoconnect state, and
   `NetworkManager::set_device_autoconnect()` / `set_device_managed()` provide
   high-level control of both writable properties. ([#541](https://github.com/freedesktop-rs/nmrs/issues/541))
+- `NetworkManager::global_dns_configuration()` /
+  `set_global_dns_configuration()` read and write the manager
+  `GlobalDnsConfiguration` property. An empty value clears the
+  override. ([#540](https://github.com/freedesktop-rs/nmrs/issues/540))
+
 
 ### Fixed
 

@@ -442,14 +442,15 @@ pub use api::models::{
     AppletNetworkSummary, BluetoothDevice, BluetoothIdentity, BluetoothNetworkRole,
     ConnectByUuidConfig, ConnectType, ConnectionError, ConnectionOptions, ConnectionStateReason,
     ConnectivityReport, ConnectivityState, Device, DeviceState, DeviceType, EapMethod, EapOptions,
-    MonitorHandle, Network, NetworkEvent, NetworkEventStream, NetworkInfo, NetworkSnapshot,
-    OpenVpnAuthType, OpenVpnCompression, OpenVpnConfig, OpenVpnConnectionType, OpenVpnProxy,
-    Phase2, RadioState, SavedConnection, SavedConnectionBrief, SavedVpnSummary, SecurityFeatures,
-    SettingsChange, SettingsEventStream, SettingsPatch, SettingsSummary, StateReason,
-    TimeoutConfig, VlanConfig, VpnConfig, VpnConfiguration, VpnConnection, VpnConnectionInfo,
-    VpnCredentials, VpnDetails, VpnKind, VpnRoute, VpnSecretFlags, VpnType, WifiDevice,
-    WifiKeyMgmt, WifiNetworkGroup, WifiSecurity, WifiSecuritySummary, WireGuardConfig,
-    WireGuardPeer, WiredDevice, connection_state_reason_to_error, reason_to_error,
+    GlobalDnsConfiguration, GlobalDnsDomain, MonitorHandle, Network, NetworkEvent,
+    NetworkEventStream, NetworkInfo, NetworkSnapshot, OpenVpnAuthType, OpenVpnCompression,
+    OpenVpnConfig, OpenVpnConnectionType, OpenVpnProxy, Phase2, RadioState, SavedConnection,
+    SavedConnectionBrief, SavedVpnSummary, SecurityFeatures, SettingsChange, SettingsEventStream,
+    SettingsPatch, SettingsSummary, StateReason, TimeoutConfig, VlanConfig, VpnConfig,
+    VpnConfiguration, VpnConnection, VpnConnectionInfo, VpnCredentials, VpnDetails, VpnKind,
+    VpnRoute, VpnSecretFlags, VpnType, WifiDevice, WifiKeyMgmt, WifiNetworkGroup, WifiSecurity,
+    WifiSecuritySummary, WireGuardConfig, WireGuardPeer, WiredDevice,
+    connection_state_reason_to_error, reason_to_error,
 };
 pub use api::network_manager::NetworkManager;
 pub use api::wifi_scope::WifiScope;
