@@ -153,6 +153,13 @@ devices that NetworkManager reports as `veth`.
 | `connectivity_report()` | `Result<ConnectivityReport>` | Full report with captive portal URL |
 | `captive_portal_url()` | `Result<Option<String>>` | Captive portal URL if in Portal state |
 
+## Global DNS
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `global_dns_configuration()` | `Result<GlobalDnsConfiguration>` | Read the manager-wide DNS override |
+| `set_global_dns_configuration(&config)` | `Result<()>` | Write it; empty config clears the override |
+
 ## Bluetooth Methods
 
 | Method | Returns | Description |

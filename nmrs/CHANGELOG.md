@@ -3,6 +3,10 @@
 All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
+- `NetworkManager::global_dns_configuration()` /
+  `set_global_dns_configuration()` read and write the manager
+  `GlobalDnsConfiguration` property. An empty value clears the
+  override. ([#540](https://github.com/freedesktop-rs/nmrs/issues/540))
 
 ### Added
 

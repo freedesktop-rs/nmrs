@@ -11,9 +11,9 @@ use crate::api::models::snapshot::{
     saved_wifi_profiles as filter_saved_wifi_profiles,
 };
 use crate::api::models::{
-    ActiveConnection, AirplaneModeState, ConnectionError, Device, MonitorHandle, Network,
-    NetworkInfo, NetworkSnapshot, RadioState, SavedConnection, SavedConnectionBrief, SettingsPatch,
-    WifiDevice, WifiSecurity, WiredDevice,
+    ActiveConnection, AirplaneModeState, ConnectionError, Device, GlobalDnsConfiguration,
+    MonitorHandle, Network, NetworkInfo, NetworkSnapshot, RadioState, SavedConnection,
+    SavedConnectionBrief, SettingsPatch, WifiDevice, WifiSecurity, WiredDevice,
 };
 use crate::api::wifi_scope::WifiScope;
 use crate::core::active_connection as active_connections;
@@ -1196,6 +1196,42 @@ impl NetworkManager {
     pub async fn captive_portal_url(&self) -> Result<Option<String>> {
         let report = crate::core::connectivity::connectivity_report(&self.conn).await?;
         Ok(report.captive_portal_url)
+    }
+
+    /// Reads NetworkManager's global DNS override.
+    ///
+    /// An empty value means no override: per-connection DNS is used.
+    pub async fn global_dns_configuration(&self) -> Result<GlobalDnsConfiguration> {
+        crate::core::dns::global_dns_configuration(&self.conn).await
+    }
+
+    /// Writes the global DNS override.
+    ///
+    /// Pass [`GlobalDnsConfiguration::default()`] (or any empty value) to clear
+    /// the override. A non-empty value must include the `"*"` default domain.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use nmrs::{GlobalDnsConfiguration, NetworkManager};
+    ///
+    /// # async fn example() -> nmrs::Result<()> {
+    /// let nm = NetworkManager::new().await?;
+    /// nm.set_global_dns_configuration(
+    ///     &GlobalDnsConfiguration::from_servers(vec![
+    ///         "1.1.1.1".into(),
+    ///         "8.8.8.8".into(),
+    ///     ]),
+    /// )
+    /// .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn set_global_dns_configuration(
+        &self,
+        config: &GlobalDnsConfiguration,
+    ) -> Result<()> {
+        crate::core::dns::set_global_dns_configuration(&self.conn, config).await
     }
 
     /// Disable or re-enable a single Wi-Fi interface.

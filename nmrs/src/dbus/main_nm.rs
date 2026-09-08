@@ -96,4 +96,17 @@ pub trait NM {
 
     /// Forces a fresh connectivity check; blocks until done.
     fn check_connectivity(&self) -> zbus::Result<u32>;
+
+    /// Global DNS override (`a{sv}`). Empty dict clears it.
+    #[zbus(property)]
+    fn global_dns_configuration(
+        &self,
+    ) -> zbus::Result<std::collections::HashMap<String, zvariant::OwnedValue>>;
+
+    /// Write the global DNS override.
+    #[zbus(property)]
+    fn set_global_dns_configuration(
+        &self,
+        value: std::collections::HashMap<&str, zvariant::Value<'_>>,
+    ) -> zbus::Result<()>;
 }

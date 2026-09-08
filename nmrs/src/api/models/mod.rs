@@ -5,6 +5,7 @@ mod config;
 mod connection_state;
 mod connectivity;
 mod device;
+mod dns;
 mod error;
 mod monitor;
 mod network_event;
@@ -18,6 +19,7 @@ mod vpn;
 mod wifi;
 mod wireguard;
 
+pub use dns::*;
 use std::fmt;
 
 pub(crate) struct Redacted;

@@ -11,9 +11,9 @@ use nmrs::builders::WireGuardBuilder;
 use nmrs::raw::zvariant::{OwnedObjectPath, OwnedValue, Value};
 use nmrs::{
     ActiveConnection, ActiveConnectionState, ConnectByUuidConfig, ConnectType, ConnectionError,
-    DeviceState, MonitorHandle, NetworkEvent, NetworkEventStream, NetworkManager, SettingsChange,
-    SettingsEventStream, SettingsPatch, SettingsSummary, TimeoutConfig, WifiKeyMgmt, WifiScope,
-    WifiSecurity, WireGuardPeer,
+    DeviceState, GlobalDnsConfiguration, MonitorHandle, NetworkEvent, NetworkEventStream,
+    NetworkManager, SettingsChange, SettingsEventStream, SettingsPatch, SettingsSummary,
+    TimeoutConfig, WifiKeyMgmt, WifiScope, WifiSecurity, WireGuardPeer,
 };
 use serial_test::serial;
 use tokio::time::{sleep, timeout};
@@ -340,6 +340,67 @@ async fn active_connections(nm: &NetworkManager) -> Vec<ActiveConnection> {
 ///
 /// This is ignored intentionally: a normal `cargo test` must never discover or
 /// mutate the developer's host NetworkManager. The CI/Docker harness opts in.
+#[tokio::test]
+#[serial]
+#[ignore = "requires NMRS_REQUIRE_NETWORKMANAGER=1 and an isolated NetworkManager"]
+async fn networkmanager_global_dns_configuration_round_trip() {
+    let nm = network_manager().await;
+
+    let original = bounded(
+        "read GlobalDnsConfiguration",
+        DBUS_TIMEOUT,
+        nm.global_dns_configuration(),
+    )
+    .await
+    .expect("failed to read GlobalDnsConfiguration");
+
+    let desired = GlobalDnsConfiguration::from_servers(vec!["1.1.1.1".into(), "8.8.8.8".into()])
+        .with_searches(vec!["example.test".into()]);
+
+    bounded(
+        "write GlobalDnsConfiguration",
+        DBUS_TIMEOUT,
+        nm.set_global_dns_configuration(&desired),
+    )
+    .await
+    .expect("failed to write GlobalDnsConfiguration");
+
+    let read_back = bounded(
+        "read GlobalDnsConfiguration after write",
+        DBUS_TIMEOUT,
+        nm.global_dns_configuration(),
+    )
+    .await
+    .expect("failed to read GlobalDnsConfiguration after write");
+
+    assert_eq!(read_back.default_servers(), desired.default_servers());
+    assert_eq!(read_back.searches, desired.searches);
+
+    bounded(
+        "clear GlobalDnsConfiguration",
+        DBUS_TIMEOUT,
+        nm.set_global_dns_configuration(&GlobalDnsConfiguration::default()),
+    )
+    .await
+    .expect("failed to clear GlobalDnsConfiguration");
+
+    let cleared = bounded(
+        "read GlobalDnsConfiguration after clear",
+        DBUS_TIMEOUT,
+        nm.global_dns_configuration(),
+    )
+    .await
+    .expect("failed to read GlobalDnsConfiguration after clear");
+    assert!(cleared.is_empty());
+
+    bounded(
+        "restore GlobalDnsConfiguration",
+        DBUS_TIMEOUT,
+        nm.set_global_dns_configuration(&original),
+    )
+    .await
+    .expect("failed to restore GlobalDnsConfiguration");
+}
 #[tokio::test]
 #[serial]
 #[ignore = "requires NMRS_REQUIRE_NETWORKMANAGER=1 and an isolated NetworkManager"]
