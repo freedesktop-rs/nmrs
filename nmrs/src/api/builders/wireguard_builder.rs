@@ -560,7 +560,9 @@ mod tests {
                 .as_deref(),
             Some("PSKABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklm=")
         );
-        // Regression (#550): without this flag the peer stays NOT_REQUIRED and
+        // Regression: https://github.com/freedesktop-rs/nmrs/issues/550
+        // Without this flag the peer stays NOT_REQUIRED and NetworkManager
+        // drops the preshared key when it saves the profile.
         // NetworkManager drops the preshared key when it saves the profile.
         assert_eq!(
             peer.get::<Value, u32>(&Value::from("preshared-key-flags"))
