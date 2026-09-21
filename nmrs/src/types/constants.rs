@@ -39,6 +39,17 @@ pub mod security_flags {
     pub const EAP: u32 = 0x0200;
 }
 
+/// NetworkManager secret flag constants.
+///
+/// Reference: <https://networkmanager.dev/docs/api/latest/nm-dbus-types.html#NMSettingSecretFlags>
+pub mod secret_flags {
+    /// Secret is stored with the profile by NetworkManager.
+    pub const NONE: u32 = 0x0;
+    // pub const AGENT_OWNED: u32 = 0x1;
+    // pub const NOT_SAVED: u32 = 0x2;
+    // pub const NOT_REQUIRED: u32 = 0x4;
+}
+
 /// WiFi mode constants
 pub mod wifi_mode {
     pub const ADHOC: u32 = 1;

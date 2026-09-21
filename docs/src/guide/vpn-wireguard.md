@@ -95,6 +95,10 @@ let config = WireGuardConfig::new(
 | `preshared_key` | No | Additional shared secret for post-quantum security |
 | `persistent_keepalive` | No | Keepalive interval in seconds |
 
+Peers with a preshared key also get `preshared-key-flags = 0`
+(`NM_SETTING_SECRET_FLAG_NONE`). NetworkManager defaults peers to
+`NOT_REQUIRED` and discards not-required secrets on save.
+
 ### Multiple Peers
 
 WireGuard supports multiple peers with different routing rules:

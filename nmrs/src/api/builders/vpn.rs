@@ -565,6 +565,12 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+        assert!(
+            first
+                .get::<Value, u32>(&Value::from("preshared-key-flags"))
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(
             first
                 .get::<Value, u32>(&Value::from("persistent-keepalive"))
@@ -599,6 +605,12 @@ mod tests {
                 .unwrap()
                 .as_deref(),
             Some("PSKABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklm=")
+        );
+        assert_eq!(
+            second
+                .get::<Value, u32>(&Value::from("preshared-key-flags"))
+                .unwrap(),
+            Some(0)
         );
         assert!(
             second
@@ -740,6 +752,11 @@ mod tests {
                 .unwrap()
                 .as_deref(),
             Some("PSKABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklm=")
+        );
+        assert_eq!(
+            peer.get::<Value, u32>(&Value::from("preshared-key-flags"))
+                .unwrap(),
+            Some(0)
         );
     }
 
