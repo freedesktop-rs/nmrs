@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
+use std::sync::Arc;
 
 use futures::stream::{self, StreamExt};
 use log::warn;
@@ -10,8 +11,9 @@ use zbus::Connection;
 use zvariant::{Dict, OwnedObjectPath, OwnedValue, Str, Value};
 
 use crate::Result;
+use crate::api::models::property::unbox_value;
 use crate::api::models::{
-    ConnectionError, IpAddress, IpMethod, IpRoute, IpSettings, SavedConnection,
+    ConnectionError, FromSetting, IpAddress, IpMethod, IpRoute, IpSettings, SavedConnection,
     SavedConnectionBrief, SettingsPatch, SettingsSummary, VpnSecretFlags, WifiKeyMgmt,
     WifiSecuritySummary,
 };
@@ -77,37 +79,27 @@ fn merge_settings_patch_delta(
 }
 
 fn owned_to_str(v: &OwnedValue) -> Option<String> {
-    Str::try_from(v.clone())
-        .ok()
-        .map(|s| s.to_string())
-        .or_else(|| String::try_from(v.clone()).ok())
+    String::from_setting(v)
 }
 
 fn owned_to_bool(v: &OwnedValue) -> Option<bool> {
-    bool::try_from(v.clone()).ok()
+    bool::from_setting(v)
 }
 
 fn owned_to_u32(v: &OwnedValue) -> Option<u32> {
-    u32::try_from(v.clone()).ok()
+    u32::from_setting(v)
 }
 
 fn owned_to_i32(v: &OwnedValue) -> Option<i32> {
-    i32::try_from(v.clone()).ok()
+    i32::from_setting(v)
 }
 
 fn owned_to_u64(v: &OwnedValue) -> Option<u64> {
-    u64::try_from(v.clone()).ok()
+    u64::from_setting(v)
 }
 
 fn owned_to_bytes(v: &OwnedValue) -> Option<Vec<u8>> {
-    Vec::<u8>::try_from(v.clone()).ok()
-}
-
-fn unbox_value<'a, 'v>(mut value: &'a zvariant::Value<'v>) -> &'a zvariant::Value<'v> {
-    while let zvariant::Value::Value(inner) = value {
-        value = inner;
-    }
-    value
+    Vec::<u8>::from_setting(v)
 }
 
 fn take_str(m: &HashMap<String, OwnedValue>, key: &str) -> Option<String> {
@@ -131,19 +123,9 @@ fn take_u64(m: &HashMap<String, OwnedValue>, key: &str) -> Option<u64> {
 }
 
 fn take_str_vec(m: &HashMap<String, OwnedValue>, key: &str) -> Vec<String> {
-    let Some(v) = m.get(key) else {
-        return Vec::new();
-    };
-    let Ok(arr) = zvariant::Array::try_from(v.clone()) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for item in arr.iter() {
-        if let zvariant::Value::Str(value) = unbox_value(item) {
-            out.push(value.to_string());
-        }
-    }
-    out
+    m.get(key)
+        .and_then(Vec::<String>::from_setting)
+        .unwrap_or_default()
 }
 
 /// Decodes a full [`SavedConnection`] from `GetSettings` output.
@@ -183,6 +165,7 @@ pub(crate) fn decode_saved(
         .map(|section| decode_ip(path.as_str(), section));
 
     Ok(SavedConnection {
+        settings: Arc::new(settings),
         path,
         uuid,
         id,
@@ -2037,5 +2020,62 @@ mod tests {
         ] {
             assert_eq!(dns_server_address(raw), expected, "{raw}");
         }
+    }
+
+    #[test]
+    fn get_property_reads_any_key_with_its_type() {
+        use crate::api::models::{Property, properties};
+
+        let mut conn = conn_section("prop-u", "Props", "802-3-ethernet");
+        conn.insert("zone".into(), owned_str("home"));
+        conn.insert("autoconnect-retries".into(), OwnedValue::from(4i32));
+        let ethernet = HashMap::from([
+            ("mtu".to_string(), OwnedValue::from(1400u32)),
+            ("auto-negotiate".to_string(), OwnedValue::from(true)),
+        ]);
+        let saved = decode_saved(
+            path(30),
+            false,
+            None,
+            HashMap::from([
+                ("connection".to_string(), conn),
+                ("802-3-ethernet".to_string(), ethernet),
+            ]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            saved.get_property(properties::connection::ZONE),
+            Some("home".to_string())
+        );
+        assert_eq!(
+            saved.get_property(properties::connection::AUTOCONNECT_RETRIES),
+            Some(4)
+        );
+        assert_eq!(saved.get_property(properties::ethernet::MTU), Some(1400));
+        assert_eq!(
+            saved.get_property(Property::<bool>::new("802-3-ethernet", "auto-negotiate")),
+            Some(true)
+        );
+        // Absent key, absent section, and wrong type all read as None.
+        assert_eq!(saved.get_property(properties::connection::STABLE_ID), None);
+        assert_eq!(saved.get_property(properties::wifi::HIDDEN), None);
+        assert_eq!(
+            saved.get_property(Property::<String>::new("802-3-ethernet", "mtu")),
+            None
+        );
+
+        assert_eq!(saved.sections(), vec!["802-3-ethernet", "connection"]);
+        assert!(saved.has_section("connection"));
+        assert!(!saved.has_section("ipv4"));
+
+        // Clones share the raw map instead of copying it.
+        let cloned = saved.clone();
+        assert!(Arc::ptr_eq(&saved.settings, &cloned.settings));
+
+        // Debug lists section names, not the raw map.
+        let debug = format!("{saved:?}");
+        assert!(debug.contains("sections: [\"802-3-ethernet\", \"connection\"]"));
+        assert!(!debug.contains("home"), "raw zone value leaked into Debug");
     }
 }

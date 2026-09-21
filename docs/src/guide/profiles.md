@@ -40,6 +40,15 @@ Each `SavedConnection` includes the profile `id` (display name), `uuid`,
 typed `ipv4` / `ipv6` [`IpSettings`](../api/models.md#savedconnection) when
 the profile has those sections.
 
+Keys without a typed field are one call away:
+
+```rust
+use nmrs::models::{Property, properties};
+
+let zone = profile.get_property(properties::connection::ZONE);
+let mtu = profile.get_property(Property::<u32>::new("802-3-ethernet", "mtu"));
+```
+
 ## Checking for a Saved Connection
 
 ```rust

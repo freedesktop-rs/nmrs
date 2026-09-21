@@ -532,6 +532,12 @@ the profile's method, addresses, gateway, DNS servers, search domains, and route
 typed per family. Entries NetworkManager stores in a form that does not parse are
 dropped with a warning.
 
+Any other key is available through `get_property(Property<T>)`, e.g.
+`profile.get_property(properties::connection::ZONE)` or
+`profile.get_property(Property::<u32>::new("802-3-ethernet", "mtu"))`. It returns
+`None` for absent keys (NetworkManager omits defaults) and for values of another
+type. `sections()` lists the sections present.
+
 ### SavedConnectionBrief
 
 Lightweight: `uuid`, `id`, `connection_type`.

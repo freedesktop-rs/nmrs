@@ -12,6 +12,12 @@ All notable changes to the `nmrs` crate will be documented in this file.
   Entries NetworkManager stores in a form that does not parse are dropped with
   a warning. ([#524](https://github.com/freedesktop-rs/nmrs/issues/524),
   [#534](https://github.com/freedesktop-rs/nmrs/pull/534))
+- `SavedConnection::get_property()` reads any `section.key` of a profile as a
+  typed value (`Property<T>` + `FromSetting`), with named constants under
+  `nmrs::models::properties` for the sections nmrs already decodes.
+  `sections()` and `has_section()` list what the profile contains. The raw
+  `GetSettings` map is kept privately and shared between clones.
+  ([#524](https://github.com/freedesktop-rs/nmrs/issues/524))
 
 ## [3.5.3] - 2026-09-21
 ### Added

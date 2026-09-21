@@ -371,6 +371,7 @@ mod tests {
             },
             ipv4: None,
             ipv6: None,
+            settings: Default::default(),
         }
     }
 
@@ -467,6 +468,7 @@ mod tests {
             },
             ipv4: None,
             ipv6: None,
+            settings: Default::default(),
         }
     }
 
@@ -492,6 +494,7 @@ mod tests {
             },
             ipv4: None,
             ipv6: None,
+            settings: Default::default(),
         }
     }
 
@@ -517,6 +520,7 @@ mod tests {
             },
             ipv4: None,
             ipv6: None,
+            settings: Default::default(),
         }
     }
 
