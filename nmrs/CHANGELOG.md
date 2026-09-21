@@ -28,6 +28,9 @@ All notable changes to the `nmrs` crate will be documented in this file.
   race the disconnect assertions that follow. Autoconnect is now restored once
   the profile is deleted, and the test waits for the remanaged device to settle.
   ([#547](https://github.com/freedesktop-rs/nmrs/pull/547))
+- Peers with a PSK now get `preshared-key-flags = 0`. Peers without one are left
+  alone so they keep the default. `build_wireguard_connection()` delegates to
+  the builder, so it picks up the same fix. ([#551](https://github.com/freedesktop-rs/nmrs/pull/551))
 
 ## [3.5.2] - 2026-09-05
 ### Fixed
