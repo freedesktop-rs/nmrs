@@ -10,6 +10,7 @@ use zvariant::Value;
 
 use super::connection_builder::{ConnectionBuilder, IpConfig};
 use crate::api::models::{ConnectionError, ConnectionOptions, WireGuardPeer};
+use crate::types::constants::secret_flags;
 
 /// Builder for WireGuard VPN connections.
 ///
@@ -259,6 +260,11 @@ impl WireGuardBuilder {
 
             if let Some(psk) = peer.preshared_key {
                 peer_dict.insert("preshared-key".into(), Value::from(psk));
+                // Peers default to NOT_REQUIRED, and NM drops not-required secrets on save.
+                peer_dict.insert(
+                    "preshared-key-flags".into(),
+                    Value::from(secret_flags::NONE),
+                );
             }
 
             if let Some(ka) = peer.persistent_keepalive {
@@ -555,6 +561,11 @@ mod tests {
             Some("PSKABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklm=")
         );
         assert_eq!(
+            peer.get::<Value, u32>(&Value::from("preshared-key-flags"))
+                .unwrap(),
+            Some(0)
+        );
+        assert_eq!(
             peer.get::<Value, u32>(&Value::from("persistent-keepalive"))
                 .unwrap(),
             Some(25)
@@ -724,6 +735,12 @@ mod tests {
         assert!(
             second
                 .get::<Value, String>(&Value::from("preshared-key"))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            second
+                .get::<Value, u32>(&Value::from("preshared-key-flags"))
                 .unwrap()
                 .is_none()
         );

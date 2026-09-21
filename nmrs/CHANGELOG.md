@@ -18,6 +18,11 @@ All notable changes to the `nmrs` crate will be documented in this file.
 
 ### Fixed
 
+- WireGuard peers with a preshared key now emit `preshared-key-flags = 0`.
+  NetworkManager defaults new peers to `NOT_REQUIRED` and drops not-required
+  secrets when saving the profile, so the preshared key was silently discarded
+  and the tunnel failed the handshake.
+  ([#550](https://github.com/freedesktop-rs/nmrs/issues/550))
 - `wired_connection_lifecycle` restored device autoconnect immediately after
   remanaging the veth, which let NetworkManager reactivate the saved profile and
   race the disconnect assertions that follow. Autoconnect is now restored once
