@@ -369,6 +369,8 @@ mod tests {
             summary: SettingsSummary::Other {
                 sections: vec!["connection".into()],
             },
+            ipv4: None,
+            ipv6: None,
         }
     }
 
@@ -463,6 +465,8 @@ mod tests {
                 hidden: false,
                 mac_randomization: None,
             },
+            ipv4: None,
+            ipv6: None,
         }
     }
 
@@ -486,6 +490,8 @@ mod tests {
                 data_keys: Vec::new(),
                 persistent: false,
             },
+            ipv4: None,
+            ipv6: None,
         }
     }
 
@@ -509,6 +515,8 @@ mod tests {
                 peer_count: 1,
                 first_peer_endpoint: None,
             },
+            ipv4: None,
+            ipv6: None,
         }
     }
 
