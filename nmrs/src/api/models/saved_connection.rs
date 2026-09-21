@@ -9,16 +9,24 @@
 
 use std::{
     collections::HashMap,
+    fmt,
     net::{Ipv4Addr, Ipv6Addr},
+    sync::Arc,
 };
 
 use zvariant::{OwnedObjectPath, OwnedValue};
 
-use crate::models::{IpAddress, IpRoute};
+use crate::models::{FromSetting, IpAddress, IpRoute, Property};
+
+/// Raw `GetSettings` output: section name to key to value.
+pub(crate) type RawSettings = HashMap<String, HashMap<String, OwnedValue>>;
 
 /// Full saved profile with a structured [`SettingsSummary`].
+///
+/// Common sections are decoded into typed fields. Any other key is reachable
+/// through [`get_property`](Self::get_property).
 #[non_exhaustive]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SavedConnection {
     /// D-Bus object path of the settings connection.
     pub path: OwnedObjectPath,
@@ -48,6 +56,77 @@ pub struct SavedConnection {
     pub ipv4: Option<IpSettings<Ipv4Addr>>,
     /// Decoded `ipv6` section, if the profile has one.
     pub ipv6: Option<IpSettings<Ipv6Addr>>,
+    /// Everything `GetSettings` returned, shared between clones.
+    pub(crate) settings: Arc<RawSettings>,
+}
+
+impl SavedConnection {
+    /// Reads one `section.key` from the profile, decoded as `T`.
+    ///
+    /// Returns `None` when the section or key is absent, which is how
+    /// NetworkManager reports a key left at its default, and when the stored
+    /// value is not a `T`. Secrets are never present: `GetSettings` omits them.
+    ///
+    /// ```rust,no_run
+    /// use nmrs::NetworkManager;
+    /// use nmrs::models::{Property, properties};
+    ///
+    /// # async fn run() -> nmrs::Result<()> {
+    /// let nm = NetworkManager::new().await?;
+    /// for profile in nm.list_saved_connections().await? {
+    ///     let zone = profile.get_property(properties::connection::ZONE);
+    ///     let mtu = profile.get_property(Property::<u32>::new("802-3-ethernet", "mtu"));
+    ///     println!("{}: zone={zone:?} mtu={mtu:?}", profile.id);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn get_property<T: FromSetting>(&self, property: Property<T>) -> Option<T> {
+        self.settings
+            .get(property.section())?
+            .get(property.key())
+            .and_then(T::from_setting)
+    }
+
+    /// Names of the settings sections present in the profile
+    /// (`connection`, `ipv4`, `802-11-wireless`, …), sorted.
+    #[must_use]
+    pub fn sections(&self) -> Vec<&str> {
+        let mut sections: Vec<&str> = self.settings.keys().map(String::as_str).collect();
+        sections.sort_unstable();
+        sections
+    }
+
+    /// Whether the profile has a `section`.
+    #[must_use]
+    pub fn has_section(&self, section: &str) -> bool {
+        self.settings.contains_key(section)
+    }
+}
+
+impl fmt::Debug for SavedConnection {
+    /// Lists section names in place of the raw map, which would otherwise
+    /// dump every key of every profile into logs.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SavedConnection")
+            .field("path", &self.path)
+            .field("uuid", &self.uuid)
+            .field("id", &self.id)
+            .field("connection_type", &self.connection_type)
+            .field("interface_name", &self.interface_name)
+            .field("autoconnect", &self.autoconnect)
+            .field("autoconnect_priority", &self.autoconnect_priority)
+            .field("timestamp_unix", &self.timestamp_unix)
+            .field("permissions", &self.permissions)
+            .field("unsaved", &self.unsaved)
+            .field("filename", &self.filename)
+            .field("summary", &self.summary)
+            .field("ipv4", &self.ipv4)
+            .field("ipv6", &self.ipv6)
+            .field("sections", &self.sections())
+            .finish()
+    }
 }
 
 /// Cheap listing: path plus `connection` identity fields only (still one `GetSettings` per profile).
