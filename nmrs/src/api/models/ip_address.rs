@@ -1,3 +1,5 @@
+//! Typed IP addresses and routes decoded from saved connection profiles.
+
 use std::{
     fmt::{self, Display},
     net::{AddrParseError, Ipv4Addr, Ipv6Addr},
@@ -7,17 +9,31 @@ use std::{
 
 use thiserror::Error;
 
-use crate::ConnectionError;
-
-/// An IP address with its prefix.
+/// An IP address with its prefix length, such as `192.0.2.10/24`.
+///
+/// `A` is [`Ipv4Addr`] or [`Ipv6Addr`], so an `IpAddress<Ipv4Addr>` can never
+/// carry an IPv6 address. The `address/prefix` form parses with [`FromStr`]:
+///
+/// ```rust
+/// use std::net::Ipv4Addr;
+/// use nmrs::models::IpAddress;
+///
+/// let addr: IpAddress<Ipv4Addr> = "192.0.2.10/24".parse().unwrap();
+/// assert_eq!(addr.address, Ipv4Addr::new(192, 0, 2, 10));
+/// assert_eq!(addr.prefix, 24);
+/// assert_eq!(addr.to_string(), "192.0.2.10/24");
+/// ```
+#[non_exhaustive]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct IpAddress<A> {
+    /// The address itself.
     pub address: A,
+    /// Prefix length in bits: `0..=32` for IPv4, `0..=128` for IPv6.
     pub prefix: u8,
 }
 
 impl<A> IpAddress<A> {
-    /// Create the IP address from the address and prefix.
+    /// Creates an address with the given prefix length.
     pub fn new(address: A, prefix: u8) -> Self {
         Self { address, prefix }
     }
@@ -27,7 +43,7 @@ impl<A> Display for IpAddress<A>
 where
     A: Display,
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}/{}", self.address, self.prefix)
     }
 }
@@ -75,18 +91,44 @@ impl From<IpAddress<Ipv6Addr>> for Ipv6Addr {
     }
 }
 
-#[derive(Debug, Clone, Error)]
-pub enum IpAddressParseError {
-    #[error("address parsing failed: {0}")]
-    Addr(#[from] AddrParseError),
-    #[error("prefix parsing failed: {0}")]
-    Prefix(#[from] ParseIntError),
-    #[error("could not split into address and prefix")]
-    Split,
+/// A static route from a profile's `route-data`.
+///
+/// `dest` is the destination network with its prefix length. `next_hop` is
+/// `None` for routes reachable directly on the link, and `metric` is `None`
+/// when the profile leaves the metric to NetworkManager.
+#[non_exhaustive]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub struct IpRoute<A> {
+    /// Destination network and prefix length.
+    pub dest: IpAddress<A>,
+    /// Next-hop gateway, if the route has one.
+    pub next_hop: Option<A>,
+    /// Route metric, if the profile sets one explicitly.
+    pub metric: Option<u32>,
 }
 
-impl From<IpAddressParseError> for ConnectionError {
-    fn from(value: IpAddressParseError) -> Self {
-        Self::AddressParse(value)
+impl<A> IpRoute<A> {
+    /// Creates a route to `dest` with no next hop and no explicit metric.
+    pub fn new(dest: IpAddress<A>) -> Self {
+        Self {
+            dest,
+            next_hop: None,
+            metric: None,
+        }
     }
+}
+
+/// Why a string could not be parsed as an [`IpAddress`].
+#[non_exhaustive]
+#[derive(Debug, Clone, Error)]
+pub enum IpAddressParseError {
+    /// The part before the `/` is not an address of the requested family.
+    #[error("address parsing failed: {0}")]
+    Addr(#[from] AddrParseError),
+    /// The part after the `/` is not a prefix length.
+    #[error("prefix parsing failed: {0}")]
+    Prefix(#[from] ParseIntError),
+    /// The string has no `/` separating address and prefix.
+    #[error("could not split into address and prefix")]
+    Split,
 }

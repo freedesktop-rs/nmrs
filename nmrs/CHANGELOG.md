@@ -3,6 +3,15 @@
 All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
+### Added
+
+- `SavedConnection::ipv4` and `SavedConnection::ipv6` expose a profile's IP
+  configuration as `IpSettings<Ipv4Addr>` / `IpSettings<Ipv6Addr>`: method,
+  addresses, gateway, name servers, search domains, routes, `never-default`,
+  and `ignore-auto-dns`, using the new typed `IpAddress<A>` and `IpRoute<A>`.
+  Entries NetworkManager stores in a form that does not parse are dropped with
+  a warning. ([#524](https://github.com/freedesktop-rs/nmrs/issues/524),
+  [#534](https://github.com/freedesktop-rs/nmrs/pull/534))
 
 ## [3.5.3] - 2026-09-21
 ### Added

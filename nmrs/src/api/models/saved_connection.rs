@@ -14,7 +14,7 @@ use std::{
 
 use zvariant::{OwnedObjectPath, OwnedValue};
 
-use crate::{builders::Route, models::IpAddress};
+use crate::models::{IpAddress, IpRoute};
 
 /// Full saved profile with a structured [`SettingsSummary`].
 #[non_exhaustive]
@@ -44,9 +44,9 @@ pub struct SavedConnection {
     pub filename: Option<String>,
     /// Decoded type-specific fields (no secrets).
     pub summary: SettingsSummary,
-    /// IPv4 specific settings.
+    /// Decoded `ipv4` section, if the profile has one.
     pub ipv4: Option<IpSettings<Ipv4Addr>>,
-    /// IPv6 specific settings.
+    /// Decoded `ipv6` section, if the profile has one.
     pub ipv6: Option<IpSettings<Ipv6Addr>>,
 }
 
@@ -224,42 +224,59 @@ pub enum SettingsSummary {
     },
 }
 
-/// Settings from the ipv4/6 section.
-#[derive(Debug, Clone)]
+/// IP configuration decoded from a profile's `ipv4` or `ipv6` section.
+///
+/// `A` is [`Ipv4Addr`] for [`SavedConnection::ipv4`] and [`Ipv6Addr`] for
+/// [`SavedConnection::ipv6`], so addresses, the gateway, name servers, and
+/// routes are typed for that family. Keys NetworkManager omits decode to its
+/// documented defaults (`Auto`, empty lists, `false`), the same way the
+/// `connection` section does. Entries stored in a form that does not parse
+/// as an address are dropped with a warning instead of failing the profile.
 #[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IpSettings<A> {
-    /// The method by which the connection obtains its IP address for this protocol.
+    /// How the connection obtains its address for this family (`method`).
     pub method: IpMethod,
-    /// The list of IP addresses.
-    pub address_data: Vec<IpAddress<A>>,
-    /// The gateway associated with this protocol configuration.
+    /// Static addresses with prefix lengths (`address-data`).
+    pub addresses: Vec<IpAddress<A>>,
+    /// Default gateway for this family (`gateway`).
     pub gateway: Option<A>,
-    /// The list of DNS search domains.
+    /// Name servers (`dns-data`, or the legacy `dns` array on daemons that
+    /// do not send `dns-data`). Only the address is kept: a DNS-over-TLS
+    /// server name (`1.1.1.1#one.one.one.one`) or the port of a `dns+tls://`
+    /// URI is stripped.
+    pub dns: Vec<A>,
+    /// DNS search domains (`dns-search`).
     pub dns_search: Vec<String>,
-    /// The list of IP routes.
-    pub route_data: Vec<Route>,
-    /// If true, this connection will never be assigned the default route.
+    /// Static routes (`route-data`).
+    pub routes: Vec<IpRoute<A>>,
+    /// The connection is never assigned the default route (`never-default`).
     pub never_default: bool,
-    /// Ignore the automatically configured DNS servers, and only use the saved configuration.
+    /// Automatically obtained name servers are ignored (`ignore-auto-dns`).
     pub ignore_auto_dns: bool,
 }
 
-/// How the connection obtains its IP address.
-#[derive(Debug, Clone)]
+/// How a connection obtains its address for one IP family (`ipv4.method` or
+/// `ipv6.method`).
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IpMethod {
-    /// IP configuration is automatically defined according to the hardware interface.
+    /// Automatic configuration: DHCP for IPv4, router advertisements and
+    /// DHCPv6 for IPv6.
     Auto,
-    /// IP configuration is manually specified in the connection settings.
+    /// Addresses come from a DHCPv6 server only (IPv6 only).
+    Dhcp,
+    /// Addresses are set manually in the profile.
     Manual,
-    /// The connection does not use or require an IP address of this type.
+    /// This family is not configured on the connection.
     Disabled,
-    /// The connection should only be configured for link-local operation.
+    /// Only a link-local address is configured.
     LinkLocal,
-    /// Allows other devices to connect through this device to the default network.
+    /// Other devices connect through this one to the default network.
     Shared,
-    /// IP configuration is ignored for this protocol
+    /// IP configuration for this family is left untouched (IPv6 only).
     Ignore,
-    /// Unknown method
+    /// A method this crate does not know; carries NetworkManager's raw string.
     Other(String),
 }
 
@@ -267,6 +284,7 @@ impl From<String> for IpMethod {
     fn from(value: String) -> Self {
         match value.as_str() {
             "auto" => Self::Auto,
+            "dhcp" => Self::Dhcp,
             "manual" => Self::Manual,
             "disabled" => Self::Disabled,
             "link-local" => Self::LinkLocal,

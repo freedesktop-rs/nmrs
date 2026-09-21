@@ -525,7 +525,12 @@ pub enum VpnDetails {
 
 Full decoded saved profile from `list_saved_connections()`.
 
-Fields: `uuid`, `id`, `connection_type`, `interface_name`, `autoconnect`, `timestamp`, `settings`.
+Fields: `uuid`, `id`, `connection_type`, `interface_name`, `autoconnect`, `timestamp`, `settings`, `ipv4`, `ipv6`.
+
+`ipv4` and `ipv6` are `Option<IpSettings<Ipv4Addr>>` / `Option<IpSettings<Ipv6Addr>>`:
+the profile's method, addresses, gateway, DNS servers, search domains, and routes,
+typed per family. Entries NetworkManager stores in a form that does not parse are
+dropped with a warning.
 
 ### SavedConnectionBrief
 

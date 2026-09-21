@@ -1,21 +1,21 @@
 //! Decode and manage NetworkManager saved connection settings.
 
 use std::collections::HashMap;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 
 use futures::stream::{self, StreamExt};
 use log::warn;
 use zbus::Connection;
-use zvariant::{Array, OwnedObjectPath, OwnedValue, Str, Value};
+use zvariant::{Dict, OwnedObjectPath, OwnedValue, Str, Value};
 
 use crate::Result;
 use crate::api::models::{
-    ConnectionError, SavedConnection, SavedConnectionBrief, SettingsPatch, SettingsSummary,
-    VpnSecretFlags, WifiKeyMgmt, WifiSecuritySummary,
+    ConnectionError, IpAddress, IpMethod, IpRoute, IpSettings, SavedConnection,
+    SavedConnectionBrief, SettingsPatch, SettingsSummary, VpnSecretFlags, WifiKeyMgmt,
+    WifiSecuritySummary,
 };
-use crate::builders::Route;
 use crate::dbus::{NMSettingsConnectionProxy, NMSettingsProxy};
-use crate::models::{IpAddress, IpMethod, IpSettings};
 use crate::util::utils::decode_ssid_or_empty;
 
 /// Builds the `a{sa{sv}}` delta for [`SettingsPatch`] (unit-tested).
@@ -114,10 +114,6 @@ fn take_str(m: &HashMap<String, OwnedValue>, key: &str) -> Option<String> {
     m.get(key).and_then(owned_to_str)
 }
 
-fn take_str_ref<'a>(m: &'a HashMap<String, OwnedValue>, key: &str) -> Option<&'a str> {
-    m.get(key).and_then(|s| s.try_into().ok())
-}
-
 fn take_bool(m: &HashMap<String, OwnedValue>, key: &str) -> Option<bool> {
     m.get(key).and_then(owned_to_bool)
 }
@@ -179,8 +175,12 @@ pub(crate) fn decode_saved(
     let permissions = take_str_vec(conn, "permissions");
 
     let summary = decode_summary(&connection_type, &settings);
-    let ipv4 = settings.get("ipv4").map(decode_ip);
-    let ipv6 = settings.get("ipv6").map(decode_ip);
+    let ipv4 = settings
+        .get("ipv4")
+        .map(|section| decode_ip(path.as_str(), section));
+    let ipv6 = settings
+        .get("ipv6")
+        .map(|section| decode_ip(path.as_str(), section));
 
     Ok(SavedConnection {
         path,
@@ -438,63 +438,213 @@ fn decode_bluetooth(settings: &HashMap<String, HashMap<String, OwnedValue>>) -> 
     SettingsSummary::Bluetooth { bdaddr, bt_type }
 }
 
-fn decode_ip<A>(settings: &HashMap<String, OwnedValue>) -> IpSettings<A>
-where
-    A: FromStr,
-{
-    let method = take_str(settings, "method");
-    let method = match method {
-        Some(method) => method.into(),
-        None => IpMethod::Auto,
+/// Per-family hooks for [`decode_ip`]: the section name used in warnings,
+/// the largest valid prefix length, and the encoding of the legacy `dns`
+/// array (`au` for IPv4, `aay` for IPv6).
+trait IpFamily: FromStr + Sized {
+    const SECTION: &'static str;
+    const MAX_PREFIX: u8;
+
+    /// Decodes the legacy binary `dns` property. A value of the wrong type
+    /// decodes as empty, like every other typed accessor here.
+    fn legacy_dns(value: &OwnedValue) -> Vec<Self>;
+}
+
+impl IpFamily for Ipv4Addr {
+    const SECTION: &'static str = "ipv4";
+    const MAX_PREFIX: u8 = 32;
+
+    /// Each `u32`'s in-memory bytes are the octets in order (`in_addr_t`),
+    /// the inverse of `ConnectionBuilder::ipv4_dns`.
+    fn legacy_dns(value: &OwnedValue) -> Vec<Self> {
+        Vec::<u32>::try_from(value.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|raw| Ipv4Addr::from(raw.to_ne_bytes()))
+            .collect()
+    }
+}
+
+impl IpFamily for Ipv6Addr {
+    const SECTION: &'static str = "ipv6";
+    const MAX_PREFIX: u8 = 128;
+
+    fn legacy_dns(value: &OwnedValue) -> Vec<Self> {
+        Vec::<Vec<u8>>::try_from(value.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|octets| <[u8; 16]>::try_from(octets).ok())
+            .map(Ipv6Addr::from)
+            .collect()
+    }
+}
+
+/// Decodes one `ipv4`/`ipv6` section into typed settings.
+///
+/// Absent keys take NetworkManager's documented defaults. Entries that do not
+/// parse for family `A` are dropped with a warning naming the profile at
+/// `path`, so one bad address never fails the whole profile.
+fn decode_ip<A: IpFamily>(path: &str, settings: &HashMap<String, OwnedValue>) -> IpSettings<A> {
+    let section = A::SECTION;
+    let method = take_str(settings, "method").map_or(IpMethod::Auto, IpMethod::from);
+
+    let addresses = take_dicts(settings, "address-data")
+        .filter_map(|dict| {
+            decode_address(dict)
+                .inspect_err(|reason| {
+                    warn!(
+                        "saved connection {path}: dropping malformed {section}.address-data entry: {reason}"
+                    );
+                })
+                .ok()
+        })
+        .collect();
+
+    let gateway = take_str(settings, "gateway").and_then(|raw| {
+        parse_address::<A>(&raw)
+            .inspect_err(|reason| {
+                warn!("saved connection {path}: dropping malformed {section}.gateway: {reason}");
+            })
+            .ok()
+    });
+
+    let dns = match settings.get("dns-data") {
+        Some(_) => take_str_vec(settings, "dns-data")
+            .iter()
+            .filter_map(|raw| {
+                parse_address::<A>(dns_server_address(raw))
+                    .inspect_err(|reason| {
+                        warn!(
+                            "saved connection {path}: dropping malformed {section}.dns-data entry {raw:?}: {reason}"
+                        );
+                    })
+                    .ok()
+            })
+            .collect(),
+        // Daemons that predate `dns-data` only send the legacy binary array.
+        None => settings.get("dns").map(A::legacy_dns).unwrap_or_default(),
     };
-    let mut address_data = Vec::new();
-    if let Some(value) = settings.get("address-data")
-        && let Ok(array) = TryInto::<&Array>::try_into(value)
-    {
-        for entry in array.iter() {
-            if let Value::Dict(dict) = entry
-                && let Ok(Some(address)) = dict.get::<_, &str>(&"address")
-                && let Ok(Some(prefix)) = dict.get::<_, u32>(&"prefix")
-            {
-                if let Ok(address) = address.parse() {
-                    address_data.push(IpAddress::new(address, prefix as u8));
-                }
-            }
-        }
-    };
-    let gateway = take_str_ref(settings, "gateway").and_then(|gateway| gateway.parse().ok());
-    let dns_search = take_str_vec(settings, "dns-search");
-    let mut route_data = Vec::new();
-    if let Some(value) = settings.get("route-data")
-        && let Ok(array) = TryInto::<&Array>::try_into(value)
-    {
-        for entry in array.iter() {
-            if let Value::Dict(dict) = entry
-                && let Ok(Some(dest)) = dict.get::<_, String>(&"dest")
-                && let Ok(Some(prefix)) = dict.get(&"prefix")
-            {
-                let mut route = Route::new(dest, prefix);
-                if let Ok(Some(next_hop)) = dict.get::<_, String>(&"next_hop") {
-                    route = route.next_hop(next_hop);
-                }
-                if let Ok(Some(metric)) = dict.get(&"metric") {
-                    route = route.metric(metric)
-                }
-                route_data.push(route);
-            }
-        }
-    };
-    let never_default = take_bool(settings, "never-default").unwrap_or(false);
-    let ignore_auto_dns = take_bool(settings, "ignore-auto-dns").unwrap_or(false);
+
+    let routes = take_dicts(settings, "route-data")
+        .filter_map(|dict| {
+            decode_route(dict)
+                .inspect_err(|reason| {
+                    warn!(
+                        "saved connection {path}: dropping malformed {section}.route-data entry: {reason}"
+                    );
+                })
+                .ok()
+        })
+        .collect();
+
     IpSettings {
         method,
-        address_data,
+        addresses,
         gateway,
-        dns_search,
-        route_data,
-        never_default,
-        ignore_auto_dns,
+        dns,
+        dns_search: take_str_vec(settings, "dns-search"),
+        routes,
+        never_default: take_bool(settings, "never-default").unwrap_or(false),
+        ignore_auto_dns: take_bool(settings, "ignore-auto-dns").unwrap_or(false),
     }
+}
+
+/// Iterates the `a{sv}` entries of an `aa{sv}` value such as `address-data`.
+fn take_dicts<'a>(
+    m: &'a HashMap<String, OwnedValue>,
+    key: &str,
+) -> impl Iterator<Item = &'a Dict<'static, 'static>> {
+    m.get(key)
+        .and_then(|value| match unbox_value(value) {
+            Value::Array(array) => Some(array),
+            _ => None,
+        })
+        .into_iter()
+        .flat_map(|array| array.iter())
+        .filter_map(|entry| match unbox_value(entry) {
+            Value::Dict(dict) => Some(dict),
+            _ => None,
+        })
+}
+
+/// Looks up `key` in an `a{sv}` dict, unwrapping the variant box around the
+/// value. `Dict::get` ties the key borrow to the returned value, which rules
+/// out a `&str` parameter.
+fn dict_value<'d, 'v>(dict: &'d Dict<'_, 'v>, key: &str) -> Option<&'d Value<'v>> {
+    dict.iter().find_map(|(k, v)| match unbox_value(k) {
+        Value::Str(name) if name.as_str() == key => Some(unbox_value(v)),
+        _ => None,
+    })
+}
+
+fn dict_str<'d>(dict: &'d Dict<'_, '_>, key: &str) -> Option<&'d str> {
+    match dict_value(dict, key)? {
+        Value::Str(value) => Some(value.as_str()),
+        _ => None,
+    }
+}
+
+fn dict_u32(dict: &Dict<'_, '_>, key: &str) -> Option<u32> {
+    match dict_value(dict, key)? {
+        Value::U32(value) => Some(*value),
+        _ => None,
+    }
+}
+
+/// Parses an address NetworkManager stored as a string for family `A`,
+/// describing the failure for the caller's warning.
+fn parse_address<A: IpFamily>(raw: &str) -> std::result::Result<A, String> {
+    raw.parse()
+        .map_err(|_| format!("{raw:?} is not an {} address", A::SECTION))
+}
+
+fn decode_prefix<A: IpFamily>(dict: &Dict<'_, '_>) -> std::result::Result<u8, String> {
+    let prefix = dict_u32(dict, "prefix").ok_or("missing 'prefix'")?;
+    u8::try_from(prefix)
+        .ok()
+        .filter(|prefix| *prefix <= A::MAX_PREFIX)
+        .ok_or_else(|| format!("prefix {prefix} exceeds /{}", A::MAX_PREFIX))
+}
+
+/// Decodes one `address-data` entry (`address` + `prefix`).
+fn decode_address<A: IpFamily>(dict: &Dict<'_, '_>) -> std::result::Result<IpAddress<A>, String> {
+    let address = dict_str(dict, "address").ok_or("missing 'address'")?;
+    Ok(IpAddress::new(
+        parse_address(address)?,
+        decode_prefix::<A>(dict)?,
+    ))
+}
+
+/// Decodes one `route-data` entry (`dest` + `prefix`, optional `next-hop`
+/// and `metric`).
+fn decode_route<A: IpFamily>(dict: &Dict<'_, '_>) -> std::result::Result<IpRoute<A>, String> {
+    let dest = dict_str(dict, "dest").ok_or("missing 'dest'")?;
+    let dest = IpAddress::new(parse_address(dest)?, decode_prefix::<A>(dict)?);
+    let next_hop = dict_str(dict, "next-hop").map(parse_address).transpose()?;
+    Ok(IpRoute {
+        dest,
+        next_hop,
+        metric: dict_u32(dict, "metric"),
+    })
+}
+
+/// Extracts the address from a `dns-data` entry. NetworkManager stores name
+/// servers as `ADDRESS`, `ADDRESS#SERVERNAME` (DNS over TLS), or a URI such
+/// as `dns+tls://ADDRESS[:PORT][#SERVERNAME]`, where an IPv6 `ADDRESS` in a
+/// URI is wrapped in square brackets.
+fn dns_server_address(raw: &str) -> &str {
+    let server = raw.split_once('#').map_or(raw, |(server, _name)| server);
+    let Some((_scheme, authority)) = server.split_once("://") else {
+        return server;
+    };
+    if let Some(bracketed) = authority.strip_prefix('[') {
+        return bracketed
+            .split_once(']')
+            .map_or(bracketed, |(address, _port)| address);
+    }
+    authority
+        .rsplit_once(':')
+        .map_or(authority, |(address, _port)| address)
 }
 
 async fn fetch_one_full(
@@ -1557,5 +1707,335 @@ mod tests {
             owned_to_str(settings["ipv4"].get("method").unwrap()).as_deref(),
             Some("manual")
         );
+    }
+
+    /// Builds an `a{sv}` entry as it arrives from D-Bus: string keys with
+    /// variant-boxed values.
+    fn sv_dict(entries: Vec<(&str, Value<'static>)>) -> Value<'static> {
+        let mut dict = Dict::new(&zvariant::Signature::Str, &zvariant::Signature::Variant);
+        for (key, value) in entries {
+            dict.append(Value::from(key.to_string()), Value::Value(Box::new(value)))
+                .expect("string key with variant value");
+        }
+        Value::Dict(dict)
+    }
+
+    /// Builds an `aa{sv}` array such as `address-data` or `route-data`.
+    fn dict_array(entries: Vec<Value<'static>>) -> OwnedValue {
+        let element =
+            zvariant::Signature::dict(zvariant::Signature::Str, zvariant::Signature::Variant);
+        let mut array = zvariant::Array::new(&element);
+        for entry in entries {
+            array.append(entry).expect("dict entry");
+        }
+        OwnedValue::try_from(Value::Array(array)).expect("owned dict array")
+    }
+
+    fn owned_str(value: &str) -> OwnedValue {
+        OwnedValue::from(Str::from(value))
+    }
+
+    fn v4(address: &str) -> Ipv4Addr {
+        address.parse().expect("IPv4 literal")
+    }
+
+    fn v6(address: &str) -> Ipv6Addr {
+        address.parse().expect("IPv6 literal")
+    }
+
+    fn decode_with_ip(
+        ipv4: Option<HashMap<String, OwnedValue>>,
+        ipv6: Option<HashMap<String, OwnedValue>>,
+    ) -> SavedConnection {
+        let mut settings = HashMap::from([(
+            "connection".to_string(),
+            conn_section("ip-u", "IP settings", "802-3-ethernet"),
+        )]);
+        if let Some(ipv4) = ipv4 {
+            settings.insert("ipv4".into(), ipv4);
+        }
+        if let Some(ipv6) = ipv6 {
+            settings.insert("ipv6".into(), ipv6);
+        }
+        decode_saved(path(20), false, None, settings).unwrap()
+    }
+
+    #[test]
+    fn decode_ipv4_settings_reads_typed_addresses_dns_and_routes() {
+        let ipv4 = HashMap::from([
+            ("method".to_string(), owned_str("manual")),
+            (
+                "address-data".to_string(),
+                dict_array(vec![
+                    sv_dict(vec![
+                        ("address", Value::from("10.0.0.5")),
+                        ("prefix", Value::from(24u32)),
+                    ]),
+                    sv_dict(vec![
+                        ("address", Value::from("192.168.1.2")),
+                        ("prefix", Value::from(16u32)),
+                    ]),
+                ]),
+            ),
+            ("gateway".to_string(), owned_str("10.0.0.1")),
+            (
+                "dns-data".to_string(),
+                owned_string_array(&["10.0.0.53", "1.1.1.1#one.one.one.one"]),
+            ),
+            (
+                "dns-search".to_string(),
+                owned_string_array(&["example.com"]),
+            ),
+            (
+                "route-data".to_string(),
+                dict_array(vec![
+                    sv_dict(vec![
+                        ("dest", Value::from("10.10.0.0")),
+                        ("prefix", Value::from(16u32)),
+                        ("next-hop", Value::from("10.0.0.254")),
+                        ("metric", Value::from(100u32)),
+                    ]),
+                    sv_dict(vec![
+                        ("dest", Value::from("10.20.0.0")),
+                        ("prefix", Value::from(24u32)),
+                    ]),
+                ]),
+            ),
+            ("never-default".to_string(), OwnedValue::from(true)),
+            ("ignore-auto-dns".to_string(), OwnedValue::from(true)),
+        ]);
+
+        let saved = decode_with_ip(Some(ipv4), None);
+        assert!(saved.ipv6.is_none());
+        let ipv4 = saved.ipv4.expect("ipv4 section");
+
+        assert_eq!(ipv4.method, IpMethod::Manual);
+        assert_eq!(
+            ipv4.addresses,
+            vec![
+                IpAddress::new(v4("10.0.0.5"), 24),
+                IpAddress::new(v4("192.168.1.2"), 16),
+            ]
+        );
+        assert_eq!(ipv4.gateway, Some(v4("10.0.0.1")));
+        assert_eq!(ipv4.dns, vec![v4("10.0.0.53"), v4("1.1.1.1")]);
+        assert_eq!(ipv4.dns_search, vec!["example.com"]);
+        // NM's wire key is `next-hop`; reading `next_hop` silently dropped every gateway.
+        assert_eq!(
+            ipv4.routes,
+            vec![
+                IpRoute {
+                    dest: IpAddress::new(v4("10.10.0.0"), 16),
+                    next_hop: Some(v4("10.0.0.254")),
+                    metric: Some(100),
+                },
+                IpRoute::new(IpAddress::new(v4("10.20.0.0"), 24)),
+            ]
+        );
+        assert!(ipv4.never_default);
+        assert!(ipv4.ignore_auto_dns);
+    }
+
+    #[test]
+    fn decode_ipv6_settings_reads_typed_addresses_dns_and_routes() {
+        let ipv6 = HashMap::from([
+            ("method".to_string(), owned_str("manual")),
+            (
+                "address-data".to_string(),
+                dict_array(vec![sv_dict(vec![
+                    ("address", Value::from("fd00::5")),
+                    ("prefix", Value::from(64u32)),
+                ])]),
+            ),
+            ("gateway".to_string(), owned_str("fd00::1")),
+            (
+                "dns-data".to_string(),
+                owned_string_array(&[
+                    "fd00::53",
+                    "dns+tls://[2606:4700:4700::1111]:853#one.one.one.one",
+                ]),
+            ),
+            (
+                "route-data".to_string(),
+                dict_array(vec![sv_dict(vec![
+                    ("dest", Value::from("fd01::")),
+                    ("prefix", Value::from(48u32)),
+                    ("next-hop", Value::from("fd00::fe")),
+                ])]),
+            ),
+        ]);
+
+        let saved = decode_with_ip(None, Some(ipv6));
+        assert!(saved.ipv4.is_none());
+        let ipv6 = saved.ipv6.expect("ipv6 section");
+
+        assert_eq!(ipv6.method, IpMethod::Manual);
+        assert_eq!(ipv6.addresses, vec![IpAddress::new(v6("fd00::5"), 64)]);
+        assert_eq!(ipv6.gateway, Some(v6("fd00::1")));
+        assert_eq!(ipv6.dns, vec![v6("fd00::53"), v6("2606:4700:4700::1111")]);
+        assert!(ipv6.dns_search.is_empty());
+        assert_eq!(
+            ipv6.routes,
+            vec![IpRoute {
+                dest: IpAddress::new(v6("fd01::"), 48),
+                next_hop: Some(v6("fd00::fe")),
+                metric: None,
+            }]
+        );
+        assert!(!ipv6.never_default);
+        assert!(!ipv6.ignore_auto_dns);
+    }
+
+    #[test]
+    fn decode_ip_settings_uses_documented_defaults_for_absent_keys() {
+        let ipv6 = HashMap::from([("method".to_string(), owned_str("dhcp"))]);
+        let saved = decode_with_ip(Some(HashMap::new()), Some(ipv6));
+
+        let ipv4 = saved.ipv4.expect("ipv4 section");
+        assert_eq!(ipv4.method, IpMethod::Auto);
+        assert!(ipv4.addresses.is_empty());
+        assert_eq!(ipv4.gateway, None);
+        assert!(ipv4.dns.is_empty());
+        assert!(ipv4.dns_search.is_empty());
+        assert!(ipv4.routes.is_empty());
+        assert!(!ipv4.never_default);
+        assert!(!ipv4.ignore_auto_dns);
+
+        assert_eq!(saved.ipv6.expect("ipv6 section").method, IpMethod::Dhcp);
+        assert_eq!(
+            IpMethod::from("wat".to_string()),
+            IpMethod::Other("wat".into())
+        );
+    }
+
+    #[test]
+    fn decode_ip_settings_drops_malformed_entries_and_keeps_the_rest() {
+        let ipv4 = HashMap::from([
+            ("method".to_string(), owned_str("manual")),
+            (
+                "address-data".to_string(),
+                dict_array(vec![
+                    // Not an address at all.
+                    sv_dict(vec![
+                        ("address", Value::from("300.1.1.1")),
+                        ("prefix", Value::from(24u32)),
+                    ]),
+                    // Wrong family for an ipv4 section.
+                    sv_dict(vec![
+                        ("address", Value::from("fd00::1")),
+                        ("prefix", Value::from(64u32)),
+                    ]),
+                    // Missing prefix.
+                    sv_dict(vec![("address", Value::from("10.0.0.7"))]),
+                    // Prefix out of range.
+                    sv_dict(vec![
+                        ("address", Value::from("10.0.0.8")),
+                        ("prefix", Value::from(33u32)),
+                    ]),
+                    sv_dict(vec![
+                        ("address", Value::from("10.0.0.9")),
+                        ("prefix", Value::from(24u32)),
+                    ]),
+                ]),
+            ),
+            ("gateway".to_string(), owned_str("not-a-gateway")),
+            (
+                "dns-data".to_string(),
+                owned_string_array(&["8.8.8.8", "nope", "dns+tls://[fd00::53]:853"]),
+            ),
+            (
+                "route-data".to_string(),
+                dict_array(vec![
+                    // Bad next hop drops the whole route.
+                    sv_dict(vec![
+                        ("dest", Value::from("10.10.0.0")),
+                        ("prefix", Value::from(16u32)),
+                        ("next-hop", Value::from("bogus")),
+                    ]),
+                    // Missing dest.
+                    sv_dict(vec![("prefix", Value::from(16u32))]),
+                    sv_dict(vec![
+                        ("dest", Value::from("10.30.0.0")),
+                        ("prefix", Value::from(16u32)),
+                        ("metric", Value::from(50u32)),
+                    ]),
+                ]),
+            ),
+        ]);
+
+        let ipv4 = decode_with_ip(Some(ipv4), None).ipv4.expect("ipv4 section");
+
+        assert_eq!(ipv4.addresses, vec![IpAddress::new(v4("10.0.0.9"), 24)]);
+        assert_eq!(ipv4.gateway, None);
+        assert_eq!(ipv4.dns, vec![v4("8.8.8.8")]);
+        assert_eq!(
+            ipv4.routes,
+            vec![IpRoute {
+                dest: IpAddress::new(v4("10.30.0.0"), 16),
+                next_hop: None,
+                metric: Some(50),
+            }]
+        );
+    }
+
+    #[test]
+    fn decode_ip_settings_falls_back_to_legacy_dns_arrays() {
+        // Non-palindromic addresses catch octet reversal (see `ConnectionBuilder::ipv4_dns`).
+        let v4_servers = [v4("10.2.0.1"), v4("192.168.10.53")];
+        let legacy_v4: Vec<u32> = v4_servers
+            .iter()
+            .map(|server| u32::from_ne_bytes(server.octets()))
+            .collect();
+        let v6_servers = [v6("fd00::53"), v6("2001:db8::1")];
+        let legacy_v6: Vec<Vec<u8>> = v6_servers
+            .iter()
+            .map(|server| server.octets().to_vec())
+            .collect();
+
+        let ipv4 = HashMap::from([(
+            "dns".to_string(),
+            OwnedValue::try_from(Value::from(legacy_v4)).expect("owned au"),
+        )]);
+        let ipv6 = HashMap::from([(
+            "dns".to_string(),
+            OwnedValue::try_from(Value::from(legacy_v6)).expect("owned aay"),
+        )]);
+
+        let saved = decode_with_ip(Some(ipv4), Some(ipv6));
+        assert_eq!(saved.ipv4.expect("ipv4 section").dns, v4_servers);
+        assert_eq!(saved.ipv6.expect("ipv6 section").dns, v6_servers);
+    }
+
+    #[test]
+    fn decode_ip_settings_prefers_dns_data_over_legacy_dns() {
+        let ipv4 = HashMap::from([
+            (
+                "dns".to_string(),
+                OwnedValue::try_from(Value::from(vec![u32::from_ne_bytes([10, 2, 0, 1])]))
+                    .expect("owned au"),
+            ),
+            ("dns-data".to_string(), owned_string_array(&["10.2.0.2"])),
+        ]);
+
+        let ipv4 = decode_with_ip(Some(ipv4), None).ipv4.expect("ipv4 section");
+        assert_eq!(ipv4.dns, [v4("10.2.0.2")]);
+    }
+
+    #[test]
+    fn dns_server_address_keeps_only_the_address() {
+        for (raw, expected) in [
+            ("1.1.1.1", "1.1.1.1"),
+            ("1.1.1.1#one.one.one.one", "1.1.1.1"),
+            ("2606:4700:4700::1111", "2606:4700:4700::1111"),
+            ("dns+udp://1.1.1.1", "1.1.1.1"),
+            ("dns+tls://1.1.1.1:853#one.one.one.one", "1.1.1.1"),
+            (
+                "dns+tls://[2606:4700:4700::1111]:853#one.one.one.one",
+                "2606:4700:4700::1111",
+            ),
+            ("dns+udp://[fd00::53]", "fd00::53"),
+        ] {
+            assert_eq!(dns_server_address(raw), expected, "{raw}");
+        }
     }
 }

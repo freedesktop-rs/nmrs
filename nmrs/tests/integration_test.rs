@@ -430,6 +430,7 @@ async fn networkmanager_profile_crud_and_settings_events() {
         let settings = WireGuardBuilder::new(&id)
             .private_key("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=")
             .address("10.203.0.2/24")
+            .dns(vec!["10.203.0.53".into()])
             .add_peer(WireGuardPeer::new(
                 "HIgo9xNzJMWLKAShlKl6/bUT1VI9Q0SDBXGtLXkPFXc=",
                 "192.0.2.1:51820",
@@ -504,13 +505,16 @@ async fn networkmanager_profile_crud_and_settings_events() {
         assert_eq!(profile.id, id);
         assert_eq!(profile.connection_type, "wireguard");
         assert!(!profile.autoconnect);
-        match profile.ipv4 {
-            Some(ipv4) => {
-                assert_eq!(ipv4.address_data[0].address, Ipv4Addr::new(10, 203, 0, 2));
-                assert_eq!(ipv4.address_data[0].prefix, 24);
-            }
-            None => panic!("expected an ipv4 section")
-        }
+        let ipv4 = profile.ipv4.expect("expected an ipv4 section");
+        assert_eq!(ipv4.method, nmrs::models::IpMethod::Manual);
+        assert_eq!(
+            ipv4.addresses,
+            vec![nmrs::models::IpAddress::new(
+                Ipv4Addr::new(10, 203, 0, 2),
+                24
+            )]
+        );
+        assert_eq!(ipv4.dns, vec![Ipv4Addr::new(10, 203, 0, 53)]);
         match profile.summary {
             SettingsSummary::WireGuard {
                 mtu,

@@ -36,7 +36,9 @@ async fn main() -> nmrs::Result<()> {
 
 Each `SavedConnection` includes the profile `id` (display name), `uuid`,
 `connection_type` (`"802-11-wireless"`, `"vpn"`, `"wireguard"`, `"bluetooth"`,
-…), and a decoded [`SettingsSummary`](../api/models.md#settingspatch).
+…), a decoded [`SettingsSummary`](../api/models.md#settingspatch), and the
+typed `ipv4` / `ipv6` [`IpSettings`](../api/models.md#savedconnection) when
+the profile has those sections.
 
 ## Checking for a Saved Connection
 
