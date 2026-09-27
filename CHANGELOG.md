@@ -3,6 +3,8 @@
 All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
+
+## [3.5.4] - 2026-09-27
 ### Added
 
 - `SavedConnection::ipv4` and `SavedConnection::ipv6` expose a profile's IP
@@ -621,7 +623,8 @@ present)` constructor; `RadioState::new` keeps existing behavior and defaults
 
 - EAP connections default to no certificates (advanced certificate management coming in future releases)
 
-[Unreleased]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.3...HEAD
+[Unreleased]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.4...HEAD
+[3.5.4]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.3...nmrs-v3.5.4
 [3.5.3]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.2...nmrs-v3.5.3
 [3.5.2]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.1...nmrs-v3.5.2
 [3.5.1]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.0...nmrs-v3.5.1

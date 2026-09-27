@@ -91,7 +91,7 @@ Atomic commits — one logical change per commit.
 
 ## Changelog
 
-[Keep a Changelog](https://keepachangelog.com/) format in `nmrs/CHANGELOG.md`.
+[Keep a Changelog](https://keepachangelog.com/) format in `CHANGELOG.md`.
 Sections: `Added`, `Changed`, `Fixed`. Link PRs/issues in parentheses.
 
 ## Things to watch out for

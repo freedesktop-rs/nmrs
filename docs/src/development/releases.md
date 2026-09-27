@@ -12,7 +12,7 @@ nmrs follows [Semantic Versioning](https://semver.org/):
 
 ## Changelog
 
-See [`nmrs/CHANGELOG.md`](https://github.com/freedesktop-rs/nmrs/blob/master/nmrs/CHANGELOG.md) for the full changelog.
+See [`CHANGELOG.md`](https://github.com/freedesktop-rs/nmrs/blob/master/CHANGELOG.md) for the full changelog.
 
 ## Release Checklist
 
