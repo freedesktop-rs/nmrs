@@ -18,6 +18,43 @@ All notable changes to the `nmrs` crate will be documented in this file.
   `sections()` and `has_section()` list what the profile contains. The raw
   `GetSettings` map is kept privately and shared between clones.
   ([#524](https://github.com/freedesktop-rs/nmrs/issues/524))
+- `StateReason` now covers every `NMDeviceStateReason` code (0 through 79),
+  including `NoSecrets`, `ConfigFailed`, `IpConfigUnavailable`, the
+  `Unmanaged*` family, and `NetworkingOff`.
+  ([#555](https://github.com/freedesktop-rs/nmrs/issues/555))
+
+### Deprecated
+
+- `StateReason::UserDisconnected`, `DeviceDisconnected`, `ModeSetFailed`,
+  `ModemConnectionFailed`, `Carrier`, and `ParentUnreachable` have no
+  NetworkManager counterpart and are never produced any more. They remain
+  as deprecated variants so existing matches keep compiling; use
+  `UserRequested`, `CarrierChanged`, and the `Modem*` variants instead.
+  ([#555](https://github.com/freedesktop-rs/nmrs/issues/555))
+
+### Fixed
+
+- `StateReason::from(u32)` decoded almost every device reason code to the
+  wrong variant: codes 2 through 65 were shifted or swapped relative to
+  NetworkManager's `NMDeviceStateReason`, so for example `SSID_NOT_FOUND`
+  came back as `DeviceRemoved` and `SUPPLICANT_FAILED` as
+  `SupplicantTimeout`. The table is rebuilt from `nm-dbus-interface.h`, and
+  `reason_to_error()` maps the corrected variants (`NoSecrets`,
+  `SupplicantDisconnected`, `SupplicantFailed`, `GsmPinCheckFailed`,
+  `SimPinIncorrect` to `AuthFailed`; `SsidNotFound` to `NotFound`; DHCP and
+  IP configuration failures to `DhcpFailed`). Callers matching on a specific
+  `StateReason` or `DeviceFailed(..)` value will see the variant
+  NetworkManager actually means for the same code.
+  ([#555](https://github.com/freedesktop-rs/nmrs/issues/555))
+- A failed activation could surface as `DeviceFailed(None)` instead of the
+  real reason (most visibly `AuthFailed` for a wrong WPA passphrase). The
+  device's `StateReason` property was read only after the active connection
+  had deactivated, by which point NetworkManager had already moved the
+  device from `FAILED` to `DISCONNECTED` with reason `NONE`. Activation now
+  subscribes to each device's `StateChanged` signal and records the reason
+  given on the transition into `FAILED`; the property is only consulted
+  when no such signal was seen.
+  ([#555](https://github.com/freedesktop-rs/nmrs/issues/555))
 
 ## [3.5.3] - 2026-09-21
 ### Added
