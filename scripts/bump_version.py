@@ -4,7 +4,7 @@ Version bumping script for nmrs.
 
 This script updates version numbers:
 - nmrs/Cargo.toml
-- nmrs/CHANGELOG.md
+- CHANGELOG.md
 - Cargo.lock
 
 Usage:
@@ -69,7 +69,13 @@ def check_breaking_changes(changelog_path: Path, current: str, new: str, allow: 
 
 
 def update_cargo_toml(file_path: Path, version: str) -> bool:
-    """Update version in a Cargo.toml file."""
+    """Update version in a Cargo.toml file.
+
+    Already being at `version` is success, not failure: a run that dies partway
+    through (a missing CHANGELOG, say) leaves Cargo.toml bumped, and treating
+    the no-op re-run as an error made the resumed run fail forever - and skip
+    the Cargo.lock refresh with it.
+    """
     try:
         content = file_path.read_text()
         pattern = r'^version\s*=\s*"[^"]*"'
@@ -81,9 +87,13 @@ def update_cargo_toml(file_path: Path, version: str) -> bool:
             file_path.write_text(new_content)
             print(f"✓ Updated {file_path}")
             return True
-        else:
-            print(f"No changes needed in {file_path}")
-            return False
+
+        if read_current_version(file_path) == version:
+            print(f"Already at {version}: {file_path}")
+            return True
+
+        print(f"✗ No `version = \"...\"` line found in {file_path}")
+        return False
     except Exception as e:
         print(f"✗ Error updating {file_path}: {e}")
         return False
@@ -243,7 +253,7 @@ def main():
     success = True
 
     cargo_toml_path = project_root / 'nmrs' / 'Cargo.toml'
-    changelog_path = project_root / 'nmrs' / 'CHANGELOG.md'
+    changelog_path = project_root / 'CHANGELOG.md'
 
     if release_type == 'stable' and cargo_toml_path.exists() and changelog_path.exists():
         current = read_current_version(cargo_toml_path)
@@ -259,7 +269,7 @@ def main():
 
     if not changelog_path.exists():
         print(f"✗ File not found: {changelog_path}")
-        print("  Create nmrs/CHANGELOG.md with an [Unreleased] section first")
+        print("  Create CHANGELOG.md with an [Unreleased] section first")
         success = False
     else:
         if not update_changelog(changelog_path, version, release_type):
