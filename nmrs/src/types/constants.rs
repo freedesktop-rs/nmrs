@@ -30,6 +30,7 @@ pub mod device_state {
     // pub const SECONDARIES: u32 = 90;
     pub const ACTIVATED: u32 = 100;
     // pub const DEACTIVATING: u32 = 110;
+    pub const FAILED: u32 = 120;
 }
 
 /// WiFi security flag constants
