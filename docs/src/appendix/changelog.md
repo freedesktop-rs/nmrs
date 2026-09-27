@@ -1,6 +1,6 @@
 # Changelog
 
-See the full changelog on GitHub: [**nmrs** CHANGELOG](https://github.com/freedesktop-rs/nmrs/blob/master/nmrs/CHANGELOG.md)
+See the full changelog on GitHub: [**nmrs** CHANGELOG](https://github.com/freedesktop-rs/nmrs/blob/master/CHANGELOG.md)
 
 ## nmrs (Library) Highlights
 

@@ -35,7 +35,7 @@ python3 scripts/bump_version.py 3.2.0 beta
 1. Refuses the bump if `[Unreleased]` documents a breaking change and the new
    version is not a major bump (see below)
 2. Updates `version` in `nmrs/Cargo.toml`
-3. Updates `nmrs/CHANGELOG.md` (moves Unreleased section to new version, and
+3. Updates `CHANGELOG.md` (moves Unreleased section to new version, and
    adds the compare link for the new tag)
 4. Refreshes `Cargo.lock` via `cargo update --workspace` so `--locked` builds
    keep working
