@@ -254,28 +254,66 @@ fn wifi_security_eap_192bit() {
 }
 
 #[test]
-fn state_reason_from_u32_known_codes() {
-    assert_eq!(StateReason::from(0), StateReason::Unknown);
-    assert_eq!(StateReason::from(1), StateReason::None);
-    assert_eq!(StateReason::from(7), StateReason::SupplicantDisconnected);
-    assert_eq!(StateReason::from(8), StateReason::SupplicantConfigFailed);
-    assert_eq!(StateReason::from(9), StateReason::SupplicantFailed);
-    assert_eq!(StateReason::from(10), StateReason::SupplicantTimeout);
+fn state_reason_from_u32_matches_networkmanager_codes() {
+    assert_eq!(StateReason::from(0), StateReason::None);
+    assert_eq!(StateReason::from(1), StateReason::Unknown);
+    assert_eq!(StateReason::from(2), StateReason::NowManaged);
+    assert_eq!(StateReason::from(3), StateReason::NowUnmanaged);
+    assert_eq!(StateReason::from(4), StateReason::ConfigFailed);
+    assert_eq!(StateReason::from(5), StateReason::IpConfigUnavailable);
+    assert_eq!(StateReason::from(7), StateReason::NoSecrets);
+    assert_eq!(StateReason::from(8), StateReason::SupplicantDisconnected);
+    assert_eq!(StateReason::from(9), StateReason::SupplicantConfigFailed);
+    assert_eq!(StateReason::from(10), StateReason::SupplicantFailed);
+    assert_eq!(StateReason::from(11), StateReason::SupplicantTimeout);
+    assert_eq!(StateReason::from(15), StateReason::DhcpStartFailed);
     assert_eq!(StateReason::from(16), StateReason::DhcpError);
     assert_eq!(StateReason::from(17), StateReason::DhcpFailed);
-    assert_eq!(StateReason::from(70), StateReason::SsidNotFound);
-    assert_eq!(StateReason::from(76), StateReason::SimPinIncorrect);
+    assert_eq!(StateReason::from(36), StateReason::DeviceRemoved);
+    assert_eq!(StateReason::from(39), StateReason::UserRequested);
+    assert_eq!(StateReason::from(40), StateReason::CarrierChanged);
+    assert_eq!(StateReason::from(51), StateReason::Br2684Failed);
+    assert_eq!(StateReason::from(53), StateReason::SsidNotFound);
+    assert_eq!(StateReason::from(59), StateReason::SimPinIncorrect);
+    assert_eq!(StateReason::from(60), StateReason::NewActivationEnqueued);
+    assert_eq!(StateReason::from(73), StateReason::UnmanagedManagerDisabled);
+    assert_eq!(StateReason::from(78), StateReason::NetworkingOff);
+    assert_eq!(StateReason::from(79), StateReason::ModemNoOperatorCode);
 }
 
 #[test]
 fn state_reason_from_u32_unknown_code() {
+    assert_eq!(StateReason::from(80), StateReason::Other(80));
     assert_eq!(StateReason::from(999), StateReason::Other(999));
-    assert_eq!(StateReason::from(255), StateReason::Other(255));
+}
+
+#[test]
+fn state_reason_every_networkmanager_code_has_a_variant() {
+    for code in 0..=79 {
+        let reason = StateReason::from(code);
+        assert!(
+            !matches!(reason, StateReason::Other(_)),
+            "code {code} is defined by NetworkManager but decoded to {reason:?}"
+        );
+        assert!(
+            !matches!(
+                reason,
+                StateReason::UserDisconnected
+                    | StateReason::DeviceDisconnected
+                    | StateReason::ModeSetFailed
+                    | StateReason::ModemConnectionFailed
+                    | StateReason::Carrier
+                    | StateReason::ParentUnreachable
+            ),
+            "code {code} decoded to retired variant {reason:?}"
+        );
+    }
 }
 
 #[test]
 fn state_reason_display() {
     assert_eq!(format!("{}", StateReason::Unknown), "unknown");
+    assert_eq!(format!("{}", StateReason::NoSecrets), "no secrets provided");
     assert_eq!(
         format!("{}", StateReason::SupplicantFailed),
         "supplicant failed"
@@ -290,16 +328,20 @@ fn state_reason_display() {
 
 #[test]
 fn reason_to_error_auth_failures() {
-    assert!(matches!(reason_to_error(9), ConnectionError::AuthFailed));
-    assert!(matches!(reason_to_error(7), ConnectionError::AuthFailed));
-    assert!(matches!(reason_to_error(76), ConnectionError::AuthFailed));
-    assert!(matches!(reason_to_error(51), ConnectionError::AuthFailed));
+    // NO_SECRETS, SUPPLICANT_DISCONNECT, SUPPLICANT_FAILED,
+    // GSM_PIN_CHECK_FAILED, SIM_PIN_INCORRECT
+    for code in [7, 8, 10, 34, 59] {
+        assert!(
+            matches!(reason_to_error(code), ConnectionError::AuthFailed),
+            "code {code}"
+        );
+    }
 }
 
 #[test]
 fn reason_to_error_supplicant_config() {
     assert!(matches!(
-        reason_to_error(8),
+        reason_to_error(9),
         ConnectionError::SupplicantConfigFailed
     ));
 }
@@ -307,31 +349,41 @@ fn reason_to_error_supplicant_config() {
 #[test]
 fn reason_to_error_supplicant_timeout() {
     assert!(matches!(
-        reason_to_error(10),
+        reason_to_error(11),
         ConnectionError::SupplicantTimeout
     ));
 }
 
 #[test]
 fn reason_to_error_dhcp_failures() {
-    assert!(matches!(reason_to_error(15), ConnectionError::DhcpFailed));
-    assert!(matches!(reason_to_error(16), ConnectionError::DhcpFailed));
-    assert!(matches!(reason_to_error(17), ConnectionError::DhcpFailed));
+    // IP_CONFIG_UNAVAILABLE, IP_CONFIG_EXPIRED, DHCP_START_FAILED, DHCP_ERROR,
+    // DHCP_FAILED
+    for code in [5, 6, 15, 16, 17] {
+        assert!(
+            matches!(reason_to_error(code), ConnectionError::DhcpFailed),
+            "code {code}"
+        );
+    }
 }
 
 #[test]
 fn reason_to_error_network_not_found() {
-    assert!(matches!(reason_to_error(70), ConnectionError::NotFound));
+    assert!(matches!(reason_to_error(53), ConnectionError::NotFound));
 }
 
 #[test]
 fn reason_to_error_generic_failure() {
     match reason_to_error(2) {
         ConnectionError::DeviceFailed(reason) => {
-            assert_eq!(reason, StateReason::UserDisconnected);
+            assert_eq!(reason, StateReason::NowManaged);
         }
-        _ => panic!("expected ConnectionError::Failed"),
+        other => panic!("expected ConnectionError::DeviceFailed, got {other:?}"),
     }
+    // BR2684_FAILED was previously mistaken for a PIN check failure.
+    assert!(matches!(
+        reason_to_error(51),
+        ConnectionError::DeviceFailed(StateReason::Br2684Failed)
+    ));
 }
 
 #[test]
