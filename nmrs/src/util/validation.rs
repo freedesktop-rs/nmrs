@@ -617,9 +617,10 @@ fn validate_ip_address(ip: &str) -> Result<(), ConnectionError> {
 /// - Remote server must not be empty
 /// - Port is validated at the type level (`u16`), no extra check needed
 /// - Auth-type-specific required fields:
-///   - `Password`: username must be set
+///   - `Password`: username, if set, must not be blank
 ///   - `Tls`: CA cert, client cert, and client key must be set
-///   - `PasswordTls`: username plus all TLS cert paths must be set
+///   - `PasswordTls`: username as for `Password`, plus all TLS cert paths
+///     must be set
 ///   - `StaticKey`: no additional fields required
 /// - Cert paths (if set) must be non-empty strings
 /// - DNS servers (if provided) must be valid IP addresses
@@ -639,10 +640,15 @@ pub fn validate_openvpn_config(config: &OpenVpnConfig) -> Result<(), ConnectionE
 
     if let Some(ref auth_type) = config.auth_type {
         match auth_type {
+            // An unset username is prompted for at connect time.
             OpenVpnAuthType::Password => {
-                if config.username.as_deref().unwrap_or("").trim().is_empty() {
+                if config
+                    .username
+                    .as_deref()
+                    .is_some_and(|u| u.trim().is_empty())
+                {
                     return Err(ConnectionError::InvalidAddress(
-                        "Username is required for password authentication".to_string(),
+                        "Username cannot be blank for password authentication".to_string(),
                     ));
                 }
             }
@@ -650,9 +656,13 @@ pub fn validate_openvpn_config(config: &OpenVpnConfig) -> Result<(), ConnectionE
                 validate_openvpn_cert_paths(config)?;
             }
             OpenVpnAuthType::PasswordTls => {
-                if config.username.as_deref().unwrap_or("").trim().is_empty() {
+                if config
+                    .username
+                    .as_deref()
+                    .is_some_and(|u| u.trim().is_empty())
+                {
                     return Err(ConnectionError::InvalidAddress(
-                        "Username is required for password+TLS authentication".to_string(),
+                        "Username cannot be blank for password+TLS authentication".to_string(),
                     ));
                 }
                 validate_openvpn_cert_paths(config)?;
@@ -1749,13 +1759,9 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_openvpn_password_auth_missing_username() {
+    fn test_validate_openvpn_password_auth_without_username() {
         let config = base_openvpn_config().with_auth_type(OpenVpnAuthType::Password);
-        assert_error_message!(
-            validate_openvpn_config(&config),
-            InvalidAddress,
-            "Username is required for password authentication"
-        );
+        assert!(validate_openvpn_config(&config).is_ok());
     }
 
     #[test]
@@ -1766,7 +1772,7 @@ mod tests {
         assert_error_message!(
             validate_openvpn_config(&config),
             InvalidAddress,
-            "Username is required for password authentication"
+            "Username cannot be blank for password authentication"
         );
     }
 
@@ -1811,16 +1817,27 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_openvpn_password_tls_missing_username() {
+    fn test_validate_openvpn_password_tls_without_username() {
         let config = base_openvpn_config()
             .with_auth_type(OpenVpnAuthType::PasswordTls)
+            .with_ca_cert("/path/to/ca.crt")
+            .with_client_cert("/path/to/client.crt")
+            .with_client_key("/path/to/client.key");
+        assert!(validate_openvpn_config(&config).is_ok());
+    }
+
+    #[test]
+    fn test_validate_openvpn_password_tls_rejects_whitespace_username() {
+        let config = base_openvpn_config()
+            .with_auth_type(OpenVpnAuthType::PasswordTls)
+            .with_username("   ")
             .with_ca_cert("/path/to/ca.crt")
             .with_client_cert("/path/to/client.crt")
             .with_client_key("/path/to/client.key");
         assert_error_message!(
             validate_openvpn_config(&config),
             InvalidAddress,
-            "Username is required for password+TLS authentication"
+            "Username cannot be blank for password+TLS authentication"
         );
     }
 
