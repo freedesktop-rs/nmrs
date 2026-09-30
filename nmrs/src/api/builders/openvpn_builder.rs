@@ -26,7 +26,8 @@ use crate::util::validation::validate_connection_name;
 /// Validates at build time:
 /// - `remote` must be set and non-empty
 /// - `auth_type` must be set
-/// - `Password` or `PasswordTls`: `username` required
+/// - `Password` or `PasswordTls`: `username` is optional; when unset,
+///   the user is asked for it at connect time, as `auth-user-pass` means
 /// - `Tls` or `PasswordTls`: `ca_cert`, `client_cert`, `client_key` required
 /// - port must be 1–65535
 ///
@@ -617,7 +618,6 @@ impl OpenVpnBuilder {
     /// - `ConnectionError::InvalidGateway` if `remote` is not set or empty
     /// - `ConnectionError::InvalidGateway` if `port` is 0
     /// - `ConnectionError::VpnFailed` if `auth_type` is not set
-    /// - `ConnectionError::VpnFailed` if `username` is required but missing
     /// - `ConnectionError::VpnFailed` if TLS certs are required but missing
     #[must_use = "the validated OpenVPN config should be used to build connection settings"]
     pub fn build(self) -> Result<OpenVpnConfig, ConnectionError> {
@@ -644,16 +644,6 @@ impl OpenVpnBuilder {
         let auth_type = self
             .auth_type
             .ok_or_else(|| ConnectionError::VpnFailed("auth_type must be set".into()))?;
-
-        // auth_type-specific validation
-        match &auth_type {
-            OpenVpnAuthType::Password | OpenVpnAuthType::PasswordTls if self.username.is_none() => {
-                return Err(ConnectionError::VpnFailed(
-                    "username is required for Password and PasswordTls auth".into(),
-                ));
-            }
-            _ => {}
-        }
 
         if matches!(auth_type, OpenVpnAuthType::StaticKey) {
             return Err(ConnectionError::VpnFailed(
@@ -961,32 +951,26 @@ mod tests {
     }
 
     #[test]
-    fn requires_username_for_password_auth() {
-        let result = OpenVpnBuilder::new("TestVPN")
+    fn password_auth_builds_without_username() {
+        let config = OpenVpnBuilder::new("TestVPN")
             .remote("vpn.example.com")
             .auth_type(OpenVpnAuthType::Password)
-            .build();
-        assert!(matches!(
-            result.unwrap_err(),
-            ConnectionError::VpnFailed(message)
-                if message == "username is required for Password and PasswordTls auth"
-        ));
+            .build()
+            .unwrap();
+        assert_eq!(config.username, None);
     }
 
     #[test]
-    fn requires_username_for_password_tls_auth() {
-        let result = OpenVpnBuilder::new("TestVPN")
+    fn password_tls_auth_builds_without_username() {
+        let config = OpenVpnBuilder::new("TestVPN")
             .remote("vpn.example.com")
             .auth_type(OpenVpnAuthType::PasswordTls)
             .ca_cert("/etc/openvpn/ca.crt")
             .client_cert("/etc/openvpn/client.crt")
             .client_key("/etc/openvpn/client.key")
-            .build();
-        assert!(matches!(
-            result.unwrap_err(),
-            ConnectionError::VpnFailed(message)
-                if message == "username is required for Password and PasswordTls auth"
-        ));
+            .build()
+            .unwrap();
+        assert_eq!(config.username, None);
     }
 
     #[test]
