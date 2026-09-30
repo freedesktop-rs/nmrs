@@ -633,7 +633,8 @@ present)` constructor; `RadioState::new` keeps existing behavior and defaults
 
 - EAP connections default to no certificates (advanced certificate management coming in future releases)
 
-[Unreleased]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.4...HEAD
+[Unreleased]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.5...HEAD
+[3.5.5]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.4...nmrs-v3.5.5
 [3.5.4]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.3...nmrs-v3.5.4
 [3.5.3]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.2...nmrs-v3.5.3
 [3.5.2]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.1...nmrs-v3.5.2
