@@ -3,6 +3,9 @@
 All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
+
+## [3.5.5] - 2026-09-27
+
 ### Fixed
 
 - `.ovpn` files that use `auth-user-pass` without an inline username now
