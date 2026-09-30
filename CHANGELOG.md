@@ -3,6 +3,14 @@
 All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
+### Fixed
+
+- `.ovpn` files that use `auth-user-pass` without an inline username now
+  import. `OpenVpnBuilder::build()` and `validate_openvpn_config()` no longer
+  require a username for `Password` and `PasswordTls` auth; an unset username
+  is asked for at connect time. A username that is set but blank is still
+  rejected by `validate_openvpn_config()`.
+  ([#558](https://github.com/freedesktop-rs/nmrs/pull/558))
 
 ## [3.5.4] - 2026-09-27
 ### Added
