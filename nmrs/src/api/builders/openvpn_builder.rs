@@ -1053,6 +1053,102 @@ key /etc/openvpn/client.key
         assert_eq!(config.port, 443);
     }
 
+    /// Reads a string value from the `vpn.data` dict of built settings.
+    fn vpn_data_value(
+        settings: &std::collections::HashMap<
+            &str,
+            std::collections::HashMap<&str, zvariant::Value>,
+        >,
+        key: &str,
+    ) -> Option<String> {
+        match settings.get("vpn")?.get("data")? {
+            zvariant::Value::Dict(dict) => dict
+                .get::<zvariant::Value, String>(&zvariant::Value::from(key))
+                .ok()?,
+            _ => None,
+        }
+    }
+
+    /// A Ubiquiti-generated profile with `auth-user-pass` and no inline
+    /// username must import the way cosmic-settings does it: parse, build,
+    /// then `build_openvpn_connection` (pop-os/cosmic-settings#2175, #2214).
+    ///
+    /// `user`, `group`, `remote-cert-tls` and `reneg-sec` are not mapped by
+    /// nmrs; they stay in the fixture because the reported file has them and
+    /// they must not make the import fail.
+    #[test]
+    fn from_ovpn_str_auth_user_pass_without_username() {
+        with_fake_xdg(|| {
+            let ovpn = "\
+client
+dev tun
+proto udp
+remote 203.0.113.10 1194
+user nobody
+group nogroup
+auth-user-pass
+remote-cert-tls server
+cipher AES-256-CBC
+auth SHA1
+key-direction 1
+reneg-sec 0
+redirect-gateway def1
+<ca>
+-----BEGIN CERTIFICATE-----
+FAKECA
+-----END CERTIFICATE-----
+</ca>
+<tls-auth>
+-----BEGIN OpenVPN Static key V1-----
+FAKETA
+-----END OpenVPN Static key V1-----
+</tls-auth>
+<cert>
+-----BEGIN CERTIFICATE-----
+FAKECERT
+-----END CERTIFICATE-----
+</cert>
+<key>
+-----BEGIN PRIVATE KEY-----
+FAKEKEY
+-----END PRIVATE KEY-----
+</key>
+";
+            let config = OpenVpnBuilder::from_ovpn_str(ovpn, "ubiquiti")
+                .unwrap()
+                .build()
+                .unwrap();
+            assert_eq!(config.auth_type, Some(OpenVpnAuthType::PasswordTls));
+            assert_eq!(config.username, None);
+            assert_eq!(config.remote, "203.0.113.10");
+            assert!(!config.tcp);
+            assert_eq!(config.cipher.as_deref(), Some("AES-256-CBC"));
+            assert_eq!(config.auth.as_deref(), Some("SHA1"));
+            assert!(config.redirect_gateway);
+            assert_eq!(config.tls_auth_direction, Some(1));
+            assert_stored_material(
+                config.tls_auth_key.clone(),
+                "ubiquiti",
+                "ta.key",
+                "-----BEGIN OpenVPN Static key V1-----\nFAKETA\n-----END OpenVPN Static key V1-----\n",
+            );
+            assert!(crate::util::validation::validate_openvpn_config(&config).is_ok());
+
+            let settings = crate::api::builders::vpn::build_openvpn_connection(
+                &config,
+                &crate::api::models::ConnectionOptions::new(false),
+            )
+            .unwrap();
+            assert_eq!(
+                vpn_data_value(&settings, "connection-type").as_deref(),
+                Some("password-tls")
+            );
+            assert_eq!(vpn_data_value(&settings, "username"), None);
+            assert_eq!(vpn_data_value(&settings, "ta-dir").as_deref(), Some("1"));
+            assert!(!settings["vpn"].contains_key("secrets"));
+        });
+    }
+
     #[test]
     fn from_ovpn_str_inline_certs_stored() {
         with_fake_xdg(|| {
