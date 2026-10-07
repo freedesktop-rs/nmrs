@@ -23,7 +23,6 @@ futures.workspace = true
 futures-timer.workspace = true
 base64.workspace = true
 tokio.workspace = true
-async-trait.workspace = true
 bitflags.workspace = true
 
 [package.metadata.docs.rs]

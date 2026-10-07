@@ -487,7 +487,6 @@ dependencies = [
 name = "nmrs"
 version = "3.5.5"
 dependencies = [
- "async-trait",
  "base64",
  "bitflags",
  "futures",

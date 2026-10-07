@@ -3,7 +3,6 @@
 //! Provides functions to retrieve information about currently connected
 //! Bluetooth devices and their connection state.
 
-use async_trait::async_trait;
 use zbus::Connection;
 
 use crate::dbus::{NMBluetoothProxy, NMDeviceProxy, NMProxy};
@@ -13,7 +12,6 @@ use crate::types::constants::{device_state, device_type};
 
 pub(crate) struct Bluetooth;
 
-#[async_trait]
 impl ActiveTransport for Bluetooth {
     type Output = String;
 
