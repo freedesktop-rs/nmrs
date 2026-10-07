@@ -7,7 +7,9 @@ use zvariant::OwnedObjectPath;
 use crate::api::builders::wifi::{build_ethernet_connection, try_build_wifi_connection};
 use crate::api::models::access_point::{SecurityFeatures, decode_security};
 use crate::api::models::{ConnectionError, ConnectionOptions, TimeoutConfig, WifiSecurity};
-use crate::core::connection_settings::{delete_connection, get_saved_connection_path};
+use crate::core::connection_settings::{
+    delete_connection, get_saved_connection_path, get_saved_wifi_connection_path,
+};
 use crate::core::state_wait::{wait_for_connection_activation, wait_for_device_disconnect};
 use crate::dbus::{NMAccessPointProxy, NMDeviceProxy, NMProxy, NMWiredProxy, NMWirelessProxy};
 use crate::monitoring::info::current_ssid;
@@ -63,7 +65,7 @@ pub(crate) async fn connect(
 
     let nm = NMProxy::new(conn).await?;
 
-    let saved_raw = get_saved_connection_path(conn, ssid).await?;
+    let saved_raw = get_saved_wifi_connection_path(conn, ssid).await?;
     let decision = decide_saved_connection(saved_raw, &creds)?;
 
     let wifi_device = resolve_wifi_device(conn, &nm, interface).await?;
@@ -747,7 +749,7 @@ pub(crate) async fn connect_to_bssid(
             );
 
             let nm = NMProxy::new(conn).await?;
-            let saved_raw = get_saved_connection_path(conn, ssid).await?;
+            let saved_raw = get_saved_wifi_connection_path(conn, ssid).await?;
             let decision = decide_saved_connection(saved_raw, &creds)?;
             let wifi_device = resolve_wifi_device(conn, &nm, interface).await?;
             let wifi = NMWirelessProxy::builder(conn)
