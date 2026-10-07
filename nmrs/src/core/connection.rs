@@ -7,7 +7,9 @@ use zvariant::OwnedObjectPath;
 use crate::api::builders::wifi::{build_ethernet_connection, try_build_wifi_connection};
 use crate::api::models::access_point::{SecurityFeatures, decode_security};
 use crate::api::models::{ConnectionError, ConnectionOptions, TimeoutConfig, WifiSecurity};
-use crate::core::connection_settings::{delete_connection, get_saved_connection_path};
+use crate::core::connection_settings::{
+    delete_connection, get_saved_connection_path, get_saved_wifi_connection_path,
+};
 use crate::core::state_wait::{wait_for_connection_activation, wait_for_device_disconnect};
 use crate::dbus::{NMAccessPointProxy, NMDeviceProxy, NMProxy, NMWiredProxy, NMWirelessProxy};
 use crate::monitoring::info::current_ssid;
@@ -25,7 +27,11 @@ enum SavedDecision {
     /// Reuse the saved connection at this path.
     UseSaved(OwnedObjectPath),
     /// Create a new connection profile using the supplied credentials.
-    RebuildFresh,
+    ///
+    /// `replaces` is the saved profile for this SSID, if any. It is deleted
+    /// once the new profile activates, so reconnecting with a new password
+    /// does not leave a duplicate behind.
+    RebuildFresh { replaces: Option<OwnedObjectPath> },
 }
 
 /// Connects to a Wi-Fi network.
@@ -63,7 +69,7 @@ pub(crate) async fn connect(
 
     let nm = NMProxy::new(conn).await?;
 
-    let saved_raw = get_saved_connection_path(conn, ssid).await?;
+    let saved_raw = get_saved_wifi_connection_path(conn, ssid).await?;
     let decision = decide_saved_connection(saved_raw, &creds)?;
 
     let wifi_device = resolve_wifi_device(conn, &nm, interface).await?;
@@ -102,7 +108,7 @@ pub(crate) async fn connect(
             )
             .await?;
         }
-        SavedDecision::RebuildFresh => {
+        SavedDecision::RebuildFresh { replaces } => {
             build_and_activate_new(
                 conn,
                 &nm,
@@ -110,6 +116,7 @@ pub(crate) async fn connect(
                 &specific_object,
                 ssid,
                 creds,
+                replaces,
                 timeout_config,
             )
             .await?;
@@ -747,7 +754,7 @@ pub(crate) async fn connect_to_bssid(
             );
 
             let nm = NMProxy::new(conn).await?;
-            let saved_raw = get_saved_connection_path(conn, ssid).await?;
+            let saved_raw = get_saved_wifi_connection_path(conn, ssid).await?;
             let decision = decide_saved_connection(saved_raw, &creds)?;
             let wifi_device = resolve_wifi_device(conn, &nm, interface).await?;
             let wifi = NMWirelessProxy::builder(conn)
@@ -779,7 +786,7 @@ pub(crate) async fn connect_to_bssid(
                     )
                     .await?;
                 }
-                SavedDecision::RebuildFresh => {
+                SavedDecision::RebuildFresh { replaces } => {
                     build_and_activate_new(
                         conn,
                         &nm,
@@ -787,6 +794,7 @@ pub(crate) async fn connect_to_bssid(
                         &specific_object,
                         ssid,
                         creds,
+                        replaces,
                         timeout_config,
                     )
                     .await?;
@@ -962,6 +970,10 @@ async fn wait_for_fresh_activation(
 /// device is disconnected, then calls AddAndActivateConnection to create
 /// and activate the connection in one step. Monitors activation using
 /// D-Bus signals for immediate feedback on success or failure.
+///
+/// If `replaces` is set, that profile is deleted after the new one
+/// activates. On failure it is kept, so a mistyped password does not lose a
+/// working profile.
 async fn build_and_activate_new(
     conn: &Connection,
     nm: &NMProxy<'_>,
@@ -969,6 +981,7 @@ async fn build_and_activate_new(
     ap: &OwnedObjectPath,
     ssid: &str,
     creds: WifiSecurity,
+    replaces: Option<OwnedObjectPath>,
     timeout_config: Option<TimeoutConfig>,
 ) -> Result<()> {
     let opts = ConnectionOptions {
@@ -1011,6 +1024,15 @@ async fn build_and_activate_new(
 
     info!("Connection to '{ssid}' activated successfully");
 
+    if let Some(old) = replaces.filter(|old| *old != connection_path) {
+        // The new profile is already active; a stale duplicate is not worth
+        // failing the connect over.
+        match delete_connection(conn, old.clone()).await {
+            Ok(()) => debug!("Replaced saved connection {}", old.as_str()),
+            Err(e) => warn!("Failed to delete replaced connection {}: {e}", old.as_str()),
+        }
+    }
+
     Ok(())
 }
 
@@ -1046,7 +1068,8 @@ async fn scan_and_resolve_ap(
 ///   (user wants to connect with stored password)
 /// - If a saved connection exists for an open network, use saved
 /// - If a saved connection exists but fresh PSK or EAP credentials were
-///   provided, create a fresh profile so those credentials are not ignored
+///   provided, create a fresh profile so those credentials are not ignored,
+///   replacing the saved one once it activates
 /// - If no saved connection and PSK is empty, error (can't connect without password)
 /// - Otherwise, create a fresh connection
 fn decide_saved_connection(
@@ -1057,9 +1080,11 @@ fn decide_saved_connection(
         Some(path) if matches!(creds, WifiSecurity::Open) || wants_stored_secret(creds) => {
             Ok(SavedDecision::UseSaved(path))
         }
-        Some(_) => Ok(SavedDecision::RebuildFresh),
+        Some(path) => Ok(SavedDecision::RebuildFresh {
+            replaces: Some(path),
+        }),
         None if wants_stored_secret(creds) => Err(ConnectionError::MissingPassword),
-        None => Ok(SavedDecision::RebuildFresh),
+        None => Ok(SavedDecision::RebuildFresh { replaces: None }),
     }
 }
 
@@ -1331,7 +1356,9 @@ mod tests {
             validate_wifi_security(&creds).expect("test credential should be valid");
             assert_eq!(
                 decide_saved_connection(Some(saved_path()), &creds).unwrap(),
-                SavedDecision::RebuildFresh,
+                SavedDecision::RebuildFresh {
+                    replaces: Some(saved_path())
+                },
                 "fresh credentials must not be ignored: {creds:?}"
             );
         }
@@ -1350,7 +1377,7 @@ mod tests {
         validate_wifi_security(&whitespace_psk).expect("eight spaces is a valid-length PSK");
         assert_eq!(
             decide_saved_connection(None, &whitespace_psk).unwrap(),
-            SavedDecision::RebuildFresh
+            SavedDecision::RebuildFresh { replaces: None }
         );
     }
 
@@ -1358,15 +1385,15 @@ mod tests {
     fn absent_profile_builds_open_and_enterprise_connections() {
         assert_eq!(
             decide_saved_connection(None, &WifiSecurity::Open).unwrap(),
-            SavedDecision::RebuildFresh
+            SavedDecision::RebuildFresh { replaces: None }
         );
         assert_eq!(
             decide_saved_connection(None, &enterprise_credentials()).unwrap(),
-            SavedDecision::RebuildFresh
+            SavedDecision::RebuildFresh { replaces: None }
         );
         assert_eq!(
             decide_saved_connection(None, &wpa3_enterprise_credentials()).unwrap(),
-            SavedDecision::RebuildFresh
+            SavedDecision::RebuildFresh { replaces: None }
         );
     }
 

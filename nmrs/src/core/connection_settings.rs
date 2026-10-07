@@ -7,10 +7,11 @@
 use log::trace;
 use std::collections::HashMap;
 use zbus::Connection;
-use zvariant::{OwnedObjectPath, Value};
+use zvariant::{OwnedObjectPath, OwnedValue, Value};
 
 use crate::Result;
 use crate::api::models::ConnectionError;
+use crate::api::models::property::FromSetting;
 use crate::util::utils::{connection_settings_proxy, settings_proxy};
 use crate::util::validation::validate_connection_name;
 
@@ -60,6 +61,82 @@ async fn find_saved_connection_by_name(
             && let Some(Value::Str(uuid)) = conn_section.get("uuid")
         {
             return Ok(Some((cpath, uuid.to_string())));
+        }
+    }
+
+    Ok(None)
+}
+
+/// Whether a saved profile's settings describe a Wi-Fi client profile for `ssid`.
+///
+/// Matches on `802-11-wireless.ssid` bytes, not `connection.id`, so profiles
+/// created by other tools or renamed by the user are still found. Hotspot
+/// (`mode = ap`) profiles are skipped.
+fn wifi_profile_matches_ssid(
+    settings: &HashMap<String, HashMap<String, OwnedValue>>,
+    ssid: &[u8],
+) -> bool {
+    let is_wifi = settings
+        .get("connection")
+        .and_then(|c| c.get("type"))
+        .and_then(String::from_setting)
+        .is_some_and(|t| t == "802-11-wireless");
+    let Some(wireless) = settings.get("802-11-wireless") else {
+        return false;
+    };
+    let is_ap = wireless
+        .get("mode")
+        .and_then(String::from_setting)
+        .is_some_and(|m| m == "ap");
+    let profile_ssid = wireless.get("ssid").and_then(Vec::<u8>::from_setting);
+
+    is_wifi && !is_ap && profile_ssid.as_deref() == Some(ssid)
+}
+
+/// Finds the D-Bus path of a saved Wi-Fi client profile for `ssid`.
+///
+/// Returns the first profile whose `802-11-wireless.ssid` equals `ssid`,
+/// regardless of its `connection.id`.
+pub(crate) async fn get_saved_wifi_connection_path(
+    conn: &Connection,
+    ssid: &str,
+) -> Result<Option<OwnedObjectPath>> {
+    if ssid.is_empty() {
+        return Ok(None);
+    }
+
+    let settings = settings_proxy(conn).await?;
+
+    let reply = settings
+        .call_method("ListConnections", &())
+        .await
+        .map_err(|e| ConnectionError::DbusOperation {
+            context: "failed to list saved connections".to_string(),
+            source: e,
+        })?;
+
+    let conns: Vec<OwnedObjectPath> = reply.body().deserialize()?;
+
+    for cpath in conns {
+        let cproxy = connection_settings_proxy(conn, cpath.clone()).await?;
+
+        // Skip profiles restricted to other users, as in
+        // `find_saved_connection_by_name`.
+        let msg = match cproxy.call_method("GetSettings", &()).await {
+            Ok(msg) => msg,
+            Err(e) => {
+                trace!(
+                    "skipping saved connection {}: GetSettings failed: {e}",
+                    cpath.as_str()
+                );
+                continue;
+            }
+        };
+
+        let all: HashMap<String, HashMap<String, OwnedValue>> = msg.body().deserialize()?;
+
+        if wifi_profile_matches_ssid(&all, ssid.as_bytes()) {
+            return Ok(Some(cpath));
         }
     }
 
@@ -157,5 +234,60 @@ mod tests {
     fn saved_connection_lookup_skips_blank_names() {
         assert!(should_skip_lookup("").unwrap());
         assert!(should_skip_lookup("   ").unwrap());
+    }
+
+    fn profile(
+        id: &str,
+        ty: &str,
+        ssid: &[u8],
+        mode: Option<&str>,
+    ) -> HashMap<String, HashMap<String, OwnedValue>> {
+        let mut connection = HashMap::new();
+        connection.insert("id".into(), OwnedValue::from(zvariant::Str::from(id)));
+        connection.insert("type".into(), OwnedValue::from(zvariant::Str::from(ty)));
+
+        let mut wireless = HashMap::new();
+        wireless.insert(
+            "ssid".into(),
+            OwnedValue::try_from(zvariant::Array::from(ssid.to_vec())).expect("ssid array"),
+        );
+        if let Some(mode) = mode {
+            wireless.insert("mode".into(), OwnedValue::from(zvariant::Str::from(mode)));
+        }
+
+        let mut settings = HashMap::new();
+        settings.insert("connection".into(), connection);
+        settings.insert("802-11-wireless".into(), wireless);
+        settings
+    }
+
+    #[test]
+    fn wifi_profile_matches_on_ssid_not_id() {
+        // nmtui and NM's auto-generated names often differ from the SSID.
+        let renamed = profile("Vodafone 1", "802-11-wireless", b"Vodafone", None);
+        assert!(wifi_profile_matches_ssid(&renamed, b"Vodafone"));
+
+        let infra = profile(
+            "Vodafone",
+            "802-11-wireless",
+            b"Vodafone",
+            Some("infrastructure"),
+        );
+        assert!(wifi_profile_matches_ssid(&infra, b"Vodafone"));
+    }
+
+    #[test]
+    fn wifi_profile_ignores_id_that_looks_like_the_ssid() {
+        let other = profile("Vodafone", "802-11-wireless", b"Elsewhere", None);
+        assert!(!wifi_profile_matches_ssid(&other, b"Vodafone"));
+    }
+
+    #[test]
+    fn wifi_profile_skips_hotspots_and_other_types() {
+        let hotspot = profile("Hotspot", "802-11-wireless", b"Vodafone", Some("ap"));
+        assert!(!wifi_profile_matches_ssid(&hotspot, b"Vodafone"));
+
+        let vpn = profile("Vodafone", "vpn", b"Vodafone", None);
+        assert!(!wifi_profile_matches_ssid(&vpn, b"Vodafone"));
     }
 }

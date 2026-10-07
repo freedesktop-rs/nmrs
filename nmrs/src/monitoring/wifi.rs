@@ -3,7 +3,6 @@
 //! Provides functions to retrieve information about currently connected
 //! WiFi networks and their connection state.
 
-use async_trait::async_trait;
 use zbus::Connection;
 
 use crate::dbus::{NMAccessPointProxy, NMDeviceProxy, NMProxy, NMWirelessProxy};
@@ -14,7 +13,6 @@ use crate::util::utils::decode_ssid_or_empty;
 
 pub(crate) struct Wifi;
 
-#[async_trait]
 impl ActiveTransport for Wifi {
     type Output = String;
 
