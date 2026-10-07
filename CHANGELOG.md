@@ -3,6 +3,17 @@
 All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
+### Fixed
+
+- Wi-Fi `connect()` and `connect_to_bssid()` now find a saved profile by its
+  `802-11-wireless.ssid` instead of `connection.id`, so profiles created by
+  other tools or renamed by the user are reused with their stored secret
+  instead of failing with `MissingPassword`. Hotspot (`mode = ap`) profiles are
+  not matched.
+- Connecting with a new password to a network that already has a saved profile
+  now deletes the old profile once the new one activates, instead of leaving a
+  duplicate. If activation fails, the old profile is kept.
+  ([#560](https://github.com/freedesktop-rs/nmrs/pull/560))
 
 ## [3.5.5] - 2026-09-30
 ### Fixed
