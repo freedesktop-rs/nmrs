@@ -550,3 +550,32 @@ pub(crate) async fn wait_for_wifi_ready(conn: &Connection) -> Result<()> {
         Err(ConnectionError::NoWifiDevice)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn perm_hw_address_is_read_from_the_type_specific_interface() {
+        assert_eq!(
+            perm_hw_address_source(device_type::WIFI),
+            Some(PermHwAddressSource::Wireless)
+        );
+        assert_eq!(
+            perm_hw_address_source(device_type::ETHERNET),
+            Some(PermHwAddressSource::Wired)
+        );
+        assert_eq!(
+            perm_hw_address_source(device_type::VETH),
+            Some(PermHwAddressSource::Wired)
+        );
+    }
+
+    #[test]
+    fn perm_hw_address_is_not_requested_for_other_device_types() {
+        // Loopback (32) and WireGuard (29) have no `PermHwAddress`.
+        for raw_type in [device_type::BLUETOOTH, 29, 32] {
+            assert_eq!(perm_hw_address_source(raw_type), None, "type {raw_type}");
+        }
+    }
+}
