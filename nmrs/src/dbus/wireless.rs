@@ -28,6 +28,10 @@ pub trait NMWireless {
     #[zbus(property)]
     fn mode(&self) -> Result<u32>;
 
+    /// Permanent hardware (MAC) address of the device.
+    #[zbus(property, name = "PermHwAddress")]
+    fn perm_hw_address(&self) -> Result<String>;
+
     /// Current connection bitrate in Kbit/s.
     #[zbus(property)]
     fn bitrate(&self) -> Result<u32>;

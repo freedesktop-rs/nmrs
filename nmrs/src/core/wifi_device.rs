@@ -36,7 +36,6 @@ pub(crate) async fn list_wifi_devices(conn: &Connection) -> Result<Vec<WifiDevic
             .hw_address()
             .await
             .unwrap_or_else(|_| String::from("00:00:00:00:00:00"));
-        let permanent_hw_address = dev.perm_hw_address().await.ok();
         let driver = dev.driver().await.ok();
         let state = dev.state().await?.into();
         let managed = dev.managed().await.unwrap_or(false);
@@ -46,6 +45,7 @@ pub(crate) async fn list_wifi_devices(conn: &Connection) -> Result<Vec<WifiDevic
             .path(p.clone())?
             .build()
             .await?;
+        let permanent_hw_address = wifi.perm_hw_address().await.ok().filter(|a| !a.is_empty());
         let active_ap_path = wifi.active_access_point().await.ok();
         let (is_active, active_ssid, active_frequency_mhz) = match active_ap_path {
             Some(ap_path) if ap_path.as_str() != "/" => {

@@ -3,6 +3,15 @@
 All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
+### Fixed
+
+- `PermHwAddress` is now read from NetworkManager's `Device.Wired` and
+  `Device.Wireless` interfaces instead of the base `Device` interface, where it
+  does not exist. `WifiDevice::permanent_hw_address` and
+  `WiredDevice::permanent_hw_address` are no longer always `None`, and
+  `DeviceIdentity::permanent_mac` is the factory address instead of a copy of
+  the current one. Device types without a permanent address are no longer
+  queried for it. ([#562](https://github.com/freedesktop-rs/nmrs/pull/562))
 
 ## [3.5.6] - 2026-10-07
 ### Fixed
