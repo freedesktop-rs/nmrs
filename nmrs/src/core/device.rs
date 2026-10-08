@@ -6,6 +6,7 @@
 
 use log::{debug, trace, warn};
 use zbus::Connection;
+use zvariant::OwnedObjectPath;
 
 use crate::Result;
 use crate::api::models::{
@@ -21,6 +22,72 @@ use crate::dbus::{
 use crate::types::constants::device_type;
 use crate::types::device_type_registry;
 use crate::util::utils::get_ip_addresses_from_active_connection;
+
+/// D-Bus interface that carries `PermHwAddress` for a device.
+#[derive(Debug, PartialEq, Eq)]
+enum PermHwAddressSource {
+    /// `org.freedesktop.NetworkManager.Device.Wired`
+    Wired,
+    /// `org.freedesktop.NetworkManager.Device.Wireless`
+    Wireless,
+}
+
+/// NetworkManager only exposes `PermHwAddress` on the wired and wireless
+/// device interfaces; other device types have none.
+fn perm_hw_address_source(raw_type: u32) -> Option<PermHwAddressSource> {
+    if raw_type == device_type::WIFI {
+        Some(PermHwAddressSource::Wireless)
+    } else if device_type_registry::is_wired(raw_type) {
+        Some(PermHwAddressSource::Wired)
+    } else {
+        None
+    }
+}
+
+/// Reads a device's permanent (factory) MAC address.
+///
+/// Returns `None` without a D-Bus call for device types that have no
+/// `PermHwAddress`, and `None` when NetworkManager reports it empty.
+async fn read_perm_hw_address(
+    conn: &Connection,
+    path: &OwnedObjectPath,
+    raw_type: u32,
+) -> Option<String> {
+    let result = match perm_hw_address_source(raw_type)? {
+        PermHwAddressSource::Wired => {
+            NMWiredProxy::builder(conn)
+                .path(path.clone())
+                .ok()?
+                .build()
+                .await
+                .ok()?
+                .perm_hw_address()
+                .await
+        }
+        PermHwAddressSource::Wireless => {
+            NMWirelessProxy::builder(conn)
+                .path(path.clone())
+                .ok()?
+                .build()
+                .await
+                .ok()?
+                .perm_hw_address()
+                .await
+        }
+    };
+
+    match result {
+        Ok(addr) if !addr.is_empty() => Some(addr),
+        Ok(_) => None,
+        Err(e) => {
+            trace!(
+                "Permanent hardware address not available for {}: {e}",
+                path.as_str()
+            );
+            None
+        }
+    }
+}
 
 /// Lists all network devices managed by NetworkManager.
 ///
@@ -69,16 +136,11 @@ pub(crate) async fn list_devices(conn: &Connection) -> Result<Vec<Device>> {
             }
         };
 
-        let perm_mac = match d_proxy.perm_hw_address().await {
-            Ok(addr) => addr,
-            Err(e) => {
-                trace!(
-                    "Permanent hardware address not available for device {}: {}",
-                    interface, e
-                );
-                current_mac.clone()
-            }
-        };
+        // `DeviceIdentity::permanent_mac` is not optional; devices without a
+        // permanent address report their current one.
+        let perm_mac = read_perm_hw_address(conn, &p, raw_type)
+            .await
+            .unwrap_or_else(|| current_mac.clone());
 
         let device_type = raw_type.into();
         let raw_state = d_proxy.state().await?;
@@ -266,19 +328,18 @@ pub(crate) async fn list_wired_device_details(conn: &Connection) -> Result<Vec<W
             .hw_address()
             .await
             .unwrap_or_else(|_| String::from("00:00:00:00:00:00"));
-        let permanent_hw_address = d_proxy
-            .perm_hw_address()
-            .await
-            .ok()
-            .filter(|addr| !addr.is_empty());
         let state = d_proxy.state().await?.into();
 
-        let speed_mbps = async {
-            let wired = NMWiredProxy::builder(conn).path(p.clone())?.build().await?;
-            wired.speed().await
-        }
-        .await
-        .ok();
+        let wired = async { NMWiredProxy::builder(conn).path(p.clone())?.build().await }
+            .await
+            .ok();
+        let (speed_mbps, permanent_hw_address) = match &wired {
+            Some(wired) => (
+                wired.speed().await.ok(),
+                wired.perm_hw_address().await.ok().filter(|a| !a.is_empty()),
+            ),
+            None => (None, None),
+        };
 
         let active_conn_path = d_proxy.active_connection().await.ok();
         let active_connection_id = match active_conn_path.as_ref() {

@@ -58,11 +58,6 @@ pub trait NMDevice {
     #[zbus(property)]
     fn hw_address(&self) -> Result<String>;
 
-    /// Permanent hardware (MAC) address of the device.
-    /// Note: This property may not be available on all device types or systems.
-    #[zbus(property, name = "PermHwAddress")]
-    fn perm_hw_address(&self) -> Result<String>;
-
     /// Path to the active connection object for this device.
     /// Returns "/" if the device is not connected.
     #[zbus(property)]

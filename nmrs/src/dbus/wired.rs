@@ -14,4 +14,8 @@ pub trait NMWired {
     /// Design speed of the device, in megabits/second (Mb/s).
     #[zbus(property)]
     fn speed(&self) -> Result<u32>;
+
+    /// Permanent hardware (MAC) address of the device.
+    #[zbus(property, name = "PermHwAddress")]
+    fn perm_hw_address(&self) -> Result<String>;
 }
