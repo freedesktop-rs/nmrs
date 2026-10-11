@@ -209,7 +209,7 @@ jobs:
       # Prebuilt binary (GitHub Releases + checksums); avoids compiling the tool every run.
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-semver-checks@0.50
+          tool: cargo-semver-checks@0.51.0
           fallback: none
 
       # Smarter cache than hand-rolled keys; pairs well with semver-checks rustdoc builds.
