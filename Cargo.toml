@@ -30,5 +30,5 @@ futures = "0.3.34"
 futures-timer = "3.0.4"
 base64 = "0.23.1"
 nmrs = { path = "nmrs", version = "3.0" }
-bitflags = "2.13.0"
+bitflags = "2.13.2"
 tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "sync", "time", "process"] }
