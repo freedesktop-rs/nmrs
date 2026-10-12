@@ -72,4 +72,4 @@ name = "vpn_list"
 path = "examples/vpn_list.rs"
 
 [dev-dependencies]
-serial_test = "3.5.0"
+serial_test = "4.0.1"
