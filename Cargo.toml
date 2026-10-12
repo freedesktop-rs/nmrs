@@ -23,7 +23,7 @@ type_complexity = "allow"
 zbus = "5.16.0"
 zvariant = "5.15.0"
 log = "0.4.34"
-serde = { version = "1.0.228", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.18"
 uuid = { version = "1.28.0", features = ["v4", "v5"] }
 futures = "0.3.32"
