@@ -160,8 +160,9 @@ fn filename_for(cert_type: &str) -> Result<&'static str, ConnectionError> {
         "key" => Ok("key.pem"),
         "ta" => Ok("ta.key"),
         "tls-crypt" => Ok("tls-crypt.key"),
+        "crl-verify" => Ok("crl.pem"),
         _ => Err(ConnectionError::InvalidAddress(format!(
-            "unknown cert_type {cert_type:?} (expected ca, cert, key, ta, tls-crypt)"
+            "unknown cert_type {cert_type:?} (expected ca, cert, key, ta, tls-crypt, crl-verify)"
         ))),
     }
 }
@@ -247,6 +248,7 @@ mod tests {
             ("key", "key.pem"),
             ("ta", "ta.key"),
             ("tls-crypt", "tls-crypt.key"),
+            ("crl-verify", "crl.pem"),
         ];
 
         for (cert_type, expected) in cases {
@@ -263,7 +265,7 @@ mod tests {
             assert!(matches!(
                 result,
                 Err(ConnectionError::InvalidAddress(message))
-                    if message == "unknown cert_type \"bogus\" (expected ca, cert, key, ta, tls-crypt)"
+                    if message == "unknown cert_type \"bogus\" (expected ca, cert, key, ta, tls-crypt, crl-verify)"
             ));
             assert!(!data_home.join("nmrs/certs/unknown-type").exists());
         });
