@@ -77,6 +77,7 @@ pub struct OpenVpnBuilder {
     remote_cert_tls: Option<String>,
     verify_x509_name: Option<(String, String)>,
     crl_verify: Option<String>,
+    crl_verify_dir: Option<String>,
     redirect_gateway: bool,
     routes: Vec<VpnRoute>,
     ping: Option<u32>,
@@ -121,6 +122,7 @@ impl fmt::Debug for OpenVpnBuilder {
             .field("remote_cert_tls", &self.remote_cert_tls)
             .field("verify_x509_name", &self.verify_x509_name)
             .field("crl_verify", &self.crl_verify)
+            .field("crl_verify_dir", &self.crl_verify_dir)
             .field("redirect_gateway", &self.redirect_gateway)
             .field("routes", &self.routes)
             .field("ping", &self.ping)
@@ -168,6 +170,7 @@ impl OpenVpnBuilder {
             remote_cert_tls: None,
             verify_x509_name: None,
             crl_verify: None,
+            crl_verify_dir: None,
             redirect_gateway: false,
             routes: Vec::new(),
             ping: None,
@@ -336,6 +339,7 @@ impl OpenVpnBuilder {
             remote_cert_tls: None,
             verify_x509_name: None,
             crl_verify: None,
+            crl_verify_dir: None,
             redirect_gateway,
             routes,
             ping: None,
@@ -541,6 +545,13 @@ impl OpenVpnBuilder {
         self
     }
 
+    /// Sets a directory of revoked certificate serial numbers.
+    #[must_use]
+    pub fn crl_verify_dir(mut self, path: impl Into<String>) -> Self {
+        self.crl_verify_dir = Some(path.into());
+        self
+    }
+
     /// When true, the profile may become the default IPv4 route.
     #[must_use]
     pub fn redirect_gateway(mut self, redirect: bool) -> Self {
@@ -701,6 +712,7 @@ impl OpenVpnBuilder {
             remote_cert_tls: self.remote_cert_tls,
             verify_x509_name: self.verify_x509_name,
             crl_verify: self.crl_verify,
+            crl_verify_dir: self.crl_verify_dir,
             redirect_gateway: self.redirect_gateway,
             routes: self.routes,
             ping: self.ping,

@@ -141,8 +141,13 @@ pub struct OpenVpnConfig {
     /// X.509 name verification: `(name, type)` where type is e.g. "name", "subject",
     /// or "name-prefix".
     pub verify_x509_name: Option<(String, String)>,
-    /// Path to a Certificate Revocation List file.
+    /// Path to a Certificate Revocation List file (`crl-verify-file`).
     pub crl_verify: Option<String>,
+    /// Directory of revoked certificate serial numbers (`crl-verify-dir`).
+    ///
+    /// NetworkManager rejects this for connections restricted to one user.
+    /// When `crl_verify` is also set, the file takes precedence.
+    pub crl_verify_dir: Option<String>,
     /// When true, this profile may become the default route (full tunnel / `redirect-gateway`).
     ///
     /// Maps to `ipv4.never-default = false` in NetworkManager when set.
@@ -199,6 +204,7 @@ impl fmt::Debug for OpenVpnConfig {
             .field("remote_cert_tls", &self.remote_cert_tls)
             .field("verify_x509_name", &self.verify_x509_name)
             .field("crl_verify", &self.crl_verify)
+            .field("crl_verify_dir", &self.crl_verify_dir)
             .field("redirect_gateway", &self.redirect_gateway)
             .field("routes", &self.routes)
             .field("ping", &self.ping)
@@ -245,6 +251,7 @@ impl OpenVpnConfig {
             remote_cert_tls: None,
             verify_x509_name: None,
             crl_verify: None,
+            crl_verify_dir: None,
             redirect_gateway: false,
             routes: Vec::new(),
             ping: None,
@@ -434,6 +441,14 @@ impl OpenVpnConfig {
     #[must_use]
     pub fn with_crl_verify(mut self, path: impl Into<String>) -> Self {
         self.crl_verify = Some(path.into());
+        self
+    }
+
+    /// Sets a directory of revoked certificate serial numbers for peer
+    /// verification (OpenVPN's `crl-verify DIR dir`).
+    #[must_use]
+    pub fn with_crl_verify_dir(mut self, path: impl Into<String>) -> Self {
+        self.crl_verify_dir = Some(path.into());
         self
     }
 
@@ -643,6 +658,7 @@ impl TryFrom<crate::core::ovpn_parser::parser::OvpnFile> for OpenVpnConfig {
             remote_cert_tls: None,
             verify_x509_name: None,
             crl_verify: None,
+            crl_verify_dir: None,
             redirect_gateway,
             routes,
             ping: None,

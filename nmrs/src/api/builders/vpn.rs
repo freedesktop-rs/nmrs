@@ -262,6 +262,11 @@ pub fn build_openvpn_connection(
         vpn_data.push(("verify-x509-name".into(), format!("{name_type}:{name}")));
     }
     push_opt_str(&mut vpn_data, "crl-verify-file", config.crl_verify.as_ref());
+    push_opt_str(
+        &mut vpn_data,
+        "crl-verify-dir",
+        config.crl_verify_dir.as_ref(),
+    );
 
     push_opt_display(&mut vpn_data, "ping", config.ping);
     push_opt_display(&mut vpn_data, "ping-exit", config.ping_exit);
@@ -1289,6 +1294,17 @@ mod tests {
         );
         assert!(get_vpn_data_value(&settings, "crl-verify").is_none());
         assert!(get_vpn_data_value(&settings, "crl-verify-dir").is_none());
+    }
+
+    #[test]
+    fn openvpn_crl_verify_dir() {
+        let config = create_openvpn_config().with_crl_verify_dir("/etc/openvpn/crl.d");
+        let settings = build_openvpn_connection(&config, &create_test_options()).unwrap();
+        assert_eq!(
+            get_vpn_data_value(&settings, "crl-verify-dir").as_deref(),
+            Some("/etc/openvpn/crl.d")
+        );
+        assert!(get_vpn_data_value(&settings, "crl-verify-file").is_none());
     }
 
     #[test]
