@@ -73,3 +73,4 @@ path = "examples/vpn_list.rs"
 
 [dev-dependencies]
 serial_test = "4.0.1"
+zbus = { workspace = true, features = ["p2p"] }

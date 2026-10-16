@@ -452,12 +452,28 @@ mod tests {
         assert_eq!(builder.queue_depth, 7);
     }
 
-    async fn session_connection() -> Connection {
-        zbus::connection::Builder::session()
-            .expect("session bus address")
-            .build()
-            .await
-            .expect("session bus connection")
+    /// A private peer-to-peer connection pair over a socketpair, so the tests
+    /// never depend on the host's session bus. The agent serves its object on
+    /// the first connection; the second stands in for the bus and answers
+    /// anything it does not serve with a D-Bus error.
+    async fn connection_pair() -> (Connection, Connection) {
+        let (agent_socket, peer_socket) =
+            std::os::unix::net::UnixStream::pair().expect("socketpair");
+        let peer = zbus::connection::Builder::unix_stream(peer_socket)
+            .server(zbus::Guid::generate())
+            .expect("p2p server guid")
+            .p2p()
+            .build();
+        let agent = zbus::connection::Builder::unix_stream(agent_socket)
+            .p2p()
+            .build();
+        let (peer, agent) = futures::join!(peer, agent);
+        let peer = peer.expect("p2p server connection");
+        let agent = agent.expect("p2p client connection");
+        // Start the peer's object server so method calls it does not serve
+        // get an error reply instead of no reply at all.
+        let _ = peer.object_server();
+        (agent, peer)
     }
 
     async fn serve_agent(conn: &Connection, object_path: &str) -> SecretAgentHandle {
@@ -499,13 +515,12 @@ mod tests {
             .is_ok()
     }
 
-    /// Introspects `path` on `conn` from a second connection. Calling
+    /// Introspects `path` on the agent connection from its peer. Calling
     /// `Introspect` on the connection that serves the object hangs
     /// intermittently on zbus 5 when several tests do it concurrently.
-    async fn introspect(conn: &Connection, path: &str) -> String {
-        let observer = session_connection().await;
-        zbus::fdo::IntrospectableProxy::builder(&observer)
-            .destination(conn.unique_name().expect("unique name").clone())
+    async fn introspect(peer: &Connection, path: &str) -> String {
+        zbus::fdo::IntrospectableProxy::builder(peer)
+            .destination("org.freedesktop.NetworkManager.nmrs.Agent")
             .expect("destination")
             .path(path.to_owned())
             .expect("object path")
@@ -517,8 +532,8 @@ mod tests {
             .unwrap_or_default()
     }
 
-    async fn exported_nodes(conn: &Connection) -> Vec<String> {
-        introspect(conn, "/")
+    async fn exported_nodes(peer: &Connection) -> Vec<String> {
+        introspect(peer, "/")
             .await
             .lines()
             .filter(|line| line.trim_start().starts_with("<node name="))
@@ -528,12 +543,12 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn unregister_releases_the_agent_object_path() {
-        let conn = session_connection().await;
+        let (conn, _peer) = connection_pair().await;
         let handle = serve_agent(&conn, DEFAULT_OBJECT_PATH).await;
         assert!(agent_served_at(&conn, DEFAULT_OBJECT_PATH).await);
 
-        // There is no NetworkManager on the session bus, so `Unregister`
-        // fails; the object path must be released regardless.
+        // The peer is not NetworkManager, so `Unregister` fails; the object
+        // path must be released regardless.
         assert!(handle.unregister().await.is_err());
 
         assert!(!agent_served_at(&conn, DEFAULT_OBJECT_PATH).await);
@@ -545,17 +560,17 @@ mod tests {
     #[ignore = "needs zbus 6: ObjectServer::remove prunes empty ancestor nodes"]
     #[tokio::test(flavor = "multi_thread")]
     async fn unregister_leaves_no_objects_exported_on_the_agent_connection() {
-        let conn = session_connection().await;
+        let (conn, peer) = connection_pair().await;
         let handle = serve_agent(&conn, DEFAULT_OBJECT_PATH).await;
 
         assert!(handle.unregister().await.is_err());
 
-        assert_eq!(exported_nodes(&conn).await, Vec::<String>::new());
+        assert_eq!(exported_nodes(&peer).await, Vec::<String>::new());
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn unregister_releases_a_custom_object_path() {
-        let conn = session_connection().await;
+        let (conn, _peer) = connection_pair().await;
         let handle = serve_agent(&conn, "/org/example/nmrs/Agent").await;
         assert!(agent_served_at(&conn, "/org/example/nmrs/Agent").await);
 
