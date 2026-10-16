@@ -565,7 +565,7 @@ impl TryFrom<crate::core::ovpn_parser::parser::OvpnFile> for OpenVpnConfig {
     type Error = ConnectionError;
 
     fn try_from(f: crate::core::ovpn_parser::parser::OvpnFile) -> Result<Self, Self::Error> {
-        use crate::core::ovpn_parser::parser::{AllowCompress, CertSource, Compress};
+        use crate::core::ovpn_parser::parser::{AllowCompress, CertSource, Compress, CrlVerify};
 
         let first_remote = f
             .remotes
@@ -615,6 +615,12 @@ impl TryFrom<crate::core::ovpn_parser::parser::OvpnFile> for OpenVpnConfig {
             }
         };
 
+        let (crl_verify, crl_verify_dir) = match f.crl_verify {
+            Some(CrlVerify::File(source)) => (Some(cert_path(source, "crl-verify")?), None),
+            Some(CrlVerify::Dir(dir)) => (None, Some(dir)),
+            None => (None, None),
+        };
+
         let routes: Vec<VpnRoute> = f
             .routes
             .into_iter()
@@ -655,10 +661,10 @@ impl TryFrom<crate::core::ovpn_parser::parser::OvpnFile> for OpenVpnConfig {
             tls_version_min: None,
             tls_version_max: None,
             tls_cipher: None,
-            remote_cert_tls: None,
-            verify_x509_name: None,
-            crl_verify: None,
-            crl_verify_dir: None,
+            remote_cert_tls: f.remote_cert_tls,
+            verify_x509_name: f.verify_x509_name,
+            crl_verify,
+            crl_verify_dir,
             redirect_gateway,
             routes,
             ping: None,
@@ -867,6 +873,38 @@ mod tests {
             ConnectionError::VpnFailed(message)
                 if message.contains("inline <cert> blocks")
                     && message.contains("TryFrom<OvpnFile> cannot handle inline certs")
+        ));
+    }
+
+    #[test]
+    fn try_from_keeps_server_certificate_checks() {
+        let input = ovpn_with_remote(
+            "remote-cert-tls server\n\
+             verify-x509-name 'C=US, CN=vpn.example.com' subject\n\
+             crl-verify /etc/openvpn/crl.pem",
+        );
+        let config = OpenVpnConfig::try_from(parse_ovpn(&input).unwrap()).unwrap();
+        assert_eq!(config.remote_cert_tls.as_deref(), Some("server"));
+        assert_eq!(
+            config.verify_x509_name,
+            Some(("C=US, CN=vpn.example.com".into(), "subject".into()))
+        );
+        assert_eq!(config.crl_verify.as_deref(), Some("/etc/openvpn/crl.pem"));
+        assert_eq!(config.crl_verify_dir, None);
+
+        let input = ovpn_with_remote("crl-verify /etc/openvpn/crl.d dir");
+        let config = OpenVpnConfig::try_from(parse_ovpn(&input).unwrap()).unwrap();
+        assert_eq!(config.crl_verify, None);
+        assert_eq!(config.crl_verify_dir.as_deref(), Some("/etc/openvpn/crl.d"));
+    }
+
+    #[test]
+    fn try_from_inline_crl_returns_error() {
+        let input = ovpn_with_remote("<crl-verify>\nCRLPEM\n</crl-verify>");
+        let error = OpenVpnConfig::try_from(parse_ovpn(&input).unwrap()).unwrap_err();
+        assert!(matches!(
+            error,
+            ConnectionError::VpnFailed(message) if message.contains("inline <crl-verify> blocks")
         ));
     }
 
