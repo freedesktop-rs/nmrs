@@ -230,7 +230,7 @@ impl OpenVpnBuilder {
 
     /// Populates a builder from a parsed `OvpnFile`, resolving inline certs.
     fn from_parsed(f: OvpnFile, name: String) -> Result<Self, ConnectionError> {
-        use crate::core::ovpn_parser::parser::{AllowCompress, Compress};
+        use crate::core::ovpn_parser::parser::{AllowCompress, Compress, CrlVerify};
 
         let first_remote = f
             .remotes
@@ -310,6 +310,14 @@ impl OpenVpnBuilder {
             .map(|s| resolve_cert(s, "tls-crypt", &name))
             .transpose()?;
 
+        let (crl_verify, crl_verify_dir) = match f.crl_verify {
+            Some(CrlVerify::File(source)) => {
+                (Some(resolve_cert(source, "crl-verify", &name)?), None)
+            }
+            Some(CrlVerify::Dir(dir)) => (None, Some(dir)),
+            None => (None, None),
+        };
+
         Ok(Self {
             name,
             remote: Some(first_remote.host),
@@ -336,10 +344,10 @@ impl OpenVpnBuilder {
             tls_version_min: None,
             tls_version_max: None,
             tls_cipher: None,
-            remote_cert_tls: None,
-            verify_x509_name: None,
-            crl_verify: None,
-            crl_verify_dir: None,
+            remote_cert_tls: f.remote_cert_tls,
+            verify_x509_name: f.verify_x509_name,
+            crl_verify,
+            crl_verify_dir,
             redirect_gateway,
             routes,
             ping: None,
@@ -1085,9 +1093,9 @@ key /etc/openvpn/client.key
     /// username must import the way cosmic-settings does it: parse, build,
     /// then `build_openvpn_connection` (pop-os/cosmic-settings#2175, #2214).
     ///
-    /// `user`, `group`, `remote-cert-tls` and `reneg-sec` are not mapped by
-    /// nmrs; they stay in the fixture because the reported file has them and
-    /// they must not make the import fail.
+    /// `user`, `group` and `reneg-sec` are not mapped by nmrs; they stay in
+    /// the fixture because the reported file has them and they must not make
+    /// the import fail.
     #[test]
     fn from_ovpn_str_auth_user_pass_without_username() {
         with_fake_xdg(|| {
@@ -1157,8 +1165,83 @@ FAKEKEY
             );
             assert_eq!(vpn_data_value(&settings, "username"), None);
             assert_eq!(vpn_data_value(&settings, "ta-dir").as_deref(), Some("1"));
+            assert_eq!(
+                vpn_data_value(&settings, "remote-cert-tls").as_deref(),
+                Some("server")
+            );
             assert!(!settings["vpn"].contains_key("secrets"));
         });
+    }
+
+    /// Server certificate checks in an imported profile must reach `vpn.data`
+    /// under the keys NetworkManager-openvpn accepts; it rejects unknown keys
+    /// at activation.
+    #[test]
+    fn from_ovpn_str_keeps_server_certificate_checks() {
+        with_fake_xdg(|| {
+            let ovpn = "\
+client
+remote vpn.example.com 1194
+auth-user-pass
+remote-cert-tls server
+verify-x509-name 'C=US, O=Example Inc, CN=vpn.example.com' subject
+<crl-verify>
+-----BEGIN X509 CRL-----
+FAKECRL
+-----END X509 CRL-----
+</crl-verify>
+";
+            let config = OpenVpnBuilder::from_ovpn_str(ovpn, "checked")
+                .unwrap()
+                .build()
+                .unwrap();
+            assert_eq!(config.remote_cert_tls.as_deref(), Some("server"));
+            assert_eq!(
+                config.verify_x509_name,
+                Some((
+                    "C=US, O=Example Inc, CN=vpn.example.com".into(),
+                    "subject".into()
+                ))
+            );
+            assert_stored_material(
+                config.crl_verify.clone(),
+                "checked",
+                "crl.pem",
+                "-----BEGIN X509 CRL-----\nFAKECRL\n-----END X509 CRL-----\n",
+            );
+            assert_eq!(config.crl_verify_dir, None);
+
+            let settings = crate::api::builders::vpn::build_openvpn_connection(
+                &config,
+                &crate::api::models::ConnectionOptions::new(false),
+            )
+            .unwrap();
+            assert_eq!(
+                vpn_data_value(&settings, "remote-cert-tls").as_deref(),
+                Some("server")
+            );
+            assert_eq!(
+                vpn_data_value(&settings, "verify-x509-name").as_deref(),
+                Some("subject:C=US, O=Example Inc, CN=vpn.example.com")
+            );
+            assert_eq!(
+                vpn_data_value(&settings, "crl-verify-file"),
+                config.crl_verify
+            );
+        });
+    }
+
+    #[test]
+    fn from_ovpn_str_maps_crl_verify_dir() {
+        let config = OpenVpnBuilder::from_ovpn_str(
+            "remote vpn.example.com\nauth-user-pass\ncrl-verify /etc/openvpn/crl.d dir\n",
+            "crl-dir",
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+        assert_eq!(config.crl_verify, None);
+        assert_eq!(config.crl_verify_dir.as_deref(), Some("/etc/openvpn/crl.d"));
     }
 
     #[test]
