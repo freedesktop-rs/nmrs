@@ -9,7 +9,7 @@
 use log::{debug, info, trace, warn};
 use std::collections::HashMap;
 use zbus::Connection;
-use zvariant::OwnedObjectPath;
+use zbus::OwnedObjectPath;
 
 use crate::api::models::{
     ConnectionError, ConnectionOptions, DeviceState, OpenVpnConnectionType, TimeoutConfig,
@@ -30,11 +30,11 @@ use crate::{ConnectByUuidConfig, Result};
 
 /// Detects whether a saved connection is a VPN and what kind.
 fn detect_vpn_kind(
-    settings: &HashMap<String, HashMap<String, zvariant::Value<'_>>>,
+    settings: &HashMap<String, HashMap<String, zbus::Variant<'_>>>,
 ) -> Option<VpnKind> {
     let conn = settings.get("connection")?;
     let conn_type = match conn.get("type")? {
-        zvariant::Value::Str(s) => s.as_str(),
+        zbus::Variant::Str(s) => s.as_str(),
         _ => return None,
     };
 
@@ -46,39 +46,34 @@ fn detect_vpn_kind(
 }
 
 /// Extracts a string from a `Dict` (vpn.data / vpn.secrets) by key.
-fn dict_str(dict: &zvariant::Dict<'_, '_>, key: &str) -> Option<String> {
+fn dict_str(dict: &zbus::Dict<'_, '_>, key: &str) -> Option<String> {
     dict.iter().find_map(|(k, v)| match (k, v) {
-        (zvariant::Value::Str(k_str), value) if k_str.as_str() == key => {
-            match unbox_variant(value) {
-                zvariant::Value::Str(v_str) => Some(v_str.to_string()),
-                _ => None,
-            }
-        }
+        (zbus::Variant::Str(k_str), value) if k_str.as_str() == key => match unbox_variant(value) {
+            zbus::Variant::Str(v_str) => Some(v_str.to_string()),
+            _ => None,
+        },
         _ => None,
     })
 }
 
-fn unbox_variant<'a, 'v>(mut value: &'a zvariant::Value<'v>) -> &'a zvariant::Value<'v> {
-    while let zvariant::Value::Value(inner) = value {
+fn unbox_variant<'a, 'v>(mut value: &'a zbus::Variant<'v>) -> &'a zbus::Variant<'v> {
+    while let zbus::Variant::Variant(inner) = value {
         value = inner;
     }
     value
 }
 
-fn dict_value<'a, 'v>(
-    dict: &'a zvariant::Dict<'v, 'v>,
-    key: &str,
-) -> Option<&'a zvariant::Value<'v>> {
+fn dict_value<'a, 'v>(dict: &'a zbus::Dict<'v, 'v>, key: &str) -> Option<&'a zbus::Variant<'v>> {
     dict.iter().find_map(|(k, v)| {
-        matches!(k, zvariant::Value::Str(k_str) if k_str.as_str() == key).then(|| unbox_variant(v))
+        matches!(k, zbus::Variant::Str(k_str) if k_str.as_str() == key).then(|| unbox_variant(v))
     })
 }
 
 /// Converts a full `Dict` to `HashMap<String, String>`.
-fn dict_to_map(dict: &zvariant::Dict<'_, '_>) -> HashMap<String, String> {
+fn dict_to_map(dict: &zbus::Dict<'_, '_>) -> HashMap<String, String> {
     dict.iter()
         .filter_map(|(k, v)| match (k, unbox_variant(v)) {
-            (zvariant::Value::Str(k_str), zvariant::Value::Str(v_str)) => {
+            (zbus::Variant::Str(k_str), zbus::Variant::Str(v_str)) => {
                 Some((k_str.to_string(), v_str.to_string()))
             }
             _ => None,
@@ -91,7 +86,7 @@ fn dict_to_map(dict: &zvariant::Dict<'_, '_>) -> HashMap<String, String> {
 /// Pure function — no D-Bus calls.
 pub(crate) fn vpn_type_from_settings(
     kind: VpnKind,
-    settings: &HashMap<String, HashMap<String, zvariant::Value<'_>>>,
+    settings: &HashMap<String, HashMap<String, zbus::Variant<'_>>>,
 ) -> VpnType {
     match kind {
         VpnKind::WireGuard => decode_wireguard_type(settings),
@@ -100,12 +95,12 @@ pub(crate) fn vpn_type_from_settings(
 }
 
 fn decode_wireguard_type(
-    settings: &HashMap<String, HashMap<String, zvariant::Value<'_>>>,
+    settings: &HashMap<String, HashMap<String, zbus::Variant<'_>>>,
 ) -> VpnType {
     let wg = settings.get("wireguard");
 
     let private_key = wg.and_then(|s| s.get("private-key")).and_then(|v| match v {
-        zvariant::Value::Str(s) if !s.is_empty() => Some(s.to_string()),
+        zbus::Variant::Str(s) if !s.is_empty() => Some(s.to_string()),
         _ => None,
     });
 
@@ -126,10 +121,10 @@ fn decode_wireguard_type(
 }
 
 fn decode_wg_first_peer(
-    peers_val: &zvariant::Value<'_>,
+    peers_val: &zbus::Variant<'_>,
 ) -> (Option<String>, Option<String>, Vec<String>, Option<u32>) {
     match peers_val {
-        zvariant::Value::Str(s) => {
+        zbus::Variant::Str(s) => {
             let text = s.as_str();
             let first = text.split(',').next().unwrap_or(text).trim();
             let mut pk = None;
@@ -149,31 +144,31 @@ fn decode_wg_first_peer(
             }
             (pk, ep, ips, ka)
         }
-        zvariant::Value::Array(arr) => {
+        zbus::Variant::Array(arr) => {
             if let Some(first) = arr.first()
-                && let zvariant::Value::Dict(dict) = unbox_variant(first)
+                && let zbus::Variant::Dict(dict) = unbox_variant(first)
             {
                 let pk = dict_str(dict, "public-key");
                 let ep = dict_str(dict, "endpoint");
                 let ips = match dict_value(dict, "allowed-ips") {
-                    Some(zvariant::Value::Str(value)) => value
+                    Some(zbus::Variant::Str(value)) => value
                         .split(';')
                         .map(str::trim)
                         .filter(|value| !value.is_empty())
                         .map(str::to_string)
                         .collect(),
-                    Some(zvariant::Value::Array(values)) => values
+                    Some(zbus::Variant::Array(values)) => values
                         .iter()
                         .filter_map(|value| match unbox_variant(value) {
-                            zvariant::Value::Str(value) => Some(value.to_string()),
+                            zbus::Variant::Str(value) => Some(value.to_string()),
                             _ => None,
                         })
                         .collect(),
                     _ => Vec::new(),
                 };
                 let ka = match dict_value(dict, "persistent-keepalive") {
-                    Some(zvariant::Value::U32(value)) => Some(*value),
-                    Some(zvariant::Value::Str(value)) => value.parse().ok(),
+                    Some(zbus::Variant::U32(value)) => Some(*value),
+                    Some(zbus::Variant::Str(value)) => value.parse().ok(),
                     _ => None,
                 };
                 return (pk, ep, ips, ka);
@@ -184,7 +179,7 @@ fn decode_wg_first_peer(
     }
 }
 
-fn decode_plugin_type(settings: &HashMap<String, HashMap<String, zvariant::Value<'_>>>) -> VpnType {
+fn decode_plugin_type(settings: &HashMap<String, HashMap<String, zbus::Variant<'_>>>) -> VpnType {
     let vpn_sec = match settings.get("vpn") {
         Some(s) => s,
         None => {
@@ -201,20 +196,20 @@ fn decode_plugin_type(settings: &HashMap<String, HashMap<String, zvariant::Value
     let service_type = vpn_sec
         .get("service-type")
         .and_then(|v| match v {
-            zvariant::Value::Str(s) => Some(s.to_string()),
+            zbus::Variant::Str(s) => Some(s.to_string()),
             _ => None,
         })
         .unwrap_or_default();
 
     let user_name = vpn_sec.get("user-name").and_then(|v| match v {
-        zvariant::Value::Str(s) if !s.is_empty() => Some(s.to_string()),
+        zbus::Variant::Str(s) if !s.is_empty() => Some(s.to_string()),
         _ => None,
     });
 
     let pf_raw = vpn_sec
         .get("password-flags")
         .and_then(|v| match v {
-            zvariant::Value::U32(n) => Some(*n),
+            zbus::Variant::U32(n) => Some(*n),
             _ => None,
         })
         .unwrap_or(0);
@@ -241,13 +236,13 @@ fn decode_plugin_type(settings: &HashMap<String, HashMap<String, zvariant::Value
 
     let data = data_dict
         .and_then(|v| match v {
-            zvariant::Value::Dict(d) => Some(dict_to_map(d)),
+            zbus::Variant::Dict(d) => Some(dict_to_map(d)),
             _ => None,
         })
         .unwrap_or_default();
     let secrets = secrets_dict
         .and_then(|v| match v {
-            zvariant::Value::Dict(d) => Some(dict_to_map(d)),
+            zbus::Variant::Dict(d) => Some(dict_to_map(d)),
             _ => None,
         })
         .unwrap_or_default();
@@ -261,14 +256,14 @@ fn decode_plugin_type(settings: &HashMap<String, HashMap<String, zvariant::Value
     }
 }
 
-fn data_str(data_dict: Option<&zvariant::Value<'_>>, key: &str) -> Option<String> {
+fn data_str(data_dict: Option<&zbus::Variant<'_>>, key: &str) -> Option<String> {
     match data_dict? {
-        zvariant::Value::Dict(d) => dict_str(d, key),
+        zbus::Variant::Dict(d) => dict_str(d, key),
         _ => None,
     }
 }
 
-fn data_pf(data_dict: Option<&zvariant::Value<'_>>, key: &str) -> VpnSecretFlags {
+fn data_pf(data_dict: Option<&zbus::Variant<'_>>, key: &str) -> VpnSecretFlags {
     VpnSecretFlags(
         data_str(data_dict, key)
             .and_then(|s| s.parse().ok())
@@ -277,7 +272,7 @@ fn data_pf(data_dict: Option<&zvariant::Value<'_>>, key: &str) -> VpnSecretFlags
 }
 
 fn decode_openvpn(
-    data_dict: Option<&zvariant::Value<'_>>,
+    data_dict: Option<&zbus::Variant<'_>>,
     user_name: Option<String>,
     _section_pf: VpnSecretFlags,
 ) -> VpnType {
@@ -304,7 +299,7 @@ fn decode_openvpn(
 }
 
 fn decode_openconnect(
-    data_dict: Option<&zvariant::Value<'_>>,
+    data_dict: Option<&zbus::Variant<'_>>,
     user_name: Option<String>,
     password_flags: VpnSecretFlags,
 ) -> VpnType {
@@ -317,7 +312,7 @@ fn decode_openconnect(
 }
 
 fn decode_strongswan(
-    data_dict: Option<&zvariant::Value<'_>>,
+    data_dict: Option<&zbus::Variant<'_>>,
     user_name: Option<String>,
     password_flags: VpnSecretFlags,
 ) -> VpnType {
@@ -331,7 +326,7 @@ fn decode_strongswan(
 }
 
 fn decode_pptp(
-    data_dict: Option<&zvariant::Value<'_>>,
+    data_dict: Option<&zbus::Variant<'_>>,
     user_name: Option<String>,
     password_flags: VpnSecretFlags,
 ) -> VpnType {
@@ -343,7 +338,7 @@ fn decode_pptp(
 }
 
 fn decode_l2tp(
-    data_dict: Option<&zvariant::Value<'_>>,
+    data_dict: Option<&zbus::Variant<'_>>,
     user_name: Option<String>,
     password_flags: VpnSecretFlags,
 ) -> VpnType {
@@ -359,22 +354,20 @@ fn decode_l2tp(
 }
 
 /// Extracts `connection.uuid` from settings.
-fn extract_uuid(
-    settings: &HashMap<String, HashMap<String, zvariant::Value<'_>>>,
-) -> Option<String> {
+fn extract_uuid(settings: &HashMap<String, HashMap<String, zbus::Variant<'_>>>) -> Option<String> {
     settings
         .get("connection")?
         .get("uuid")
         .and_then(|v| match v {
-            zvariant::Value::Str(s) => Some(s.to_string()),
+            zbus::Variant::Str(s) => Some(s.to_string()),
             _ => None,
         })
 }
 
 /// Extracts `connection.id` from settings.
-fn extract_id(settings: &HashMap<String, HashMap<String, zvariant::Value<'_>>>) -> Option<String> {
+fn extract_id(settings: &HashMap<String, HashMap<String, zbus::Variant<'_>>>) -> Option<String> {
     settings.get("connection")?.get("id").and_then(|v| match v {
-        zvariant::Value::Str(s) => Some(s.to_string()),
+        zbus::Variant::Str(s) => Some(s.to_string()),
         _ => None,
     })
 }
@@ -382,7 +375,7 @@ fn extract_id(settings: &HashMap<String, HashMap<String, zvariant::Value<'_>>>) 
 /// Extracts `vpn.service-type` or returns empty string for WireGuard.
 fn extract_service_type(
     kind: VpnKind,
-    settings: &HashMap<String, HashMap<String, zvariant::Value<'_>>>,
+    settings: &HashMap<String, HashMap<String, zbus::Variant<'_>>>,
 ) -> String {
     if kind == VpnKind::WireGuard {
         return String::new();
@@ -391,29 +384,29 @@ fn extract_service_type(
         .get("vpn")
         .and_then(|s| s.get("service-type"))
         .and_then(|v| match v {
-            zvariant::Value::Str(s) => Some(s.to_string()),
+            zbus::Variant::Str(s) => Some(s.to_string()),
             _ => None,
         })
         .unwrap_or_default()
 }
 
 fn extract_vpn_user_name(
-    settings: &HashMap<String, HashMap<String, zvariant::Value<'_>>>,
+    settings: &HashMap<String, HashMap<String, zbus::Variant<'_>>>,
 ) -> Option<String> {
     settings.get("vpn")?.get("user-name").and_then(|v| match v {
-        zvariant::Value::Str(s) if !s.is_empty() => Some(s.to_string()),
+        zbus::Variant::Str(s) if !s.is_empty() => Some(s.to_string()),
         _ => None,
     })
 }
 
 fn extract_password_flags(
-    settings: &HashMap<String, HashMap<String, zvariant::Value<'_>>>,
+    settings: &HashMap<String, HashMap<String, zbus::Variant<'_>>>,
 ) -> VpnSecretFlags {
     let raw = settings
         .get("vpn")
         .and_then(|s| s.get("password-flags"))
         .and_then(|v| match v {
-            zvariant::Value::U32(n) => Some(*n),
+            zbus::Variant::U32(n) => Some(*n),
             _ => None,
         })
         .unwrap_or(0);
@@ -465,11 +458,11 @@ pub(crate) async fn list_vpn_connections(conn: &Connection) -> Result<Vec<VpnCon
         };
 
         let body = msg.body();
-        let settings_map: HashMap<String, HashMap<String, zvariant::Value>> =
-            match body.deserialize() {
-                Ok(m) => m,
-                Err(_) => continue,
-            };
+        let settings_map: HashMap<String, HashMap<String, zbus::Variant>> = match body.deserialize()
+        {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
 
         let Some(kind) = detect_vpn_kind(&settings_map) else {
             continue;
@@ -666,47 +659,39 @@ pub(crate) async fn connect_vpn(
     wait_for_connection_activation(conn, &active_conn, timeout).await?;
     trace!("Connection reached Activated state, waiting briefly...");
 
-    match NMActiveConnectionProxy::builder(conn).path(active_conn.clone()) {
-        Ok(builder) => match builder.build().await {
-            Ok(active_conn_check) => {
-                let final_state = active_conn_check.state().await?;
-                let state = crate::api::models::ActiveConnectionState::from(final_state);
-                trace!("Connection state after delay: {:?}", state);
+    match NMActiveConnectionProxy::builder(conn)
+        .path(active_conn.clone())
+        .build()
+        .await
+    {
+        Ok(active_conn_check) => {
+            let final_state = active_conn_check.state().await?;
+            let state = crate::api::models::ActiveConnectionState::from(final_state);
+            trace!("Connection state after delay: {:?}", state);
 
-                match state {
-                    crate::api::models::ActiveConnectionState::Activated => {
-                        info!("Successfully connected to VPN: {}", name);
-                        Ok(())
-                    }
-                    crate::api::models::ActiveConnectionState::Deactivated => {
-                        warn!("Connection deactivated immediately after activation");
-                        let reason = extract_connection_state_reason(conn, &active_conn).await;
-                        Err(crate::api::models::ConnectionError::ActivationFailed(
-                            reason,
-                        ))
-                    }
-                    _ => {
-                        warn!("Connection in unexpected state: {:?}", state);
-                        Err(crate::api::models::ConnectionError::Stuck(format!(
-                            "connection in state {:?}",
-                            state
-                        )))
-                    }
+            match state {
+                crate::api::models::ActiveConnectionState::Activated => {
+                    info!("Successfully connected to VPN: {}", name);
+                    Ok(())
+                }
+                crate::api::models::ActiveConnectionState::Deactivated => {
+                    warn!("Connection deactivated immediately after activation");
+                    let reason = extract_connection_state_reason(conn, &active_conn).await;
+                    Err(crate::api::models::ConnectionError::ActivationFailed(
+                        reason,
+                    ))
+                }
+                _ => {
+                    warn!("Connection in unexpected state: {:?}", state);
+                    Err(crate::api::models::ConnectionError::Stuck(format!(
+                        "connection in state {:?}",
+                        state
+                    )))
                 }
             }
-            Err(e) => {
-                warn!("Failed to build active connection proxy after delay: {}", e);
-                let reason = extract_connection_state_reason(conn, &active_conn).await;
-                Err(crate::api::models::ConnectionError::ActivationFailed(
-                    reason,
-                ))
-            }
-        },
+        }
         Err(e) => {
-            warn!(
-                "Failed to create active connection proxy builder after delay: {}",
-                e
-            );
+            warn!("Failed to build active connection proxy after delay: {}", e);
             let reason = extract_connection_state_reason(conn, &active_conn).await;
             Err(crate::api::models::ConnectionError::ActivationFailed(
                 reason,
@@ -758,11 +743,11 @@ pub(crate) async fn disconnect_vpn(conn: &Connection, name: &str) -> Result<()> 
         };
 
         let body = msg.body();
-        let settings_map: HashMap<String, HashMap<String, zvariant::Value>> =
-            match body.deserialize() {
-                Ok(map) => map,
-                Err(_) => continue,
-            };
+        let settings_map: HashMap<String, HashMap<String, zbus::Variant>> = match body.deserialize()
+        {
+            Ok(map) => map,
+            Err(_) => continue,
+        };
 
         let id_match = extract_id(&settings_map)
             .map(|id| id == name)
@@ -823,7 +808,7 @@ pub(crate) async fn forget_vpn(conn: &Connection, name: &str) -> Result<()> {
         };
 
         let body = msg.body();
-        let settings_map: HashMap<String, HashMap<String, zvariant::Value>> = body.deserialize()?;
+        let settings_map: HashMap<String, HashMap<String, zbus::Variant>> = body.deserialize()?;
 
         let id_ok = extract_id(&settings_map)
             .map(|id| id == name)
@@ -913,11 +898,11 @@ pub(crate) async fn get_vpn_info(conn: &Connection, name: &str) -> Result<VpnCon
         };
 
         let body = msg.body();
-        let settings_map: HashMap<String, HashMap<String, zvariant::Value>> =
-            match body.deserialize() {
-                Ok(m) => m,
-                Err(_) => continue,
-            };
+        let settings_map: HashMap<String, HashMap<String, zbus::Variant>> = match body.deserialize()
+        {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
 
         let id = match extract_id(&settings_map) {
             Some(i) => i,
@@ -986,16 +971,16 @@ pub(crate) async fn get_vpn_info(conn: &Connection, name: &str) -> Result<VpnCon
         };
         let (ip4_address, dns_servers) = if let Some(ip4_proxy) = ip4_proxy {
             let ip4_address = if let Ok(addr_array) = ip4_proxy
-                .get_property::<Vec<HashMap<String, zvariant::Value>>>("AddressData")
+                .get_property::<Vec<HashMap<String, zbus::OwnedVariant>>>("AddressData")
                 .await
             {
                 addr_array.first().and_then(|addr_map| {
-                    let address = addr_map.get("address").and_then(|v| match v {
-                        zvariant::Value::Str(s) => Some(s.as_str().to_string()),
+                    let address = addr_map.get("address").and_then(|v| match &**v {
+                        zbus::Variant::Str(s) => Some(s.as_str().to_string()),
                         _ => None,
                     })?;
-                    let prefix = addr_map.get("prefix").and_then(|v| match v {
-                        zvariant::Value::U32(p) => Some(p),
+                    let prefix = addr_map.get("prefix").and_then(|v| match &**v {
+                        zbus::Variant::U32(p) => Some(p),
                         _ => None,
                     })?;
                     Some(format!("{}/{}", address, prefix))
@@ -1041,16 +1026,16 @@ pub(crate) async fn get_vpn_info(conn: &Connection, name: &str) -> Result<VpnCon
         };
         let ip6_address = if let Some(ip6_proxy) = ip6_proxy {
             if let Ok(addr_array) = ip6_proxy
-                .get_property::<Vec<HashMap<String, zvariant::Value>>>("AddressData")
+                .get_property::<Vec<HashMap<String, zbus::OwnedVariant>>>("AddressData")
                 .await
             {
                 addr_array.first().and_then(|addr_map| {
-                    let address = addr_map.get("address").and_then(|v| match v {
-                        zvariant::Value::Str(s) => Some(s.as_str().to_string()),
+                    let address = addr_map.get("address").and_then(|v| match &**v {
+                        zbus::Variant::Str(s) => Some(s.as_str().to_string()),
                         _ => None,
                     })?;
-                    let prefix = addr_map.get("prefix").and_then(|v| match v {
-                        zvariant::Value::U32(p) => Some(p),
+                    let prefix = addr_map.get("prefix").and_then(|v| match &**v {
+                        zbus::Variant::U32(p) => Some(p),
                         _ => None,
                     })?;
                     Some(format!("{}/{}", address, prefix))
@@ -1084,26 +1069,26 @@ pub(crate) async fn get_vpn_info(conn: &Connection, name: &str) -> Result<VpnCon
 }
 
 fn extract_openvpn_gateway(
-    settings_map: &HashMap<String, HashMap<String, zvariant::Value<'_>>>,
+    settings_map: &HashMap<String, HashMap<String, zbus::Variant<'_>>>,
 ) -> Option<String> {
-    let zvariant::Value::Dict(dict) = settings_map.get("vpn")?.get("data")? else {
+    let zbus::Variant::Dict(dict) = settings_map.get("vpn")?.get("data")? else {
         return None;
     };
     dict_str(dict, "remote")
 }
 
 fn extract_openvpn_data_value(
-    settings_map: &HashMap<String, HashMap<String, zvariant::Value<'_>>>,
+    settings_map: &HashMap<String, HashMap<String, zbus::Variant<'_>>>,
     key: &str,
 ) -> Option<String> {
-    let zvariant::Value::Dict(dict) = settings_map.get("vpn")?.get("data")? else {
+    let zbus::Variant::Dict(dict) = settings_map.get("vpn")?.get("data")? else {
         return None;
     };
     dict_str(dict, key)
 }
 
 fn extract_openvpn_details(
-    settings_map: &HashMap<String, HashMap<String, zvariant::Value<'_>>>,
+    settings_map: &HashMap<String, HashMap<String, zbus::Variant<'_>>>,
 ) -> Option<VpnDetails> {
     let remote_raw = extract_openvpn_data_value(settings_map, "remote")?;
 
@@ -1158,7 +1143,7 @@ fn parse_openvpn_remote(remote: &str) -> (String, u16) {
 }
 
 fn extract_wireguard_details(
-    settings_map: &HashMap<String, HashMap<String, zvariant::Value<'_>>>,
+    settings_map: &HashMap<String, HashMap<String, zbus::Variant<'_>>>,
 ) -> Option<VpnDetails> {
     let wg_sec = settings_map.get("wireguard")?;
 
@@ -1169,7 +1154,7 @@ fn extract_wireguard_details(
     let public_key = wg_sec
         .get("public-key")
         .and_then(|value| match unbox_variant(value) {
-            zvariant::Value::Str(value) => Some(value.to_string()),
+            zbus::Variant::Str(value) => Some(value.to_string()),
             _ => None,
         })
         .or(peer_public_key);
@@ -1187,25 +1172,25 @@ mod tests {
 
     fn openvpn_settings_with_data(
         data: HashMap<String, String>,
-    ) -> HashMap<String, HashMap<String, zvariant::Value<'static>>> {
-        let dict = zvariant::Dict::from(data);
-        let vpn_sec = HashMap::from([("data".to_string(), zvariant::Value::Dict(dict))]);
+    ) -> HashMap<String, HashMap<String, zbus::Variant<'static>>> {
+        let dict = zbus::Dict::from(data);
+        let vpn_sec = HashMap::from([("data".to_string(), zbus::Variant::Dict(dict))]);
         HashMap::from([("vpn".to_string(), vpn_sec)])
     }
 
     fn vpn_settings_with_service(
         service: &str,
         data: HashMap<String, String>,
-    ) -> HashMap<String, HashMap<String, zvariant::Value<'static>>> {
-        let dict = zvariant::Dict::from(data);
+    ) -> HashMap<String, HashMap<String, zbus::Variant<'static>>> {
+        let dict = zbus::Dict::from(data);
         let vpn_sec = HashMap::from([
             (
                 "service-type".to_string(),
-                zvariant::Value::Str(service.to_string().into()),
+                zbus::Variant::Str(service.to_string().into()),
             ),
-            ("data".to_string(), zvariant::Value::Dict(dict)),
+            ("data".to_string(), zbus::Variant::Dict(dict)),
         ]);
-        let conn_sec = HashMap::from([("type".to_string(), zvariant::Value::Str("vpn".into()))]);
+        let conn_sec = HashMap::from([("type".to_string(), zbus::Variant::Str("vpn".into()))]);
         HashMap::from([
             ("vpn".to_string(), vpn_sec),
             ("connection".to_string(), conn_sec),
@@ -1215,14 +1200,14 @@ mod tests {
     #[test]
     fn detect_wireguard() {
         let conn_sec =
-            HashMap::from([("type".to_string(), zvariant::Value::Str("wireguard".into()))]);
+            HashMap::from([("type".to_string(), zbus::Variant::Str("wireguard".into()))]);
         let settings = HashMap::from([("connection".to_string(), conn_sec)]);
         assert_eq!(detect_vpn_kind(&settings), Some(VpnKind::WireGuard));
     }
 
     #[test]
     fn detect_plugin() {
-        let conn_sec = HashMap::from([("type".to_string(), zvariant::Value::Str("vpn".into()))]);
+        let conn_sec = HashMap::from([("type".to_string(), zbus::Variant::Str("vpn".into()))]);
         let settings = HashMap::from([("connection".to_string(), conn_sec)]);
         assert_eq!(detect_vpn_kind(&settings), Some(VpnKind::Plugin));
     }
@@ -1231,7 +1216,7 @@ mod tests {
     fn detect_non_vpn() {
         let conn_sec = HashMap::from([(
             "type".to_string(),
-            zvariant::Value::Str("802-11-wireless".into()),
+            zbus::Variant::Str("802-11-wireless".into()),
         )]);
         let settings = HashMap::from([("connection".to_string(), conn_sec)]);
         assert_eq!(detect_vpn_kind(&settings), None);
@@ -1304,12 +1289,12 @@ mod tests {
             vpn_settings_with_service("org.freedesktop.NetworkManager.openconnect", data);
         settings.get_mut("vpn").unwrap().insert(
             "user-name".into(),
-            zvariant::Value::Str("section-user".into()),
+            zbus::Variant::Str("section-user".into()),
         );
         settings
             .get_mut("vpn")
             .unwrap()
-            .insert("password-flags".into(), zvariant::Value::U32(1));
+            .insert("password-flags".into(), zbus::Variant::U32(1));
 
         assert!(matches!(
             vpn_type_from_settings(VpnKind::Plugin, &settings),
@@ -1331,7 +1316,7 @@ mod tests {
         let mut settings = vpn_settings_with_service("org.freedesktop.NetworkManager.pptp", data);
         settings.get_mut("vpn").unwrap().insert(
             "user-name".into(),
-            zvariant::Value::Str("fallback-user".into()),
+            zbus::Variant::Str("fallback-user".into()),
         );
 
         assert!(matches!(
@@ -1362,11 +1347,11 @@ mod tests {
     #[test]
     fn malformed_plugin_sections_fall_back_without_panicking() {
         let vpn = HashMap::from([
-            ("service-type".into(), zvariant::Value::U32(7)),
-            ("data".into(), zvariant::Value::Str("not-a-dict".into())),
-            ("secrets".into(), zvariant::Value::U32(9)),
-            ("user-name".into(), zvariant::Value::Str("".into())),
-            ("password-flags".into(), zvariant::Value::Str("bad".into())),
+            ("service-type".into(), zbus::Variant::U32(7)),
+            ("data".into(), zbus::Variant::Str("not-a-dict".into())),
+            ("secrets".into(), zbus::Variant::U32(9)),
+            ("user-name".into(), zbus::Variant::Str("".into())),
+            ("password-flags".into(), zbus::Variant::Str("bad".into())),
         ]);
         let settings = HashMap::from([("vpn".into(), vpn)]);
 
@@ -1483,7 +1468,7 @@ mod tests {
 
     #[test]
     fn openvpn_gateway_none_when_vpn_section_absent() {
-        let settings: HashMap<String, HashMap<String, zvariant::Value<'static>>> =
+        let settings: HashMap<String, HashMap<String, zbus::Variant<'static>>> =
             HashMap::from([("connection".to_string(), HashMap::new())]);
         assert_eq!(extract_openvpn_gateway(&settings), None);
     }
@@ -1589,9 +1574,9 @@ mod tests {
     }
 
     fn wireguard_settings(
-        pairs: Vec<(&str, zvariant::Value<'static>)>,
-    ) -> HashMap<String, HashMap<String, zvariant::Value<'static>>> {
-        let wg_sec: HashMap<String, zvariant::Value<'static>> =
+        pairs: Vec<(&str, zbus::Variant<'static>)>,
+    ) -> HashMap<String, HashMap<String, zbus::Variant<'static>>> {
+        let wg_sec: HashMap<String, zbus::Variant<'static>> =
             pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
         HashMap::from([("wireguard".to_string(), wg_sec)])
     }
@@ -1601,11 +1586,11 @@ mod tests {
         let settings = wireguard_settings(vec![
             (
                 "public-key",
-                zvariant::Value::Str("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=".into()),
+                zbus::Variant::Str("YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=".into()),
             ),
             (
                 "peers",
-                zvariant::Value::Str("endpoint=vpn.example.com:51820 allowed-ips=0.0.0.0/0".into()),
+                zbus::Variant::Str("endpoint=vpn.example.com:51820 allowed-ips=0.0.0.0/0".into()),
             ),
         ]);
         let details = extract_wireguard_details(&settings).unwrap();
@@ -1629,11 +1614,11 @@ mod tests {
         let settings = wireguard_settings(vec![
             (
                 "private-key",
-                zvariant::Value::Str("private-key-material".into()),
+                zbus::Variant::Str("private-key-material".into()),
             ),
             (
                 "peers",
-                zvariant::Value::Str(
+                zbus::Variant::Str(
                     "public-key=peer-key endpoint=vpn.example.com:51820 \
                      allowed-ips=0.0.0.0/0;::/0 persistent-keepalive=25, \
                      public-key=second"
@@ -1659,19 +1644,19 @@ mod tests {
 
     #[test]
     fn decode_wireguard_native_array_peer_representation() {
-        let peer: HashMap<String, zvariant::Value<'static>> = HashMap::from([
-            ("public-key".into(), zvariant::Value::Str("peer-key".into())),
+        let peer: HashMap<String, zbus::Variant<'static>> = HashMap::from([
+            ("public-key".into(), zbus::Variant::Str("peer-key".into())),
             (
                 "endpoint".into(),
-                zvariant::Value::Str("vpn.example.com:51820".into()),
+                zbus::Variant::Str("vpn.example.com:51820".into()),
             ),
             (
                 "allowed-ips".into(),
-                zvariant::Value::from(vec!["10.0.0.0/8".to_string(), "::/0".to_string()]),
+                zbus::Variant::from(vec!["10.0.0.0/8".to_string(), "::/0".to_string()]),
             ),
-            ("persistent-keepalive".into(), zvariant::Value::U32(30)),
+            ("persistent-keepalive".into(), zbus::Variant::U32(30)),
         ]);
-        let settings = wireguard_settings(vec![("peers", zvariant::Value::from(vec![peer]))]);
+        let settings = wireguard_settings(vec![("peers", zbus::Variant::from(vec![peer]))]);
 
         assert!(matches!(
             vpn_type_from_settings(VpnKind::WireGuard, &settings),
@@ -1698,8 +1683,8 @@ mod tests {
     #[test]
     fn malformed_wireguard_fields_return_empty_details() {
         let settings = wireguard_settings(vec![
-            ("private-key", zvariant::Value::U32(1)),
-            ("peers", zvariant::Value::U32(2)),
+            ("private-key", zbus::Variant::U32(1)),
+            ("peers", zbus::Variant::U32(2)),
         ]);
         assert_eq!(
             vpn_type_from_settings(VpnKind::WireGuard, &settings),

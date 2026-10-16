@@ -16,7 +16,7 @@ let nm = NetworkManager::with_config(config).await?;
 - `Clone` — clones share the same D-Bus connection
 - `Send + Sync` — safe to share across tasks
 - See [NetworkManager API](./network-manager.md) for all methods
-- See [Raw Module](./raw.md) for `zbus` / `zvariant` re-exports used with `dbus_connection()`
+- See [Raw Module](./raw.md) for the `zbus` re-export used with `dbus_connection()`
 
 ## Result Type
 
@@ -117,8 +117,8 @@ All public methods return `nmrs::Result<T>`.
 
 | Module | Description |
 |--------|-------------|
-| `nmrs::raw::zbus` | Re-exported zbus dependency for advanced D-Bus work |
-| `nmrs::raw::zvariant` | Re-exported zvariant dependency (builder output types) |
+| `nmrs::raw::zbus` | Re-exported zbus dependency for advanced D-Bus work (`Variant`, `OwnedObjectPath`, builder output types) |
+| `nmrs::raw::zvariant` | zbus's deprecated `zvariant` compatibility module; use `raw::zbus` for new code |
 
 See [Raw Module](./raw.md) and [`dbus_connection()`](./network-manager.md#advanced-d-bus-access).
 
@@ -167,5 +167,5 @@ Less commonly used types are available through the `models` and `builders` modul
 ```rust
 use nmrs::models::{BluetoothIdentity, BluetoothNetworkRole, BluetoothDevice};
 use nmrs::builders::{ConnectionBuilder, WireGuardBuilder, OpenVpnBuilder, IpConfig, Route};
-use nmrs::raw::{zbus, zvariant};
+use nmrs::raw::zbus;
 ```

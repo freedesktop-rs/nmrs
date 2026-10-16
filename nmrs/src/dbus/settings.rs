@@ -1,7 +1,7 @@
 //! NetworkManager Settings D-Bus proxy (`org.freedesktop.NetworkManager.Settings`).
 
+use zbus::OwnedObjectPath;
 use zbus::proxy;
-use zvariant::OwnedObjectPath;
 
 /// Proxy for `/org/freedesktop/NetworkManager/Settings`.
 #[proxy(

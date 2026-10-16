@@ -92,5 +92,5 @@ The high-level `NetworkManager` API uses `ConnectionOptions::default()` internal
 
 - [Custom Timeouts](./timeouts.md) – control how long operations wait
 - [Builders Module](../api/builders.md) – low-level connection building
-- [Raw Module](../api/raw.md) – `zbus` / `zvariant` re-exports
+- [Raw Module](../api/raw.md) – `zbus` re-export
 - [D-Bus Architecture](./dbus.md) – how settings are sent to NetworkManager

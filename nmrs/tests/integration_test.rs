@@ -9,7 +9,7 @@ use std::time::Duration;
 use futures::{FutureExt, StreamExt};
 use nmrs::agent::{SecretAgent, SecretAgentFlags, SecretAgentHandle, SecretSetting};
 use nmrs::builders::WireGuardBuilder;
-use nmrs::raw::zvariant::{OwnedObjectPath, OwnedValue, Value};
+use nmrs::raw::zbus::{OwnedObjectPath, OwnedVariant, Variant};
 use nmrs::{
     ActiveConnection, ActiveConnectionState, ConnectByUuidConfig, ConnectType, ConnectionError,
     DeviceState, GlobalDnsConfiguration, MonitorHandle, NetworkEvent, NetworkEventStream,
@@ -762,7 +762,7 @@ async fn networkmanager_secret_agent_registration_lifecycle() {
             wireguard.remove("private-key").is_some(),
             "the WireGuard builder omitted its private key"
         );
-        wireguard.insert("private-key-flags", Value::from(1u32));
+        wireguard.insert("private-key-flags", Variant::from(1u32));
 
         let profile_path = bounded(
             "add the agent-owned WireGuard profile",
@@ -800,7 +800,7 @@ async fn networkmanager_secret_agent_registration_lifecycle() {
                 .expect("NetworkManager failed to route GetSecrets to the registered agent");
             reply
                 .body()
-                .deserialize::<HashMap<String, HashMap<String, OwnedValue>>>()
+                .deserialize::<HashMap<String, HashMap<String, OwnedVariant>>>()
                 .expect("NetworkManager returned a malformed GetSecrets reply")
         };
         let secret_exchange = async {
@@ -832,7 +832,7 @@ async fn networkmanager_secret_agent_registration_lifecycle() {
             let mut reply = HashMap::new();
             reply.insert(
                 "private-key".into(),
-                OwnedValue::from(nmrs::raw::zvariant::Str::from(private_key)),
+                OwnedVariant::from(nmrs::raw::zbus::Str::from(private_key)),
             );
             request
                 .responder
@@ -853,9 +853,9 @@ async fn networkmanager_secret_agent_registration_lifecycle() {
         let mut wireguard_overlay = HashMap::new();
         wireguard_overlay.insert(
             "private-key".into(),
-            OwnedValue::from(nmrs::raw::zvariant::Str::from(returned_private_key)),
+            OwnedVariant::from(nmrs::raw::zbus::Str::from(returned_private_key)),
         );
-        wireguard_overlay.insert("private-key-flags".into(), OwnedValue::from(0u32));
+        wireguard_overlay.insert("private-key-flags".into(), OwnedVariant::from(0u32));
         let mut overlay = HashMap::new();
         overlay.insert("wireguard".into(), wireguard_overlay);
         let mut patch = SettingsPatch::default();

@@ -33,7 +33,6 @@ nmrs depends on several third-party crates, each with their own licenses:
 | Crate | License |
 |-------|---------|
 | `zbus` | MIT |
-| `zvariant` | MIT |
 | `serde` | MIT OR Apache-2.0 |
 | `thiserror` | MIT OR Apache-2.0 |
 | `uuid` | MIT OR Apache-2.0 |

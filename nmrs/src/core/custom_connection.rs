@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use log::trace;
 use zbus::Connection;
-use zvariant::{OwnedObjectPath, Value};
+use zbus::{OwnedObjectPath, Variant};
 
 use crate::Result;
 use crate::api::models::{ConnectionError, TimeoutConfig};
@@ -20,13 +20,13 @@ use crate::types::constants::device_type;
 use crate::util::utils::settings_proxy;
 
 fn connection_type_from_settings<'a>(
-    settings: &'a HashMap<&str, HashMap<&str, Value<'_>>>,
+    settings: &'a HashMap<&str, HashMap<&str, Variant<'_>>>,
 ) -> Result<&'a str> {
     settings
         .get("connection")
         .and_then(|section| section.get("type"))
         .and_then(|value| match value {
-            Value::Str(conn_type) => Some(conn_type.as_str()),
+            Variant::Str(conn_type) => Some(conn_type.as_str()),
             _ => None,
         })
         .ok_or_else(|| ConnectionError::InvalidInput {
@@ -50,7 +50,7 @@ async fn find_first_device_by_type(conn: &Connection, raw_type: u32) -> Result<O
 
     for dev_path in devices {
         let dev = NMDeviceProxy::builder(conn)
-            .path(dev_path.clone())?
+            .path(dev_path.clone())
             .build()
             .await?;
 
@@ -69,7 +69,7 @@ async fn find_first_device_by_type(conn: &Connection, raw_type: u32) -> Result<O
 
 async fn resolve_device_path(
     conn: &Connection,
-    settings: &HashMap<&str, HashMap<&str, Value<'_>>>,
+    settings: &HashMap<&str, HashMap<&str, Variant<'_>>>,
     interface: Option<&str>,
 ) -> Result<OwnedObjectPath> {
     if let Some(iface) = interface {
@@ -84,13 +84,13 @@ async fn resolve_device_path(
 }
 
 fn bluetooth_bdaddr_from_settings(
-    settings: &HashMap<&str, HashMap<&str, Value<'_>>>,
+    settings: &HashMap<&str, HashMap<&str, Variant<'_>>>,
 ) -> Result<String> {
     settings
         .get("bluetooth")
         .and_then(|section| section.get("bdaddr"))
         .and_then(|value| match value {
-            Value::Str(bdaddr) => Some(bdaddr.as_str().to_string()),
+            Variant::Str(bdaddr) => Some(bdaddr.as_str().to_string()),
             _ => None,
         })
         .ok_or_else(|| ConnectionError::InvalidInput {
@@ -112,7 +112,7 @@ fn explicit_specific_object(specific_object: Option<&str>) -> Result<Option<Owne
 
 async fn resolve_specific_object(
     conn: &Connection,
-    settings: &HashMap<&str, HashMap<&str, Value<'_>>>,
+    settings: &HashMap<&str, HashMap<&str, Variant<'_>>>,
     specific_object: Option<&str>,
 ) -> Result<OwnedObjectPath> {
     if let Some(path) = explicit_specific_object(specific_object)? {
@@ -130,7 +130,7 @@ async fn resolve_specific_object(
 /// Saves a connection profile without activating it (`Settings.AddConnection`).
 pub(crate) async fn add_connection(
     conn: &Connection,
-    settings: HashMap<&str, HashMap<&str, Value<'_>>>,
+    settings: HashMap<&str, HashMap<&str, Variant<'_>>>,
 ) -> Result<OwnedObjectPath> {
     let settings_api = settings_proxy(conn).await?;
     let add_reply = settings_api
@@ -153,7 +153,7 @@ pub(crate) async fn add_connection(
 /// Creates and activates a connection in one step (`AddAndActivateConnection`).
 pub(crate) async fn add_and_activate_connection(
     conn: &Connection,
-    settings: HashMap<&str, HashMap<&str, Value<'_>>>,
+    settings: HashMap<&str, HashMap<&str, Variant<'_>>>,
     interface: Option<&str>,
     specific_object: Option<&str>,
     timeout_config: TimeoutConfig,
@@ -179,15 +179,15 @@ pub(crate) async fn add_and_activate_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zvariant::Value;
+    use zbus::Variant;
 
-    fn sample_wifi_settings() -> HashMap<&'static str, HashMap<&'static str, Value<'static>>> {
+    fn sample_wifi_settings() -> HashMap<&'static str, HashMap<&'static str, Variant<'static>>> {
         let mut connection = HashMap::new();
-        connection.insert("type", Value::from("802-11-wireless"));
-        connection.insert("id", Value::from("Hotspot"));
+        connection.insert("type", Variant::from("802-11-wireless"));
+        connection.insert("id", Variant::from("Hotspot"));
 
         let mut wireless = HashMap::new();
-        wireless.insert("mode", Value::from("ap"));
+        wireless.insert("mode", Variant::from("ap"));
 
         let mut settings = HashMap::new();
         settings.insert("connection", connection);
@@ -196,10 +196,10 @@ mod tests {
     }
 
     fn sample_bluetooth_settings(
-        bdaddr: Option<Value<'static>>,
-    ) -> HashMap<&'static str, HashMap<&'static str, Value<'static>>> {
+        bdaddr: Option<Variant<'static>>,
+    ) -> HashMap<&'static str, HashMap<&'static str, Variant<'static>>> {
         let mut connection = HashMap::new();
-        connection.insert("type", Value::from("bluetooth"));
+        connection.insert("type", Variant::from("bluetooth"));
 
         let mut bluetooth = HashMap::new();
         if let Some(bdaddr) = bdaddr {
@@ -244,8 +244,10 @@ mod tests {
             "settings dictionary is missing connection.type",
         );
 
-        let wrong_type =
-            HashMap::from([("connection", HashMap::from([("type", Value::from(42u32))]))]);
+        let wrong_type = HashMap::from([(
+            "connection",
+            HashMap::from([("type", Variant::from(42u32))]),
+        )]);
         assert_invalid_input(
             connection_type_from_settings(&wrong_type).unwrap_err(),
             "connection.type",
@@ -274,7 +276,7 @@ mod tests {
 
     #[test]
     fn bluetooth_bdaddr_from_settings_reads_address() {
-        let settings = sample_bluetooth_settings(Some(Value::from("00:1A:7D:DA:71:13")));
+        let settings = sample_bluetooth_settings(Some(Variant::from("00:1A:7D:DA:71:13")));
         assert_eq!(
             bluetooth_bdaddr_from_settings(&settings).unwrap(),
             "00:1A:7D:DA:71:13"
@@ -297,7 +299,7 @@ mod tests {
             "bluetooth settings are missing bdaddr",
         );
 
-        let wrong_type = sample_bluetooth_settings(Some(Value::from(42u32)));
+        let wrong_type = sample_bluetooth_settings(Some(Variant::from(42u32)));
         assert_invalid_input(
             bluetooth_bdaddr_from_settings(&wrong_type).unwrap_err(),
             "bluetooth.bdaddr",
@@ -325,10 +327,7 @@ mod tests {
         match error {
             ConnectionError::InvalidInput { field, reason } => {
                 assert_eq!(field, "specific_object");
-                assert!(
-                    !reason.is_empty(),
-                    "zvariant should explain the invalid path"
-                );
+                assert!(!reason.is_empty(), "zbus should explain the invalid path");
             }
             other => panic!("expected InvalidInput, got {other:?}"),
         }

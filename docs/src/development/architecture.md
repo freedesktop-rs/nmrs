@@ -73,7 +73,7 @@ nmrs/src/
 │  api/network_manager.rs  ← Public API (NetworkManager)   │
 │  api/models/             ← Public data types              │
 │  api/builders/           ← Public connection builders     │
-│  lib.rs::raw             ← zbus / zvariant re-exports     │
+│  lib.rs::raw             ← zbus re-export                │
 ├──────────────────────────────────────────────────────────┤
 │  core/                   ← Business logic (not public)    │
 │  monitoring/             ← Signal monitoring (not public) │
@@ -94,7 +94,7 @@ The `api` module defines the public interface:
 - `NetworkManager` delegates to `core` functions
 - `models` define all public data types
 - `builders` construct NM settings dictionaries
-- `raw` re-exports `zbus` and `zvariant` for advanced D-Bus callers
+- `raw` re-exports `zbus` for advanced D-Bus callers
 - `NetworkManager::dbus_connection()` exposes the shared system bus connection
 
 ### Core Layer

@@ -1,13 +1,22 @@
 # Raw Module
 
-The `nmrs::raw` module re-exports the D-Bus dependencies nmrs uses internally:
+The `nmrs::raw` module re-exports the D-Bus dependency nmrs uses internally:
 
 ```rust
 pub mod raw {
     pub use zbus;
-    pub use zvariant;
+    #[allow(deprecated)]
+    pub use zbus::zvariant;
 }
 ```
+
+zbus 6 merged the former `zvariant` crate into `zbus`, so the wire types live
+at the `zbus` root: `zbus::Variant` (formerly `zvariant::Value`),
+`zbus::OwnedVariant` (formerly `OwnedValue`), `zbus::OwnedObjectPath`,
+`zbus::Dict`, `zbus::Str`, and so on. `nmrs::raw::zvariant` is zbus's own
+deprecated compatibility module: existing `nmrs::raw::zvariant::...` paths
+still compile, with deprecation warnings, until zbus 7 removes the module.
+New code should use `nmrs::raw::zbus::...`.
 
 Use it together with [`NetworkManager::dbus_connection()`](./network-manager.md#advanced-d-bus-access)
 when you need D-Bus methods that nmrs does not wrap yet. For builder output,
@@ -17,11 +26,11 @@ and [`add_and_activate_connection`](./network-manager.md#activating-builder-outp
 ## Why it exists
 
 Builder methods such as `WifiConnectionBuilder::build()` return
-`HashMap<&str, HashMap<&str, zvariant::Value<'_>>>`. Without `nmrs::raw`,
-consumers would need to depend on their own `zbus` / `zvariant` versions and
-hope they match the ones nmrs was built against.
+`HashMap<&str, HashMap<&str, zbus::Variant<'_>>>`. Without `nmrs::raw`,
+consumers would need to depend on their own `zbus` version and hope it
+matches the one nmrs was built against.
 
-Re-exporting them under `nmrs::raw` keeps those types compatible with builder
+Re-exporting it under `nmrs::raw` keeps those types compatible with builder
 output and with the connection returned by `dbus_connection()`.
 
 ## Typical workflow

@@ -23,7 +23,7 @@
 //! ```
 
 use std::collections::HashMap;
-use zvariant::Value;
+use zbus::Variant;
 
 use crate::{
     ConnectionOptions,
@@ -35,33 +35,33 @@ use crate::{
 pub fn base_connection_section(
     name: &str,
     opts: &ConnectionOptions,
-) -> HashMap<&'static str, Value<'static>> {
+) -> HashMap<&'static str, Variant<'static>> {
     let mut s = HashMap::new();
-    s.insert("type", Value::from("bluetooth"));
-    s.insert("id", Value::from(name.to_string()));
-    s.insert("uuid", Value::from(uuid::Uuid::new_v4().to_string()));
-    s.insert("autoconnect", Value::from(opts.autoconnect));
+    s.insert("type", Variant::from("bluetooth"));
+    s.insert("id", Variant::from(name.to_string()));
+    s.insert("uuid", Variant::from(uuid::Uuid::new_v4().to_string()));
+    s.insert("autoconnect", Variant::from(opts.autoconnect));
 
     if let Some(p) = opts.autoconnect_priority {
-        s.insert("autoconnect-priority", Value::from(p));
+        s.insert("autoconnect-priority", Variant::from(p));
     }
 
     if let Some(r) = opts.autoconnect_retries {
-        s.insert("autoconnect-retries", Value::from(r));
+        s.insert("autoconnect-retries", Variant::from(r));
     }
 
     s
 }
 
 /// Builds a Bluetooth connection settings dictionary.
-fn bluetooth_section(settings: &BluetoothIdentity) -> HashMap<&'static str, Value<'static>> {
+fn bluetooth_section(settings: &BluetoothIdentity) -> HashMap<&'static str, Variant<'static>> {
     let mut s = HashMap::new();
-    s.insert("bdaddr", Value::from(settings.bdaddr.clone()));
+    s.insert("bdaddr", Variant::from(settings.bdaddr.clone()));
     let bt_type = match settings.bt_device_type {
         BluetoothNetworkRole::PanU => "panu",
         BluetoothNetworkRole::Dun => "dun",
     };
-    s.insert("type", Value::from(bt_type));
+    s.insert("type", Variant::from(bt_type));
     s
 }
 
@@ -70,19 +70,19 @@ pub fn build_bluetooth_connection(
     name: &str,
     settings: &BluetoothIdentity,
     opts: &ConnectionOptions,
-) -> HashMap<&'static str, HashMap<&'static str, Value<'static>>> {
-    let mut conn: HashMap<&'static str, HashMap<&'static str, Value<'static>>> = HashMap::new();
+) -> HashMap<&'static str, HashMap<&'static str, Variant<'static>>> {
+    let mut conn: HashMap<&'static str, HashMap<&'static str, Variant<'static>>> = HashMap::new();
 
     // Base connections
     conn.insert("connection", base_connection_section(name, opts));
     conn.insert("bluetooth", bluetooth_section(settings));
 
     let mut ipv4 = HashMap::new();
-    ipv4.insert("method", Value::from("auto"));
+    ipv4.insert("method", Variant::from("auto"));
     conn.insert("ipv4", ipv4);
 
     let mut ipv6 = HashMap::new();
-    ipv6.insert("method", Value::from("auto"));
+    ipv6.insert("method", Variant::from("auto"));
     conn.insert("ipv6", ipv6);
 
     conn
@@ -119,14 +119,17 @@ mod tests {
         assert!(section.contains_key("uuid"));
         assert!(section.contains_key("autoconnect"));
 
-        assert_eq!(section.get("type"), Some(&Value::from("bluetooth")));
-        assert_eq!(section.get("id"), Some(&Value::from("TestBluetooth")));
-        assert_eq!(section.get("autoconnect"), Some(&Value::from(true)));
+        assert_eq!(section.get("type"), Some(&Variant::from("bluetooth")));
+        assert_eq!(section.get("id"), Some(&Variant::from("TestBluetooth")));
+        assert_eq!(section.get("autoconnect"), Some(&Variant::from(true)));
         assert_eq!(
             section.get("autoconnect-priority"),
-            Some(&Value::from(10i32))
+            Some(&Variant::from(10i32))
         );
-        assert_eq!(section.get("autoconnect-retries"), Some(&Value::from(3i32)));
+        assert_eq!(
+            section.get("autoconnect-retries"),
+            Some(&Variant::from(3i32))
+        );
     }
 
     #[test]
@@ -158,9 +161,9 @@ mod tests {
 
         assert_eq!(
             section.get("bdaddr"),
-            Some(&Value::from("00:1A:7D:DA:71:13"))
+            Some(&Variant::from("00:1A:7D:DA:71:13"))
         );
-        assert_eq!(section.get("type"), Some(&Value::from("panu")));
+        assert_eq!(section.get("type"), Some(&Variant::from("panu")));
     }
 
     #[test]
@@ -173,9 +176,9 @@ mod tests {
 
         assert_eq!(
             section.get("bdaddr"),
-            Some(&Value::from("C8:1F:E8:F0:51:57"))
+            Some(&Variant::from("C8:1F:E8:F0:51:57"))
         );
-        assert_eq!(section.get("type"), Some(&Value::from("dun")));
+        assert_eq!(section.get("type"), Some(&Variant::from("dun")));
     }
 
     #[test]
@@ -191,20 +194,23 @@ mod tests {
         assert!(conn.contains_key("ipv6"));
 
         let connection_section = conn.get("connection").unwrap();
-        assert_eq!(connection_section.get("id"), Some(&Value::from("MyPhone")));
+        assert_eq!(
+            connection_section.get("id"),
+            Some(&Variant::from("MyPhone"))
+        );
 
         let bt_section = conn.get("bluetooth").unwrap();
         assert_eq!(
             bt_section.get("bdaddr"),
-            Some(&Value::from("00:1A:7D:DA:71:13"))
+            Some(&Variant::from("00:1A:7D:DA:71:13"))
         );
-        assert_eq!(bt_section.get("type"), Some(&Value::from("panu")));
+        assert_eq!(bt_section.get("type"), Some(&Variant::from("panu")));
 
         let ipv4_section = conn.get("ipv4").unwrap();
-        assert_eq!(ipv4_section.get("method"), Some(&Value::from("auto")));
+        assert_eq!(ipv4_section.get("method"), Some(&Variant::from("auto")));
 
         let ipv6_section = conn.get("ipv6").unwrap();
-        assert_eq!(ipv6_section.get("method"), Some(&Value::from("auto")));
+        assert_eq!(ipv6_section.get("method"), Some(&Variant::from("auto")));
     }
 
     #[test]
@@ -225,12 +231,12 @@ mod tests {
         let bt_section = conn.get("bluetooth").unwrap();
         assert_eq!(
             conn["connection"].get("autoconnect"),
-            Some(&Value::from(false))
+            Some(&Variant::from(false))
         );
-        assert_eq!(bt_section.get("type"), Some(&Value::from("dun")));
+        assert_eq!(bt_section.get("type"), Some(&Variant::from("dun")));
         assert_eq!(
             bt_section.get("bdaddr"),
-            Some(&Value::from("C8:1F:E8:F0:51:57"))
+            Some(&Variant::from("C8:1F:E8:F0:51:57"))
         );
     }
 
@@ -242,10 +248,10 @@ mod tests {
         let conn1 = build_bluetooth_connection("BT1", &identity, &opts);
         let conn2 = build_bluetooth_connection("BT2", &identity, &opts);
 
-        let Value::Str(uuid1) = &conn1["connection"]["uuid"] else {
+        let Variant::Str(uuid1) = &conn1["connection"]["uuid"] else {
             panic!("conn1 UUID must be a string");
         };
-        let Value::Str(uuid2) = &conn2["connection"]["uuid"] else {
+        let Variant::Str(uuid2) = &conn2["connection"]["uuid"] else {
             panic!("conn2 UUID must be a string");
         };
         let uuid1 = uuid::Uuid::parse_str(uuid1.as_str()).expect("conn1 must contain a valid UUID");
@@ -264,7 +270,7 @@ mod tests {
         let bt_section = conn.get("bluetooth").unwrap();
         assert_eq!(
             bt_section.get("bdaddr"),
-            Some(&Value::from("AA:BB:CC:DD:EE:FF"))
+            Some(&Variant::from("AA:BB:CC:DD:EE:FF"))
         );
     }
 }

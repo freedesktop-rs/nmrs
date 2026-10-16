@@ -49,10 +49,7 @@ pub(crate) async fn current_bluetooth_bdaddr(conn: &Connection) -> Option<String
     let devices = try_log!(nm.get_devices().await, "Failed to get devices");
 
     for dp in devices {
-        let dev_builder = try_log!(
-            NMDeviceProxy::builder(conn).path(dp.clone()),
-            "Failed to create device proxy builder"
-        );
+        let dev_builder = NMDeviceProxy::builder(conn).path(dp.clone());
         let dev = try_log!(dev_builder.build().await, "Failed to build device proxy");
 
         let dev_type = try_log!(dev.device_type().await, "Failed to get device type");
@@ -68,10 +65,7 @@ pub(crate) async fn current_bluetooth_bdaddr(conn: &Connection) -> Option<String
         }
 
         // Get the Bluetooth MAC address from the Bluetooth-specific interface
-        let bt_builder = try_log!(
-            NMBluetoothProxy::builder(conn).path(dp.clone()),
-            "Failed to create Bluetooth proxy builder"
-        );
+        let bt_builder = NMBluetoothProxy::builder(conn).path(dp.clone());
         let bt = try_log!(bt_builder.build().await, "Failed to build Bluetooth proxy");
 
         if let Ok(bdaddr) = bt.hw_address().await {

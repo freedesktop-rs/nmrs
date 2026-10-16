@@ -157,7 +157,7 @@ For standard connections, the `NetworkManager` API handles everything automatica
 ## Submitting Builder Output
 
 Builders produce a NetworkManager settings dictionary
-(`HashMap<&str, HashMap<&str, zvariant::Value>>`). Pass that map to
+(`HashMap<&str, HashMap<&str, zbus::Variant>>`). Pass that map to
 [`NetworkManager::add_connection`](./network-manager.md#saving-profiles-without-activating)
 to save a profile, or
 [`NetworkManager::add_and_activate_connection`](./network-manager.md#activating-builder-output)
@@ -255,5 +255,5 @@ See [docs.rs/nmrs](https://docs.rs/nmrs) for complete builder documentation.
 ## See Also
 
 - [NetworkManager API](./network-manager.md#activating-builder-output) – `add_connection()` / `add_and_activate_connection()`
-- [Raw Module](./raw.md) – `zbus` / `zvariant` re-exports for unwrapped D-Bus calls
+- [Raw Module](./raw.md) – `zbus` re-export for unwrapped D-Bus calls
 - [D-Bus Architecture](../advanced/dbus.md) – how settings reach NetworkManager

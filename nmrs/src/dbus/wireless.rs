@@ -1,8 +1,8 @@
 //! NetworkManager Wireless Device proxy.
 
 use std::collections::HashMap;
+use zbus::OwnedObjectPath;
 use zbus::{Result, proxy};
-use zvariant::OwnedObjectPath;
 
 /// Proxy for wireless device interface.
 ///
@@ -14,7 +14,7 @@ use zvariant::OwnedObjectPath;
 )]
 pub trait NMWireless {
     /// Requests a Wi-Fi scan. Options are usually empty.
-    fn request_scan(&self, options: HashMap<String, zvariant::Value<'_>>) -> Result<()>;
+    fn request_scan(&self, options: HashMap<String, zbus::Variant<'_>>) -> Result<()>;
 
     /// Signal emitted when a new access point is discovered.
     #[zbus(signal)]

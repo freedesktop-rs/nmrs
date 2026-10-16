@@ -8,7 +8,7 @@ use std::sync::Arc;
 use futures::stream::{self, StreamExt};
 use log::warn;
 use zbus::Connection;
-use zvariant::{Dict, OwnedObjectPath, OwnedValue, Str, Value};
+use zbus::{Dict, OwnedObjectPath, OwnedVariant, Str, Variant};
 
 use crate::Result;
 use crate::api::models::property::unbox_value;
@@ -23,31 +23,31 @@ use crate::util::utils::decode_ssid_or_empty;
 /// Builds the `a{sa{sv}}` delta for [`SettingsPatch`] (unit-tested).
 pub(crate) fn build_settings_patch_delta(
     patch: &SettingsPatch,
-) -> HashMap<String, HashMap<String, OwnedValue>> {
-    let mut delta: HashMap<String, HashMap<String, OwnedValue>> = HashMap::new();
+) -> HashMap<String, HashMap<String, OwnedVariant>> {
+    let mut delta: HashMap<String, HashMap<String, OwnedVariant>> = HashMap::new();
 
     if let Some(v) = patch.autoconnect {
         delta
             .entry("connection".to_string())
             .or_default()
-            .insert("autoconnect".to_string(), OwnedValue::from(v));
+            .insert("autoconnect".to_string(), OwnedVariant::from(v));
     }
     if let Some(v) = patch.autoconnect_priority {
         delta
             .entry("connection".to_string())
             .or_default()
-            .insert("autoconnect-priority".to_string(), OwnedValue::from(v));
+            .insert("autoconnect-priority".to_string(), OwnedVariant::from(v));
     }
     if let Some(ref s) = patch.id {
         delta
             .entry("connection".to_string())
             .or_default()
-            .insert("id".to_string(), OwnedValue::from(Str::from(s.as_str())));
+            .insert("id".to_string(), OwnedVariant::from(Str::from(s.as_str())));
     }
     if let Some(opt) = &patch.interface_name {
         let v = match opt {
-            Some(name) => OwnedValue::from(Str::from(name.as_str())),
-            None => OwnedValue::from(Str::from("")),
+            Some(name) => OwnedVariant::from(Str::from(name.as_str())),
+            None => OwnedVariant::from(Str::from("")),
         };
         delta
             .entry("connection".to_string())
@@ -67,8 +67,8 @@ pub(crate) fn build_settings_patch_delta(
 }
 
 fn merge_settings_patch_delta(
-    settings: &mut HashMap<String, HashMap<String, OwnedValue>>,
-    delta: HashMap<String, HashMap<String, OwnedValue>>,
+    settings: &mut HashMap<String, HashMap<String, OwnedVariant>>,
+    delta: HashMap<String, HashMap<String, OwnedVariant>>,
 ) {
     for (section, entries) in delta {
         let target = settings.entry(section).or_default();
@@ -78,51 +78,51 @@ fn merge_settings_patch_delta(
     }
 }
 
-fn owned_to_str(v: &OwnedValue) -> Option<String> {
+fn owned_to_str(v: &OwnedVariant) -> Option<String> {
     String::from_setting(v)
 }
 
-fn owned_to_bool(v: &OwnedValue) -> Option<bool> {
+fn owned_to_bool(v: &OwnedVariant) -> Option<bool> {
     bool::from_setting(v)
 }
 
-fn owned_to_u32(v: &OwnedValue) -> Option<u32> {
+fn owned_to_u32(v: &OwnedVariant) -> Option<u32> {
     u32::from_setting(v)
 }
 
-fn owned_to_i32(v: &OwnedValue) -> Option<i32> {
+fn owned_to_i32(v: &OwnedVariant) -> Option<i32> {
     i32::from_setting(v)
 }
 
-fn owned_to_u64(v: &OwnedValue) -> Option<u64> {
+fn owned_to_u64(v: &OwnedVariant) -> Option<u64> {
     u64::from_setting(v)
 }
 
-fn owned_to_bytes(v: &OwnedValue) -> Option<Vec<u8>> {
+fn owned_to_bytes(v: &OwnedVariant) -> Option<Vec<u8>> {
     Vec::<u8>::from_setting(v)
 }
 
-fn take_str(m: &HashMap<String, OwnedValue>, key: &str) -> Option<String> {
+fn take_str(m: &HashMap<String, OwnedVariant>, key: &str) -> Option<String> {
     m.get(key).and_then(owned_to_str)
 }
 
-fn take_bool(m: &HashMap<String, OwnedValue>, key: &str) -> Option<bool> {
+fn take_bool(m: &HashMap<String, OwnedVariant>, key: &str) -> Option<bool> {
     m.get(key).and_then(owned_to_bool)
 }
 
-fn take_u32(m: &HashMap<String, OwnedValue>, key: &str) -> Option<u32> {
+fn take_u32(m: &HashMap<String, OwnedVariant>, key: &str) -> Option<u32> {
     m.get(key).and_then(owned_to_u32)
 }
 
-fn take_i32(m: &HashMap<String, OwnedValue>, key: &str) -> Option<i32> {
+fn take_i32(m: &HashMap<String, OwnedVariant>, key: &str) -> Option<i32> {
     m.get(key).and_then(owned_to_i32)
 }
 
-fn take_u64(m: &HashMap<String, OwnedValue>, key: &str) -> Option<u64> {
+fn take_u64(m: &HashMap<String, OwnedVariant>, key: &str) -> Option<u64> {
     m.get(key).and_then(owned_to_u64)
 }
 
-fn take_str_vec(m: &HashMap<String, OwnedValue>, key: &str) -> Vec<String> {
+fn take_str_vec(m: &HashMap<String, OwnedVariant>, key: &str) -> Vec<String> {
     m.get(key)
         .and_then(Vec::<String>::from_setting)
         .unwrap_or_default()
@@ -133,7 +133,7 @@ pub(crate) fn decode_saved(
     path: OwnedObjectPath,
     unsaved: bool,
     filename: Option<String>,
-    settings: HashMap<String, HashMap<String, OwnedValue>>,
+    settings: HashMap<String, HashMap<String, OwnedVariant>>,
 ) -> Result<SavedConnection> {
     let Some(conn) = settings.get("connection") else {
         return Err(ConnectionError::MalformedSavedConnection(
@@ -186,7 +186,7 @@ pub(crate) fn decode_saved(
 /// Brief row without building [`SettingsSummary`].
 pub(crate) fn decode_saved_brief(
     path: OwnedObjectPath,
-    settings: &HashMap<String, HashMap<String, OwnedValue>>,
+    settings: &HashMap<String, HashMap<String, OwnedVariant>>,
 ) -> Result<SavedConnectionBrief> {
     let Some(conn) = settings.get("connection") else {
         return Err(ConnectionError::MalformedSavedConnection(
@@ -212,7 +212,7 @@ pub(crate) fn decode_saved_brief(
 
 fn decode_summary(
     conn_type: &str,
-    settings: &HashMap<String, HashMap<String, OwnedValue>>,
+    settings: &HashMap<String, HashMap<String, OwnedVariant>>,
 ) -> SettingsSummary {
     match conn_type {
         "802-11-wireless" => decode_wifi(settings),
@@ -234,7 +234,7 @@ fn decode_summary(
     }
 }
 
-fn is_wireguard_vpn_service(settings: &HashMap<String, HashMap<String, OwnedValue>>) -> bool {
+fn is_wireguard_vpn_service(settings: &HashMap<String, HashMap<String, OwnedVariant>>) -> bool {
     let Some(vpn) = settings.get("vpn") else {
         return false;
     };
@@ -244,7 +244,7 @@ fn is_wireguard_vpn_service(settings: &HashMap<String, HashMap<String, OwnedValu
     st.contains("wireguard")
 }
 
-fn decode_wifi(settings: &HashMap<String, HashMap<String, OwnedValue>>) -> SettingsSummary {
+fn decode_wifi(settings: &HashMap<String, HashMap<String, OwnedVariant>>) -> SettingsSummary {
     let w = settings.get("802-11-wireless").cloned().unwrap_or_default();
     let ssid_bytes = w.get("ssid").and_then(owned_to_bytes).unwrap_or_default();
     let ssid = decode_ssid_or_empty(&ssid_bytes).into_owned();
@@ -281,7 +281,7 @@ fn decode_wifi(settings: &HashMap<String, HashMap<String, OwnedValue>>) -> Setti
 }
 
 fn decode_wifi_security(
-    settings: &HashMap<String, HashMap<String, OwnedValue>>,
+    settings: &HashMap<String, HashMap<String, OwnedVariant>>,
 ) -> WifiSecuritySummary {
     let ws = settings
         .get("802-11-wireless-security")
@@ -320,7 +320,7 @@ fn decode_wifi_security(
     }
 }
 
-fn decode_ethernet(settings: &HashMap<String, HashMap<String, OwnedValue>>) -> SettingsSummary {
+fn decode_ethernet(settings: &HashMap<String, HashMap<String, OwnedVariant>>) -> SettingsSummary {
     let e = settings.get("802-3-ethernet").cloned().unwrap_or_default();
     SettingsSummary::Ethernet {
         mac_address: take_str(&e, "mac-address"),
@@ -330,7 +330,7 @@ fn decode_ethernet(settings: &HashMap<String, HashMap<String, OwnedValue>>) -> S
     }
 }
 
-fn decode_vpn(settings: &HashMap<String, HashMap<String, OwnedValue>>) -> SettingsSummary {
+fn decode_vpn(settings: &HashMap<String, HashMap<String, OwnedVariant>>) -> SettingsSummary {
     let v = settings.get("vpn").cloned().unwrap_or_default();
     let service_type = take_str(&v, "service-type").unwrap_or_default();
     let user_name = take_str(&v, "user-name");
@@ -339,7 +339,7 @@ fn decode_vpn(settings: &HashMap<String, HashMap<String, OwnedValue>>) -> Settin
 
     let mut data_keys = Vec::new();
     if let Some(data_v) = v.get("data")
-        && let Ok(dict) = zvariant::Dict::try_from(data_v.clone())
+        && let Ok(dict) = zbus::Dict::try_from(data_v.clone())
     {
         for (k, _) in dict.iter() {
             if let Ok(key) = Str::try_from(k.clone()) {
@@ -358,7 +358,7 @@ fn decode_vpn(settings: &HashMap<String, HashMap<String, OwnedValue>>) -> Settin
     }
 }
 
-fn decode_wireguard(settings: &HashMap<String, HashMap<String, OwnedValue>>) -> SettingsSummary {
+fn decode_wireguard(settings: &HashMap<String, HashMap<String, OwnedVariant>>) -> SettingsSummary {
     let wg = settings.get("wireguard").cloned().unwrap_or_default();
     let listen_port = take_u32(&wg, "listen-port").and_then(|p| u16::try_from(p).ok());
     let mtu = take_u32(&wg, "mtu");
@@ -368,16 +368,16 @@ fn decode_wireguard(settings: &HashMap<String, HashMap<String, OwnedValue>>) -> 
     let mut first_peer_endpoint = None;
 
     if let Some(peers_v) = wg.get("peers")
-        && let Ok(arr) = zvariant::Array::try_from(peers_v.clone())
+        && let Ok(arr) = zbus::Array::try_from(peers_v.clone())
     {
         peer_count = arr.len();
         if let Some(first) = arr.iter().next()
-            && let zvariant::Value::Dict(dict) = unbox_value(first)
+            && let zbus::Variant::Dict(dict) = unbox_value(first)
         {
             for (k, val) in dict.iter() {
-                if let zvariant::Value::Str(key) = unbox_value(k)
+                if let zbus::Variant::Str(key) = unbox_value(k)
                     && key.as_str() == "endpoint"
-                    && let zvariant::Value::Str(endpoint) = unbox_value(val)
+                    && let zbus::Variant::Str(endpoint) = unbox_value(val)
                 {
                     first_peer_endpoint = Some(endpoint.to_string());
                     break;
@@ -395,7 +395,7 @@ fn decode_wireguard(settings: &HashMap<String, HashMap<String, OwnedValue>>) -> 
     }
 }
 
-fn decode_gsm(settings: &HashMap<String, HashMap<String, OwnedValue>>) -> SettingsSummary {
+fn decode_gsm(settings: &HashMap<String, HashMap<String, OwnedVariant>>) -> SettingsSummary {
     let g = settings.get("gsm").cloned().unwrap_or_default();
     SettingsSummary::Gsm {
         apn: take_str(&g, "apn"),
@@ -405,7 +405,7 @@ fn decode_gsm(settings: &HashMap<String, HashMap<String, OwnedValue>>) -> Settin
     }
 }
 
-fn decode_cdma(settings: &HashMap<String, HashMap<String, OwnedValue>>) -> SettingsSummary {
+fn decode_cdma(settings: &HashMap<String, HashMap<String, OwnedVariant>>) -> SettingsSummary {
     let c = settings.get("cdma").cloned().unwrap_or_default();
     SettingsSummary::Cdma {
         number: take_str(&c, "number"),
@@ -414,7 +414,7 @@ fn decode_cdma(settings: &HashMap<String, HashMap<String, OwnedValue>>) -> Setti
     }
 }
 
-fn decode_bluetooth(settings: &HashMap<String, HashMap<String, OwnedValue>>) -> SettingsSummary {
+fn decode_bluetooth(settings: &HashMap<String, HashMap<String, OwnedVariant>>) -> SettingsSummary {
     let b = settings.get("bluetooth").cloned().unwrap_or_default();
     let bdaddr = take_str(&b, "bdaddr").unwrap_or_default();
     let bt_type = take_str(&b, "type").unwrap_or_else(|| "panu".into());
@@ -430,7 +430,7 @@ trait IpFamily: FromStr + Sized {
 
     /// Decodes the legacy binary `dns` property. A value of the wrong type
     /// decodes as empty, like every other typed accessor here.
-    fn legacy_dns(value: &OwnedValue) -> Vec<Self>;
+    fn legacy_dns(value: &OwnedVariant) -> Vec<Self>;
 }
 
 impl IpFamily for Ipv4Addr {
@@ -439,7 +439,7 @@ impl IpFamily for Ipv4Addr {
 
     /// Each `u32`'s in-memory bytes are the octets in order (`in_addr_t`),
     /// the inverse of `ConnectionBuilder::ipv4_dns`.
-    fn legacy_dns(value: &OwnedValue) -> Vec<Self> {
+    fn legacy_dns(value: &OwnedVariant) -> Vec<Self> {
         Vec::<u32>::try_from(value.clone())
             .unwrap_or_default()
             .into_iter()
@@ -452,7 +452,7 @@ impl IpFamily for Ipv6Addr {
     const SECTION: &'static str = "ipv6";
     const MAX_PREFIX: u8 = 128;
 
-    fn legacy_dns(value: &OwnedValue) -> Vec<Self> {
+    fn legacy_dns(value: &OwnedVariant) -> Vec<Self> {
         Vec::<Vec<u8>>::try_from(value.clone())
             .unwrap_or_default()
             .into_iter()
@@ -467,7 +467,7 @@ impl IpFamily for Ipv6Addr {
 /// Absent keys take NetworkManager's documented defaults. Entries that do not
 /// parse for family `A` are dropped with a warning naming the profile at
 /// `path`, so one bad address never fails the whole profile.
-fn decode_ip<A: IpFamily>(path: &str, settings: &HashMap<String, OwnedValue>) -> IpSettings<A> {
+fn decode_ip<A: IpFamily>(path: &str, settings: &HashMap<String, OwnedVariant>) -> IpSettings<A> {
     let section = A::SECTION;
     let method = take_str(settings, "method").map_or(IpMethod::Auto, IpMethod::from);
 
@@ -534,18 +534,18 @@ fn decode_ip<A: IpFamily>(path: &str, settings: &HashMap<String, OwnedValue>) ->
 
 /// Iterates the `a{sv}` entries of an `aa{sv}` value such as `address-data`.
 fn take_dicts<'a>(
-    m: &'a HashMap<String, OwnedValue>,
+    m: &'a HashMap<String, OwnedVariant>,
     key: &str,
 ) -> impl Iterator<Item = &'a Dict<'static, 'static>> {
     m.get(key)
         .and_then(|value| match unbox_value(value) {
-            Value::Array(array) => Some(array),
+            Variant::Array(array) => Some(array),
             _ => None,
         })
         .into_iter()
         .flat_map(|array| array.iter())
         .filter_map(|entry| match unbox_value(entry) {
-            Value::Dict(dict) => Some(dict),
+            Variant::Dict(dict) => Some(dict),
             _ => None,
         })
 }
@@ -553,23 +553,23 @@ fn take_dicts<'a>(
 /// Looks up `key` in an `a{sv}` dict, unwrapping the variant box around the
 /// value. `Dict::get` ties the key borrow to the returned value, which rules
 /// out a `&str` parameter.
-fn dict_value<'d, 'v>(dict: &'d Dict<'_, 'v>, key: &str) -> Option<&'d Value<'v>> {
+fn dict_value<'d, 'v>(dict: &'d Dict<'_, 'v>, key: &str) -> Option<&'d Variant<'v>> {
     dict.iter().find_map(|(k, v)| match unbox_value(k) {
-        Value::Str(name) if name.as_str() == key => Some(unbox_value(v)),
+        Variant::Str(name) if name.as_str() == key => Some(unbox_value(v)),
         _ => None,
     })
 }
 
 fn dict_str<'d>(dict: &'d Dict<'_, '_>, key: &str) -> Option<&'d str> {
     match dict_value(dict, key)? {
-        Value::Str(value) => Some(value.as_str()),
+        Variant::Str(value) => Some(value.as_str()),
         _ => None,
     }
 }
 
 fn dict_u32(dict: &Dict<'_, '_>, key: &str) -> Option<u32> {
     match dict_value(dict, key)? {
-        Value::U32(value) => Some(*value),
+        Variant::U32(value) => Some(*value),
         _ => None,
     }
 }
@@ -636,7 +636,6 @@ async fn fetch_one_full(
 ) -> Result<Option<SavedConnection>> {
     let proxy = match NMSettingsConnectionProxy::builder(conn)
         .path(path.clone())
-        .map_err(ConnectionError::Dbus)?
         .build()
         .await
     {
@@ -686,7 +685,6 @@ async fn fetch_one_brief(
 ) -> Result<Option<SavedConnectionBrief>> {
     let proxy = match NMSettingsConnectionProxy::builder(conn)
         .path(path.clone())
-        .map_err(ConnectionError::Dbus)?
         .build()
         .await
     {
@@ -845,11 +843,10 @@ pub(crate) async fn get_saved_connection(conn: &Connection, uuid: &str) -> Resul
 pub(crate) async fn get_saved_connection_raw(
     conn: &Connection,
     uuid: &str,
-) -> Result<HashMap<String, HashMap<String, OwnedValue>>> {
+) -> Result<HashMap<String, HashMap<String, OwnedVariant>>> {
     let path = resolve_saved_path_by_uuid(conn, uuid).await?;
     let proxy = NMSettingsConnectionProxy::builder(conn)
         .path(path)
-        .map_err(ConnectionError::Dbus)?
         .build()
         .await
         .map_err(|e| ConnectionError::DbusOperation {
@@ -870,7 +867,6 @@ pub(crate) async fn delete_saved_connection(conn: &Connection, uuid: &str) -> Re
     let path = resolve_saved_path_by_uuid(conn, uuid).await?;
     let proxy = NMSettingsConnectionProxy::builder(conn)
         .path(path)
-        .map_err(ConnectionError::Dbus)?
         .build()
         .await
         .map_err(|e| ConnectionError::DbusOperation {
@@ -895,7 +891,6 @@ pub(crate) async fn update_saved_connection(
     let path = resolve_saved_path_by_uuid(conn, uuid).await?;
     let proxy = NMSettingsConnectionProxy::builder(conn)
         .path(path)
-        .map_err(ConnectionError::Dbus)?
         .build()
         .await
         .map_err(|e| ConnectionError::DbusOperation {
@@ -969,15 +964,15 @@ pub(crate) async fn reload_saved_connections(conn: &Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zvariant::Str;
+    use zbus::Str;
 
     fn path(suffix: u32) -> OwnedObjectPath {
         OwnedObjectPath::try_from(format!("/org/freedesktop/NetworkManager/Settings/{suffix}"))
             .expect("valid object path")
     }
 
-    fn owned_string_array(values: &[&str]) -> OwnedValue {
-        OwnedValue::try_from(zvariant::Value::from(
+    fn owned_string_array(values: &[&str]) -> OwnedVariant {
+        OwnedVariant::try_from(zbus::Variant::from(
             values
                 .iter()
                 .map(|value| (*value).to_string())
@@ -986,14 +981,14 @@ mod tests {
         .expect("owned string array")
     }
 
-    fn conn_section(uuid: &str, id: &str, ty: &str) -> HashMap<String, OwnedValue> {
+    fn conn_section(uuid: &str, id: &str, ty: &str) -> HashMap<String, OwnedVariant> {
         let mut m = HashMap::new();
-        m.insert("uuid".into(), OwnedValue::from(Str::from(uuid)));
-        m.insert("id".into(), OwnedValue::from(Str::from(id)));
-        m.insert("type".into(), OwnedValue::from(Str::from(ty)));
-        m.insert("autoconnect".into(), OwnedValue::from(true));
-        m.insert("autoconnect-priority".into(), OwnedValue::from(0i32));
-        m.insert("timestamp".into(), OwnedValue::from(0u64));
+        m.insert("uuid".into(), OwnedVariant::from(Str::from(uuid)));
+        m.insert("id".into(), OwnedVariant::from(Str::from(id)));
+        m.insert("type".into(), OwnedVariant::from(Str::from(ty)));
+        m.insert("autoconnect".into(), OwnedVariant::from(true));
+        m.insert("autoconnect-priority".into(), OwnedVariant::from(0i32));
+        m.insert("timestamp".into(), OwnedVariant::from(0u64));
         m
     }
 
@@ -1005,10 +1000,10 @@ mod tests {
                 HashMap::from([(
                     "connection".into(),
                     HashMap::from([
-                        ("id".into(), OwnedValue::from(Str::from("x"))),
+                        ("id".into(), OwnedVariant::from(Str::from("x"))),
                         (
                             "type".into(),
-                            OwnedValue::from(Str::from("802-11-wireless")),
+                            OwnedVariant::from(Str::from("802-11-wireless")),
                         ),
                     ]),
                 )]),
@@ -1018,10 +1013,10 @@ mod tests {
                 HashMap::from([(
                     "connection".into(),
                     HashMap::from([
-                        ("uuid".into(), OwnedValue::from(Str::from("u"))),
+                        ("uuid".into(), OwnedVariant::from(Str::from("u"))),
                         (
                             "type".into(),
-                            OwnedValue::from(Str::from("802-11-wireless")),
+                            OwnedVariant::from(Str::from("802-11-wireless")),
                         ),
                     ]),
                 )]),
@@ -1031,8 +1026,8 @@ mod tests {
                 HashMap::from([(
                     "connection".into(),
                     HashMap::from([
-                        ("uuid".into(), OwnedValue::from(Str::from("u"))),
-                        ("id".into(), OwnedValue::from(Str::from("x"))),
+                        ("uuid".into(), OwnedVariant::from(Str::from("u"))),
+                        ("id".into(), OwnedVariant::from(Str::from("x"))),
                     ]),
                 )]),
                 "missing connection.type",
@@ -1041,11 +1036,11 @@ mod tests {
                 HashMap::from([(
                     "connection".into(),
                     HashMap::from([
-                        ("uuid".into(), OwnedValue::from(42u32)),
-                        ("id".into(), OwnedValue::from(Str::from("x"))),
+                        ("uuid".into(), OwnedVariant::from(42u32)),
+                        ("id".into(), OwnedVariant::from(Str::from("x"))),
                         (
                             "type".into(),
-                            OwnedValue::from(Str::from("802-11-wireless")),
+                            OwnedVariant::from(Str::from("802-11-wireless")),
                         ),
                     ]),
                 )]),
@@ -1073,7 +1068,7 @@ mod tests {
         let mut w = HashMap::new();
         w.insert(
             "ssid".into(),
-            OwnedValue::try_from(zvariant::Array::from(vec![67u8, 111, 102, 102, 101, 101]))
+            OwnedVariant::try_from(zbus::Array::from(vec![67u8, 111, 102, 102, 101, 101]))
                 .expect("ssid array"),
         );
         settings.insert("802-11-wireless".into(), w);
@@ -1111,21 +1106,21 @@ mod tests {
         let mut w = HashMap::new();
         w.insert(
             "ssid".into(),
-            OwnedValue::try_from(zvariant::Array::from(vec![72u8, 111, 109, 101]))
+            OwnedVariant::try_from(zbus::Array::from(vec![72u8, 111, 109, 101]))
                 .expect("ssid array"),
         );
         w.insert(
             "security".into(),
-            OwnedValue::from(Str::from("802-11-wireless-security")),
+            OwnedVariant::from(Str::from("802-11-wireless-security")),
         );
         settings.insert("802-11-wireless".into(), w);
 
         let mut sec = HashMap::new();
-        sec.insert("key-mgmt".into(), OwnedValue::from(Str::from("wpa-psk")));
-        sec.insert("psk-flags".into(), OwnedValue::from(1u32));
+        sec.insert("key-mgmt".into(), OwnedVariant::from(Str::from("wpa-psk")));
+        sec.insert("psk-flags".into(), OwnedVariant::from(1u32));
         sec.insert(
             "psk".into(),
-            OwnedValue::from(Str::from("not-a-secret-in-test")),
+            OwnedVariant::from(Str::from("not-a-secret-in-test")),
         );
         settings.insert("802-11-wireless-security".into(), sec);
 
@@ -1148,20 +1143,23 @@ mod tests {
         let wireless = HashMap::from([
             (
                 "ssid".into(),
-                OwnedValue::try_from(zvariant::Value::from(b"Enterprise".to_vec()))
+                OwnedVariant::try_from(zbus::Variant::from(b"Enterprise".to_vec()))
                     .expect("owned SSID"),
             ),
-            ("mode".into(), OwnedValue::from(Str::from("infrastructure"))),
-            ("band".into(), OwnedValue::from(Str::from("a"))),
-            ("channel".into(), OwnedValue::from(36u32)),
+            (
+                "mode".into(),
+                OwnedVariant::from(Str::from("infrastructure")),
+            ),
+            ("band".into(), OwnedVariant::from(Str::from("a"))),
+            ("channel".into(), OwnedVariant::from(36u32)),
             (
                 "bssid".into(),
-                OwnedValue::from(Str::from("00:11:22:33:44:55")),
+                OwnedVariant::from(Str::from("00:11:22:33:44:55")),
             ),
-            ("hidden".into(), OwnedValue::from(true)),
+            ("hidden".into(), OwnedVariant::from(true)),
             (
                 "mac-address-randomization".into(),
-                OwnedValue::from(Str::from("always")),
+                OwnedVariant::from(Str::from("always")),
             ),
         ]);
         let eap = HashMap::from([("eap".into(), owned_string_array(&["peap", "ttls"]))]);
@@ -1213,13 +1211,13 @@ mod tests {
         let mut vpn = HashMap::new();
         vpn.insert(
             "service-type".into(),
-            OwnedValue::from(Str::from("org.freedesktop.NetworkManager.wireguard")),
+            OwnedVariant::from(Str::from("org.freedesktop.NetworkManager.wireguard")),
         );
-        vpn.insert("password-flags".into(), OwnedValue::from(0u32));
+        vpn.insert("password-flags".into(), OwnedVariant::from(0u32));
         settings.insert("vpn".into(), vpn);
 
         let mut wg = HashMap::new();
-        wg.insert("listen-port".into(), OwnedValue::from(51820u32));
+        wg.insert("listen-port".into(), OwnedVariant::from(51820u32));
         settings.insert("wireguard".into(), wg);
 
         let c = decode_saved(path(4), false, None, settings).unwrap();
@@ -1259,7 +1257,7 @@ mod tests {
         let d = build_settings_patch_delta(&patch);
         assert_eq!(
             d.get("connection").unwrap().get("autoconnect"),
-            Some(&OwnedValue::from(false))
+            Some(&OwnedVariant::from(false))
         );
     }
 
@@ -1283,14 +1281,14 @@ mod tests {
             owned_to_str(conn.get("type").unwrap()).as_deref(),
             Some("802-11-wireless")
         );
-        assert_eq!(conn.get("autoconnect"), Some(&OwnedValue::from(false)));
+        assert_eq!(conn.get("autoconnect"), Some(&OwnedVariant::from(false)));
     }
 
     #[test]
     fn patch_delta_overlay_merges_section() {
         let mut overlay = HashMap::new();
         let mut inner = HashMap::new();
-        inner.insert("foo".into(), OwnedValue::from(Str::from("bar")));
+        inner.insert("foo".into(), OwnedVariant::from(Str::from("bar")));
         overlay.insert("ipv4".into(), inner);
 
         let patch = SettingsPatch {
@@ -1348,11 +1346,11 @@ mod tests {
         let mut connection = conn_section("eth-u", "Wired", "802-3-ethernet");
         connection.insert(
             "interface-name".into(),
-            OwnedValue::from(Str::from("enp1s0")),
+            OwnedVariant::from(Str::from("enp1s0")),
         );
-        connection.insert("autoconnect".into(), OwnedValue::from(false));
-        connection.insert("autoconnect-priority".into(), OwnedValue::from(-10i32));
-        connection.insert("timestamp".into(), OwnedValue::from(1234u64));
+        connection.insert("autoconnect".into(), OwnedVariant::from(false));
+        connection.insert("autoconnect-priority".into(), OwnedVariant::from(-10i32));
+        connection.insert("timestamp".into(), OwnedVariant::from(1234u64));
         connection.insert(
             "permissions".into(),
             owned_string_array(&["user:alice:", "user:bob:"]),
@@ -1360,11 +1358,11 @@ mod tests {
         let ethernet = HashMap::from([
             (
                 "mac-address".into(),
-                OwnedValue::from(Str::from("00:11:22:33:44:55")),
+                OwnedVariant::from(Str::from("00:11:22:33:44:55")),
             ),
-            ("auto-negotiate".into(), OwnedValue::from(true)),
-            ("speed".into(), OwnedValue::from(1000u32)),
-            ("mtu".into(), OwnedValue::from(9000u32)),
+            ("auto-negotiate".into(), OwnedVariant::from(true)),
+            ("speed".into(), OwnedVariant::from(1000u32)),
+            ("mtu".into(), OwnedVariant::from(9000u32)),
         ]);
         let saved = decode_saved(
             path(8),
@@ -1398,14 +1396,14 @@ mod tests {
     #[test]
     fn decode_connection_metadata_uses_documented_defaults_for_wrong_types() {
         let mut connection = conn_section("defaults-u", "Defaults", "802-3-ethernet");
-        connection.insert("interface-name".into(), OwnedValue::from(Str::from("")));
-        connection.insert("autoconnect".into(), OwnedValue::from(1u32));
+        connection.insert("interface-name".into(), OwnedVariant::from(Str::from("")));
+        connection.insert("autoconnect".into(), OwnedVariant::from(1u32));
         connection.insert(
             "autoconnect-priority".into(),
-            OwnedValue::from(Str::from("high")),
+            OwnedVariant::from(Str::from("high")),
         );
-        connection.insert("timestamp".into(), OwnedValue::from(false));
-        connection.insert("permissions".into(), OwnedValue::from(7u32));
+        connection.insert("timestamp".into(), OwnedVariant::from(false));
+        connection.insert("permissions".into(), OwnedVariant::from(7u32));
 
         let saved = decode_saved(
             path(13),
@@ -1424,21 +1422,21 @@ mod tests {
 
     #[test]
     fn decode_generic_vpn_summary_omits_secret_values() {
-        let data = zvariant::Dict::from(HashMap::from([
+        let data = zbus::Dict::from(HashMap::from([
             ("remote".to_string(), "vpn.example.com".to_string()),
             ("cipher".to_string(), "AES-256-GCM".to_string()),
         ]));
         let vpn = HashMap::from([
             (
                 "service-type".into(),
-                OwnedValue::from(Str::from("org.freedesktop.NetworkManager.openvpn")),
+                OwnedVariant::from(Str::from("org.freedesktop.NetworkManager.openvpn")),
             ),
-            ("user-name".into(), OwnedValue::from(Str::from("alice"))),
-            ("password-flags".into(), OwnedValue::from(1u32)),
-            ("persistent".into(), OwnedValue::from(true)),
+            ("user-name".into(), OwnedVariant::from(Str::from("alice"))),
+            ("password-flags".into(), OwnedVariant::from(1u32)),
+            ("persistent".into(), OwnedVariant::from(true)),
             (
                 "data".into(),
-                OwnedValue::try_from(zvariant::Value::Dict(data)).expect("owned dict"),
+                OwnedVariant::try_from(zbus::Variant::Dict(data)).expect("owned dict"),
             ),
         ]);
         let saved = decode_saved(
@@ -1471,9 +1469,9 @@ mod tests {
     fn decode_native_wireguard_summary_checks_port_range() {
         for (port, expected) in [(51820, Some(51820)), (u32::from(u16::MAX) + 1, None)] {
             let wireguard = HashMap::from([
-                ("listen-port".into(), OwnedValue::from(port)),
-                ("mtu".into(), OwnedValue::from(1420u32)),
-                ("fwmark".into(), OwnedValue::from(7u32)),
+                ("listen-port".into(), OwnedVariant::from(port)),
+                ("mtu".into(), OwnedVariant::from(1420u32)),
+                ("fwmark".into(), OwnedVariant::from(7u32)),
             ]);
             let saved = decode_saved(
                 path(10),
@@ -1504,18 +1502,18 @@ mod tests {
 
     #[test]
     fn decode_native_wireguard_peer_array() {
-        let peer: HashMap<String, zvariant::Value<'static>> = HashMap::from([
+        let peer: HashMap<String, zbus::Variant<'static>> = HashMap::from([
             (
                 "public-key".into(),
-                zvariant::Value::Str("peer-public-key".into()),
+                zbus::Variant::Str("peer-public-key".into()),
             ),
             (
                 "endpoint".into(),
-                zvariant::Value::Str("vpn.example.com:51820".into()),
+                zbus::Variant::Str("vpn.example.com:51820".into()),
             ),
         ]);
         let peers =
-            OwnedValue::try_from(zvariant::Value::from(vec![peer])).expect("owned peer array");
+            OwnedVariant::try_from(zbus::Variant::from(vec![peer])).expect("owned peer array");
         let saved = decode_saved(
             path(12),
             false,
@@ -1552,10 +1550,10 @@ mod tests {
             &HashMap::from([(
                 "gsm".into(),
                 HashMap::from([
-                    ("apn".into(), OwnedValue::from(Str::from("internet"))),
-                    ("username".into(), OwnedValue::from(Str::from("mobile"))),
-                    ("password-flags".into(), OwnedValue::from(1u32)),
-                    ("pin-flags".into(), OwnedValue::from(2u32)),
+                    ("apn".into(), OwnedVariant::from(Str::from("internet"))),
+                    ("username".into(), OwnedVariant::from(Str::from("mobile"))),
+                    ("password-flags".into(), OwnedVariant::from(1u32)),
+                    ("pin-flags".into(), OwnedVariant::from(2u32)),
                 ]),
             )]),
         );
@@ -1574,9 +1572,9 @@ mod tests {
             &HashMap::from([(
                 "cdma".into(),
                 HashMap::from([
-                    ("number".into(), OwnedValue::from(Str::from("#777"))),
-                    ("username".into(), OwnedValue::from(Str::from("carrier"))),
-                    ("password-flags".into(), OwnedValue::from(1u32)),
+                    ("number".into(), OwnedVariant::from(Str::from("#777"))),
+                    ("username".into(), OwnedVariant::from(Str::from("carrier"))),
+                    ("password-flags".into(), OwnedVariant::from(1u32)),
                 ]),
             )]),
         );
@@ -1595,7 +1593,7 @@ mod tests {
                 "bluetooth".into(),
                 HashMap::from([(
                     "bdaddr".into(),
-                    OwnedValue::from(Str::from("00:11:22:33:44:55")),
+                    OwnedVariant::from(Str::from("00:11:22:33:44:55")),
                 )]),
             )]),
         );
@@ -1646,8 +1644,8 @@ mod tests {
         let overlay = HashMap::from([(
             "connection".into(),
             HashMap::from([
-                ("autoconnect".into(), OwnedValue::from(true)),
-                ("id".into(), OwnedValue::from(Str::from("Overlay Name"))),
+                ("autoconnect".into(), OwnedVariant::from(true)),
+                ("id".into(), OwnedVariant::from(Str::from("Overlay Name"))),
             ]),
         )]);
         let patch = SettingsPatch {
@@ -1677,7 +1675,7 @@ mod tests {
         )]);
         let delta = HashMap::from([(
             "ipv4".into(),
-            HashMap::from([("method".into(), OwnedValue::from(Str::from("manual")))]),
+            HashMap::from([("method".into(), OwnedVariant::from(Str::from("manual")))]),
         )]);
 
         merge_settings_patch_delta(&mut settings, delta);
@@ -1694,28 +1692,30 @@ mod tests {
 
     /// Builds an `a{sv}` entry as it arrives from D-Bus: string keys with
     /// variant-boxed values.
-    fn sv_dict(entries: Vec<(&str, Value<'static>)>) -> Value<'static> {
-        let mut dict = Dict::new(&zvariant::Signature::Str, &zvariant::Signature::Variant);
+    fn sv_dict(entries: Vec<(&str, Variant<'static>)>) -> Variant<'static> {
+        let mut dict = Dict::new(&zbus::Signature::Str, &zbus::Signature::Variant);
         for (key, value) in entries {
-            dict.append(Value::from(key.to_string()), Value::Value(Box::new(value)))
-                .expect("string key with variant value");
+            dict.append(
+                Variant::from(key.to_string()),
+                Variant::Variant(Box::new(value)),
+            )
+            .expect("string key with variant value");
         }
-        Value::Dict(dict)
+        Variant::Dict(dict)
     }
 
     /// Builds an `aa{sv}` array such as `address-data` or `route-data`.
-    fn dict_array(entries: Vec<Value<'static>>) -> OwnedValue {
-        let element =
-            zvariant::Signature::dict(zvariant::Signature::Str, zvariant::Signature::Variant);
-        let mut array = zvariant::Array::new(&element);
+    fn dict_array(entries: Vec<Variant<'static>>) -> OwnedVariant {
+        let element = zbus::Signature::dict(zbus::Signature::Str, zbus::Signature::Variant);
+        let mut array = zbus::Array::new(&element);
         for entry in entries {
             array.append(entry).expect("dict entry");
         }
-        OwnedValue::try_from(Value::Array(array)).expect("owned dict array")
+        OwnedVariant::try_from(Variant::Array(array)).expect("owned dict array")
     }
 
-    fn owned_str(value: &str) -> OwnedValue {
-        OwnedValue::from(Str::from(value))
+    fn owned_str(value: &str) -> OwnedVariant {
+        OwnedVariant::from(Str::from(value))
     }
 
     fn v4(address: &str) -> Ipv4Addr {
@@ -1727,8 +1727,8 @@ mod tests {
     }
 
     fn decode_with_ip(
-        ipv4: Option<HashMap<String, OwnedValue>>,
-        ipv6: Option<HashMap<String, OwnedValue>>,
+        ipv4: Option<HashMap<String, OwnedVariant>>,
+        ipv6: Option<HashMap<String, OwnedVariant>>,
     ) -> SavedConnection {
         let mut settings = HashMap::from([(
             "connection".to_string(),
@@ -1751,12 +1751,12 @@ mod tests {
                 "address-data".to_string(),
                 dict_array(vec![
                     sv_dict(vec![
-                        ("address", Value::from("10.0.0.5")),
-                        ("prefix", Value::from(24u32)),
+                        ("address", Variant::from("10.0.0.5")),
+                        ("prefix", Variant::from(24u32)),
                     ]),
                     sv_dict(vec![
-                        ("address", Value::from("192.168.1.2")),
-                        ("prefix", Value::from(16u32)),
+                        ("address", Variant::from("192.168.1.2")),
+                        ("prefix", Variant::from(16u32)),
                     ]),
                 ]),
             ),
@@ -1773,19 +1773,19 @@ mod tests {
                 "route-data".to_string(),
                 dict_array(vec![
                     sv_dict(vec![
-                        ("dest", Value::from("10.10.0.0")),
-                        ("prefix", Value::from(16u32)),
-                        ("next-hop", Value::from("10.0.0.254")),
-                        ("metric", Value::from(100u32)),
+                        ("dest", Variant::from("10.10.0.0")),
+                        ("prefix", Variant::from(16u32)),
+                        ("next-hop", Variant::from("10.0.0.254")),
+                        ("metric", Variant::from(100u32)),
                     ]),
                     sv_dict(vec![
-                        ("dest", Value::from("10.20.0.0")),
-                        ("prefix", Value::from(24u32)),
+                        ("dest", Variant::from("10.20.0.0")),
+                        ("prefix", Variant::from(24u32)),
                     ]),
                 ]),
             ),
-            ("never-default".to_string(), OwnedValue::from(true)),
-            ("ignore-auto-dns".to_string(), OwnedValue::from(true)),
+            ("never-default".to_string(), OwnedVariant::from(true)),
+            ("ignore-auto-dns".to_string(), OwnedVariant::from(true)),
         ]);
 
         let saved = decode_with_ip(Some(ipv4), None);
@@ -1826,8 +1826,8 @@ mod tests {
             (
                 "address-data".to_string(),
                 dict_array(vec![sv_dict(vec![
-                    ("address", Value::from("fd00::5")),
-                    ("prefix", Value::from(64u32)),
+                    ("address", Variant::from("fd00::5")),
+                    ("prefix", Variant::from(64u32)),
                 ])]),
             ),
             ("gateway".to_string(), owned_str("fd00::1")),
@@ -1841,9 +1841,9 @@ mod tests {
             (
                 "route-data".to_string(),
                 dict_array(vec![sv_dict(vec![
-                    ("dest", Value::from("fd01::")),
-                    ("prefix", Value::from(48u32)),
-                    ("next-hop", Value::from("fd00::fe")),
+                    ("dest", Variant::from("fd01::")),
+                    ("prefix", Variant::from(48u32)),
+                    ("next-hop", Variant::from("fd00::fe")),
                 ])]),
             ),
         ]);
@@ -1900,24 +1900,24 @@ mod tests {
                 dict_array(vec![
                     // Not an address at all.
                     sv_dict(vec![
-                        ("address", Value::from("300.1.1.1")),
-                        ("prefix", Value::from(24u32)),
+                        ("address", Variant::from("300.1.1.1")),
+                        ("prefix", Variant::from(24u32)),
                     ]),
                     // Wrong family for an ipv4 section.
                     sv_dict(vec![
-                        ("address", Value::from("fd00::1")),
-                        ("prefix", Value::from(64u32)),
+                        ("address", Variant::from("fd00::1")),
+                        ("prefix", Variant::from(64u32)),
                     ]),
                     // Missing prefix.
-                    sv_dict(vec![("address", Value::from("10.0.0.7"))]),
+                    sv_dict(vec![("address", Variant::from("10.0.0.7"))]),
                     // Prefix out of range.
                     sv_dict(vec![
-                        ("address", Value::from("10.0.0.8")),
-                        ("prefix", Value::from(33u32)),
+                        ("address", Variant::from("10.0.0.8")),
+                        ("prefix", Variant::from(33u32)),
                     ]),
                     sv_dict(vec![
-                        ("address", Value::from("10.0.0.9")),
-                        ("prefix", Value::from(24u32)),
+                        ("address", Variant::from("10.0.0.9")),
+                        ("prefix", Variant::from(24u32)),
                     ]),
                 ]),
             ),
@@ -1931,16 +1931,16 @@ mod tests {
                 dict_array(vec![
                     // Bad next hop drops the whole route.
                     sv_dict(vec![
-                        ("dest", Value::from("10.10.0.0")),
-                        ("prefix", Value::from(16u32)),
-                        ("next-hop", Value::from("bogus")),
+                        ("dest", Variant::from("10.10.0.0")),
+                        ("prefix", Variant::from(16u32)),
+                        ("next-hop", Variant::from("bogus")),
                     ]),
                     // Missing dest.
-                    sv_dict(vec![("prefix", Value::from(16u32))]),
+                    sv_dict(vec![("prefix", Variant::from(16u32))]),
                     sv_dict(vec![
-                        ("dest", Value::from("10.30.0.0")),
-                        ("prefix", Value::from(16u32)),
-                        ("metric", Value::from(50u32)),
+                        ("dest", Variant::from("10.30.0.0")),
+                        ("prefix", Variant::from(16u32)),
+                        ("metric", Variant::from(50u32)),
                     ]),
                 ]),
             ),
@@ -1977,11 +1977,11 @@ mod tests {
 
         let ipv4 = HashMap::from([(
             "dns".to_string(),
-            OwnedValue::try_from(Value::from(legacy_v4)).expect("owned au"),
+            OwnedVariant::try_from(Variant::from(legacy_v4)).expect("owned au"),
         )]);
         let ipv6 = HashMap::from([(
             "dns".to_string(),
-            OwnedValue::try_from(Value::from(legacy_v6)).expect("owned aay"),
+            OwnedVariant::try_from(Variant::from(legacy_v6)).expect("owned aay"),
         )]);
 
         let saved = decode_with_ip(Some(ipv4), Some(ipv6));
@@ -1994,7 +1994,7 @@ mod tests {
         let ipv4 = HashMap::from([
             (
                 "dns".to_string(),
-                OwnedValue::try_from(Value::from(vec![u32::from_ne_bytes([10, 2, 0, 1])]))
+                OwnedVariant::try_from(Variant::from(vec![u32::from_ne_bytes([10, 2, 0, 1])]))
                     .expect("owned au"),
             ),
             ("dns-data".to_string(), owned_string_array(&["10.2.0.2"])),
@@ -2028,10 +2028,10 @@ mod tests {
 
         let mut conn = conn_section("prop-u", "Props", "802-3-ethernet");
         conn.insert("zone".into(), owned_str("home"));
-        conn.insert("autoconnect-retries".into(), OwnedValue::from(4i32));
+        conn.insert("autoconnect-retries".into(), OwnedVariant::from(4i32));
         let ethernet = HashMap::from([
-            ("mtu".to_string(), OwnedValue::from(1400u32)),
-            ("auto-negotiate".to_string(), OwnedValue::from(true)),
+            ("mtu".to_string(), OwnedVariant::from(1400u32)),
+            ("auto-negotiate".to_string(), OwnedVariant::from(true)),
         ]);
         let saved = decode_saved(
             path(30),

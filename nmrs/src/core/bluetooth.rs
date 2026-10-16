@@ -8,8 +8,8 @@
 
 use log::{debug, trace};
 use zbus::Connection;
+use zbus::OwnedObjectPath;
 use zbus::fdo::{ManagedObjects, ObjectManagerProxy};
-use zvariant::OwnedObjectPath;
 // use futures_timer::Delay;
 
 use crate::ConnectionError;
@@ -49,9 +49,7 @@ fn find_bluez_device_path(objects: &ManagedObjects, bdaddr: &str) -> Option<Owne
 async fn bluez_managed_objects(conn: &Connection) -> Result<ManagedObjects> {
     let manager = ObjectManagerProxy::builder(conn)
         .destination("org.bluez")
-        .map_err(|error| ConnectionError::BluezUnavailable(error.to_string()))?
         .path("/")
-        .map_err(|error| ConnectionError::BluezUnavailable(error.to_string()))?
         .build()
         .await
         .map_err(|error| {
@@ -109,7 +107,7 @@ pub(crate) async fn populate_bluez_info(
     };
 
     match BluezDeviceExtProxy::builder(conn)
-        .path(bluez_path)?
+        .path(bluez_path)
         .build()
         .await
     {
@@ -130,7 +128,7 @@ pub(crate) async fn find_bluetooth_device(
 
     for dp in devices {
         let dev = NMDeviceProxy::builder(conn)
-            .path(dp.clone())?
+            .path(dp.clone())
             .build()
             .await?;
         if dev.device_type().await? == device_type::BLUETOOTH {
@@ -261,7 +259,7 @@ pub(crate) async fn disconnect_bluetooth_and_wait(
     timeout_config: Option<TimeoutConfig>,
 ) -> Result<()> {
     let dev = NMDeviceProxy::builder(conn)
-        .path(dev_path.clone())?
+        .path(dev_path.clone())
         .build()
         .await?;
 
@@ -273,9 +271,9 @@ pub(crate) async fn disconnect_bluetooth_and_wait(
     }
 
     let raw: zbus::proxy::Proxy = zbus::proxy::Builder::new(conn)
-        .destination("org.freedesktop.NetworkManager")?
-        .path(dev_path.clone())?
-        .interface("org.freedesktop.NetworkManager.Device")?
+        .destination("org.freedesktop.NetworkManager")
+        .path(dev_path.clone())
+        .interface("org.freedesktop.NetworkManager.Device")
         .build()
         .await?;
 
@@ -294,10 +292,10 @@ pub(crate) async fn disconnect_bluetooth_and_wait(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
 
     use zbus::names::OwnedInterfaceName;
-    use zvariant::{OwnedValue, Str};
+    use zbus::{OwnedVariant, Str};
 
     use super::*;
 
@@ -306,11 +304,13 @@ mod tests {
         address: &str,
     ) -> (
         OwnedObjectPath,
-        HashMap<OwnedInterfaceName, HashMap<String, OwnedValue>>,
+        BTreeMap<OwnedInterfaceName, HashMap<String, OwnedVariant>>,
     ) {
-        let properties =
-            HashMap::from([("Address".to_string(), OwnedValue::from(Str::from(address)))]);
-        let interfaces = HashMap::from([(
+        let properties = HashMap::from([(
+            "Address".to_string(),
+            OwnedVariant::from(Str::from(address)),
+        )]);
+        let interfaces = BTreeMap::from([(
             OwnedInterfaceName::try_from(BLUEZ_DEVICE_INTERFACE).expect("valid interface name"),
             properties,
         )]);

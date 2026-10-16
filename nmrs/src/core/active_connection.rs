@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use log::debug;
 use zbus::Connection;
 use zbus::proxy::CacheProperties;
-use zvariant::{OwnedObjectPath, OwnedValue, Str};
+use zbus::{OwnedObjectPath, OwnedVariant, Str};
 
 use crate::api::models::{
     ActiveConnection, ActiveConnectionState, ActiveOtherConnection, ActiveVpnConnection,
@@ -71,7 +71,7 @@ async fn active_connection_for_path(
     active_path: &OwnedObjectPath,
 ) -> Result<ActiveConnection> {
     let active = NMActiveConnectionProxy::builder(conn)
-        .path(active_path.clone())?
+        .path(active_path.clone())
         .build()
         .await?;
     let base = active_connection_base(conn, active_path, &active).await?;
@@ -191,7 +191,7 @@ struct DeviceSummary {
 
 async fn device_summary(conn: &Connection, path: OwnedObjectPath) -> Result<DeviceSummary> {
     let device = NMDeviceProxy::builder(conn)
-        .path(path.clone())?
+        .path(path.clone())
         .build()
         .await?;
 
@@ -210,7 +210,7 @@ async fn wired_connection(
 ) -> ActiveWiredConnection {
     let speed_mbps = match device.path {
         Some(path) => async {
-            let wired = NMWiredProxy::builder(conn).path(path)?.build().await?;
+            let wired = NMWiredProxy::builder(conn).path(path).build().await?;
             wired.speed().await
         }
         .await
@@ -292,7 +292,6 @@ async fn active_access_point_path(
     let device_path = device_path?;
     let wifi = NMWirelessProxy::builder(conn)
         .path(device_path.clone())
-        .ok()?
         .build()
         .await
         .ok()?;
@@ -314,7 +313,6 @@ async fn active_access_point_summary(
 ) -> Option<AccessPointSummary> {
     let ap = NMAccessPointProxy::builder(conn)
         .path(path)
-        .ok()?
         .build()
         .await
         .ok()?;
@@ -336,7 +334,6 @@ async fn connection_type_for_settings_path(
 ) -> Option<String> {
     let settings = NMSettingsConnectionProxy::builder(conn)
         .path(path)
-        .ok()?
         .build()
         .await
         .ok()?
@@ -348,7 +345,7 @@ async fn connection_type_for_settings_path(
 }
 
 fn connection_type_from_settings(
-    settings: &HashMap<String, HashMap<String, OwnedValue>>,
+    settings: &HashMap<String, HashMap<String, OwnedVariant>>,
 ) -> Option<String> {
     settings
         .get("connection")?
@@ -356,7 +353,7 @@ fn connection_type_from_settings(
         .and_then(owned_to_string)
 }
 
-fn owned_to_string(value: &OwnedValue) -> Option<String> {
+fn owned_to_string(value: &OwnedVariant) -> Option<String> {
     Str::try_from(value.clone())
         .ok()
         .map(|value| value.to_string())
@@ -445,7 +442,7 @@ mod tests {
     #[test]
     fn extracts_connection_type_from_settings() {
         let mut connection = HashMap::new();
-        connection.insert("type".to_string(), OwnedValue::from(Str::from("vpn")));
+        connection.insert("type".to_string(), OwnedVariant::from(Str::from("vpn")));
         let mut settings = HashMap::new();
         settings.insert("connection".to_string(), connection);
 

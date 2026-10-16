@@ -66,7 +66,7 @@ nm.add_and_activate_connection(settings, Some("wlan0"), None).await?;
 ## Advanced D-Bus Access
 
 ```rust
-use nmrs::raw::{zbus, zvariant};
+use nmrs::raw::zbus;
 
 let conn = nm.dbus_connection(); // &zbus::Connection
 ```

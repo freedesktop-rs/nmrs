@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use tokio::sync::{Mutex, oneshot, watch};
 use zbus::Connection;
-use zvariant::OwnedValue;
+use zbus::OwnedVariant;
 
 use crate::api::models::access_point::AccessPoint;
 use crate::api::models::snapshot::{
@@ -303,8 +303,8 @@ impl NetworkManager {
     /// ```
     pub async fn add_connection(
         &self,
-        settings: HashMap<&str, HashMap<&str, zvariant::Value<'_>>>,
-    ) -> Result<zvariant::OwnedObjectPath> {
+        settings: HashMap<&str, HashMap<&str, zbus::Variant<'_>>>,
+    ) -> Result<zbus::OwnedObjectPath> {
         add_connection_profile(&self.conn, settings).await
     }
 
@@ -348,10 +348,10 @@ impl NetworkManager {
     /// ```
     pub async fn add_and_activate_connection(
         &self,
-        settings: HashMap<&str, HashMap<&str, zvariant::Value<'_>>>,
+        settings: HashMap<&str, HashMap<&str, zbus::Variant<'_>>>,
         interface: Option<&str>,
         specific_object: Option<&str>,
-    ) -> Result<(zvariant::OwnedObjectPath, zvariant::OwnedObjectPath)> {
+    ) -> Result<(zbus::OwnedObjectPath, zbus::OwnedObjectPath)> {
         let _guard = self.connect_guard.lock().await;
         add_and_activate_profile(
             &self.conn,
@@ -1508,7 +1508,7 @@ impl NetworkManager {
     pub async fn get_saved_connection_raw(
         &self,
         uuid: &str,
-    ) -> Result<HashMap<String, HashMap<String, OwnedValue>>> {
+    ) -> Result<HashMap<String, HashMap<String, OwnedVariant>>> {
         saved_profiles::get_saved_connection_raw(&self.conn, uuid).await
     }
 
@@ -1567,7 +1567,7 @@ impl NetworkManager {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn get_device_by_interface(&self, name: &str) -> Result<zvariant::OwnedObjectPath> {
+    pub async fn get_device_by_interface(&self, name: &str) -> Result<zbus::OwnedObjectPath> {
         get_device_by_interface(&self.conn, name).await
     }
 
@@ -1597,7 +1597,7 @@ impl NetworkManager {
     pub async fn get_saved_connection_path(
         &self,
         ssid: &str,
-    ) -> Result<Option<zvariant::OwnedObjectPath>> {
+    ) -> Result<Option<zbus::OwnedObjectPath>> {
         get_saved_connection_path(&self.conn, ssid).await
     }
 

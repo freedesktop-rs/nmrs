@@ -40,7 +40,7 @@ This creates a persistent D-Bus connection that's shared across all operations.
 
 For builder workflows and other low-level D-Bus calls, nmrs exposes the same
 connection through [`NetworkManager::dbus_connection()`](../api/network-manager.md#advanced-d-bus-access).
-Pair it with [`nmrs::raw`](../api/raw.md) (`zbus` / `zvariant` re-exports) when
+Pair it with [`nmrs::raw`](../api/raw.md) (`zbus` re-export) when
 you need D-Bus methods that nmrs does not wrap yet.
 
 For builder output, prefer the high-level
@@ -166,7 +166,7 @@ busctl list | grep NetworkManager
 
 ## Next Steps
 
-- [Raw Module](../api/raw.md) – `zbus` / `zvariant` re-exports for advanced callers
+- [Raw Module](../api/raw.md) – `zbus` re-export for advanced callers
 - [Builders Module](../api/builders.md) – construct and submit custom settings dictionaries
 - [Logging and Debugging](./logging.md) – enable nmrs debug logging
 - [Architecture](../development/architecture.md) – internal code structure

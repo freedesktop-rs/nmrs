@@ -20,7 +20,7 @@ use zbus::proxy;
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let conn = Connection::system().await?;
 /// let proxy = NMBluetoothProxy::builder(&conn)
-///     .path("/org/freedesktop/NetworkManager/Devices/1")?
+///     .path("/org/freedesktop/NetworkManager/Devices/1")
 ///     .build()
 ///     .await?;
 ///
@@ -67,7 +67,7 @@ pub trait NMBluetooth {
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let conn = Connection::system().await?;
 /// let proxy = BluezDeviceExtProxy::builder(&conn)
-///     .path("/org/bluez/hci0/dev_00_1A_7D_DA_71_13")?
+///     .path("/org/bluez/hci0/dev_00_1A_7D_DA_71_13")
 ///     .build()
 ///     .await?;
 ///

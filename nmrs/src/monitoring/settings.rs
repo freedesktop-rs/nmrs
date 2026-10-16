@@ -6,7 +6,7 @@ use futures::channel::{mpsc, oneshot};
 use futures::stream::{Stream, StreamExt};
 use log::{trace, warn};
 use zbus::Connection;
-use zvariant::OwnedObjectPath;
+use zbus::OwnedObjectPath;
 
 use crate::Result;
 use crate::api::models::{ConnectionError, SettingsChange, SettingsEventStream};
@@ -131,7 +131,7 @@ async fn connection_settings_streams(
     path: OwnedObjectPath,
 ) -> Result<Vec<SettingsSignalStream>> {
     let connection = NMSettingsConnectionProxy::builder(conn)
-        .path(path.clone())?
+        .path(path.clone())
         .build()
         .await?;
 

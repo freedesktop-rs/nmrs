@@ -1,7 +1,7 @@
 //! Global DNS override exposed as NetworkManager.GlobalDnsConfiguration.
 
 use std::collections::HashMap;
-use zvariant::{OwnedValue, Value};
+use zbus::{OwnedVariant, Variant};
 
 use super::error::ConnectionError;
 
@@ -148,38 +148,39 @@ impl GlobalDnsConfiguration {
             .unwrap_or(&[])
     }
 
-    pub(crate) fn to_dbus(&self) -> HashMap<&'static str, Value<'static>> {
+    pub(crate) fn to_dbus(&self) -> HashMap<&'static str, Variant<'static>> {
         if self.is_empty() {
             return HashMap::new();
         }
 
         let mut map = HashMap::new();
         if !self.searches.is_empty() {
-            map.insert("searches", Value::from(self.searches.clone()));
+            map.insert("searches", Variant::from(self.searches.clone()));
         }
         if !self.options.is_empty() {
-            map.insert("options", Value::from(self.options.clone()));
+            map.insert("options", Variant::from(self.options.clone()));
         }
         if !self.domains.is_empty() {
             let mut domains = HashMap::new();
             for (name, domain) in &self.domains {
                 domains.insert(name.clone(), domain_to_dbus(domain));
             }
-            map.insert("domains", Value::from(domains));
+            map.insert("domains", Variant::from(domains));
         }
         map
     }
 
-    pub(crate) fn from_dbus(map: &HashMap<String, OwnedValue>) -> Self {
+    pub(crate) fn from_dbus(map: &HashMap<String, OwnedVariant>) -> Self {
         let searches = take_strings(map, "searches");
         let options = take_strings(map, "options");
         let mut domains = HashMap::new();
 
         if let Some(value) = map.get("domains")
-            && let Ok(raw_domains) = HashMap::<String, OwnedValue>::try_from(value.clone())
+            && let Ok(raw_domains) = HashMap::<String, OwnedVariant>::try_from(value.clone())
         {
             for (name, raw_domain) in raw_domains {
-                let inner = HashMap::<String, OwnedValue>::try_from(raw_domain).unwrap_or_default();
+                let inner =
+                    HashMap::<String, OwnedVariant>::try_from(raw_domain).unwrap_or_default();
                 domains.insert(
                     name,
                     GlobalDnsDomain {
@@ -198,18 +199,18 @@ impl GlobalDnsConfiguration {
     }
 }
 
-fn domain_to_dbus(domain: &GlobalDnsDomain) -> Value<'static> {
-    let mut inner: HashMap<&str, Value<'static>> = HashMap::new();
+fn domain_to_dbus(domain: &GlobalDnsDomain) -> Variant<'static> {
+    let mut inner: HashMap<&str, Variant<'static>> = HashMap::new();
     if !domain.servers.is_empty() {
-        inner.insert("servers", Value::from(domain.servers.clone()));
+        inner.insert("servers", Variant::from(domain.servers.clone()));
     }
     if !domain.options.is_empty() {
-        inner.insert("options", Value::from(domain.options.clone()));
+        inner.insert("options", Variant::from(domain.options.clone()));
     }
-    Value::from(inner)
+    Variant::from(inner)
 }
 
-fn take_strings(map: &HashMap<String, OwnedValue>, key: &str) -> Vec<String> {
+fn take_strings(map: &HashMap<String, OwnedVariant>, key: &str) -> Vec<String> {
     map.get(key)
         .and_then(|value| Vec::<String>::try_from(value.clone()).ok())
         .unwrap_or_default()
@@ -218,7 +219,7 @@ fn take_strings(map: &HashMap<String, OwnedValue>, key: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zvariant::Str;
+    use zbus::Str;
 
     #[test]
     fn empty_encodes_as_empty_dict() {
@@ -242,9 +243,14 @@ mod tests {
         assert!(!encoded.contains_key("searches"));
         assert!(encoded.contains_key("domains"));
 
-        let owned: HashMap<String, OwnedValue> = encoded
+        let owned: HashMap<String, OwnedVariant> = encoded
             .into_iter()
-            .map(|(k, v)| (k.to_string(), OwnedValue::try_from(v).expect("owned value")))
+            .map(|(k, v)| {
+                (
+                    k.to_string(),
+                    OwnedVariant::try_from(v).expect("owned value"),
+                )
+            })
             .collect();
         let decoded = GlobalDnsConfiguration::from_dbus(&owned);
 
@@ -264,10 +270,15 @@ mod tests {
                 GlobalDnsDomain::new().with_servers(vec!["10.0.0.1".into()]),
             );
 
-        let owned: HashMap<String, OwnedValue> = original
+        let owned: HashMap<String, OwnedVariant> = original
             .to_dbus()
             .into_iter()
-            .map(|(k, v)| (k.to_string(), OwnedValue::try_from(v).expect("owned value")))
+            .map(|(k, v)| {
+                (
+                    k.to_string(),
+                    OwnedVariant::try_from(v).expect("owned value"),
+                )
+            })
             .collect();
         let decoded = GlobalDnsConfiguration::from_dbus(&owned);
 
@@ -278,7 +289,7 @@ mod tests {
     fn missing_keys_decode_as_empty() {
         let decoded = GlobalDnsConfiguration::from_dbus(&HashMap::from([(
             "unrelated".into(),
-            OwnedValue::from(Str::from("x")),
+            OwnedVariant::from(Str::from("x")),
         )]));
         assert!(decoded.is_empty());
     }

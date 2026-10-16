@@ -43,7 +43,6 @@ pub(crate) async fn show_details(conn: &Connection, net: &Network) -> Result<Net
             let dev = match async {
                 NMDeviceProxy::builder(conn)
                     .path(dev_path.clone())
-                    .ok()?
                     .build()
                     .await
                     .ok()
@@ -188,10 +187,7 @@ pub(crate) async fn current_ssid(conn: &Connection) -> Option<String> {
     let devices = try_log!(nm.get_devices().await, "Failed to get devices");
 
     for dp in devices {
-        let dev_builder = try_log!(
-            NMDeviceProxy::builder(conn).path(dp.clone()),
-            "Failed to create device proxy builder"
-        );
+        let dev_builder = NMDeviceProxy::builder(conn).path(dp.clone());
         let dev = try_log!(dev_builder.build().await, "Failed to build device proxy");
 
         let dev_type = try_log!(dev.device_type().await, "Failed to get device type");
@@ -199,19 +195,13 @@ pub(crate) async fn current_ssid(conn: &Connection) -> Option<String> {
             continue;
         }
 
-        let wifi_builder = try_log!(
-            NMWirelessProxy::builder(conn).path(dp.clone()),
-            "Failed to create wireless proxy builder"
-        );
+        let wifi_builder = NMWirelessProxy::builder(conn).path(dp.clone());
         let wifi = try_log!(wifi_builder.build().await, "Failed to build wireless proxy");
 
         if let Ok(active_ap) = wifi.active_access_point().await
             && active_ap.as_str() != "/"
         {
-            let ap_builder = try_log!(
-                NMAccessPointProxy::builder(conn).path(active_ap),
-                "Failed to create access point proxy builder"
-            );
+            let ap_builder = NMAccessPointProxy::builder(conn).path(active_ap);
             let ap = try_log!(
                 ap_builder.build().await,
                 "Failed to build access point proxy"

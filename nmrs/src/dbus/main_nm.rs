@@ -1,8 +1,8 @@
 //! Main NetworkManager proxy.
 
 use std::collections::HashMap;
+use zbus::OwnedObjectPath;
 use zbus::proxy;
-use zvariant::OwnedObjectPath;
 
 /// Proxy for the main NetworkManager interface.
 ///
@@ -38,7 +38,7 @@ pub trait NM {
     /// Returns paths to both the new connection settings and active connection.
     fn add_and_activate_connection(
         &self,
-        connection: HashMap<&str, HashMap<&str, zvariant::Value<'_>>>,
+        connection: HashMap<&str, HashMap<&str, zbus::Variant<'_>>>,
         device: OwnedObjectPath,
         specific_object: OwnedObjectPath,
     ) -> zbus::Result<(OwnedObjectPath, OwnedObjectPath)>;
@@ -101,12 +101,12 @@ pub trait NM {
     #[zbus(property)]
     fn global_dns_configuration(
         &self,
-    ) -> zbus::Result<std::collections::HashMap<String, zvariant::OwnedValue>>;
+    ) -> zbus::Result<std::collections::HashMap<String, zbus::OwnedVariant>>;
 
     /// Write the global DNS override.
     #[zbus(property)]
     fn set_global_dns_configuration(
         &self,
-        value: std::collections::HashMap<&str, zvariant::Value<'_>>,
+        value: std::collections::HashMap<&str, zbus::Variant<'_>>,
     ) -> zbus::Result<()>;
 }

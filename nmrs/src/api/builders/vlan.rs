@@ -4,7 +4,7 @@
 //! for NetworkManager.
 
 use std::collections::HashMap;
-use zvariant::Value;
+use zbus::Variant;
 
 use crate::ConnectionOptions;
 use crate::api::models::{ConnectionError, VlanConfig};
@@ -39,10 +39,10 @@ use crate::api::models::{ConnectionError, VlanConfig};
 pub fn build_vlan_connection(
     config: &VlanConfig,
     opts: &ConnectionOptions,
-) -> Result<HashMap<&'static str, HashMap<&'static str, Value<'static>>>, ConnectionError> {
+) -> Result<HashMap<&'static str, HashMap<&'static str, Variant<'static>>>, ConnectionError> {
     config.validate()?;
 
-    let mut conn: HashMap<&'static str, HashMap<&'static str, Value<'static>>> = HashMap::new();
+    let mut conn: HashMap<&'static str, HashMap<&'static str, Variant<'static>>> = HashMap::new();
 
     // Connection section
     conn.insert("connection", connection_section(config, opts));
@@ -52,18 +52,18 @@ pub fn build_vlan_connection(
 
     if let Some(mtu) = config.mtu {
         let mut wired = HashMap::new();
-        wired.insert("mtu", Value::from(mtu));
+        wired.insert("mtu", Variant::from(mtu));
         conn.insert("802-3-ethernet", wired);
     }
 
     // IPv4 section (auto by default)
     let mut ipv4 = HashMap::new();
-    ipv4.insert("method", Value::from("auto"));
+    ipv4.insert("method", Variant::from("auto"));
     conn.insert("ipv4", ipv4);
 
     // IPv6 section (auto by default)
     let mut ipv6 = HashMap::new();
-    ipv6.insert("method", Value::from("auto"));
+    ipv6.insert("method", Variant::from("auto"));
     conn.insert("ipv6", ipv6);
 
     Ok(conn)
@@ -72,45 +72,45 @@ pub fn build_vlan_connection(
 fn connection_section(
     config: &VlanConfig,
     opts: &ConnectionOptions,
-) -> HashMap<&'static str, Value<'static>> {
+) -> HashMap<&'static str, Variant<'static>> {
     let mut s = HashMap::new();
 
-    s.insert("type", Value::from("vlan"));
-    s.insert("id", Value::from(config.effective_connection_name()));
-    s.insert("uuid", Value::from(uuid::Uuid::new_v4().to_string()));
-    s.insert("autoconnect", Value::from(opts.autoconnect));
+    s.insert("type", Variant::from("vlan"));
+    s.insert("id", Variant::from(config.effective_connection_name()));
+    s.insert("uuid", Variant::from(uuid::Uuid::new_v4().to_string()));
+    s.insert("autoconnect", Variant::from(opts.autoconnect));
     s.insert(
         "interface-name",
-        Value::from(config.effective_interface_name()),
+        Variant::from(config.effective_interface_name()),
     );
 
     if let Some(p) = opts.autoconnect_priority {
-        s.insert("autoconnect-priority", Value::from(p));
+        s.insert("autoconnect-priority", Variant::from(p));
     }
 
     if let Some(r) = opts.autoconnect_retries {
-        s.insert("autoconnect-retries", Value::from(r));
+        s.insert("autoconnect-retries", Variant::from(r));
     }
 
     s
 }
 
-fn vlan_section(config: &VlanConfig) -> HashMap<&'static str, Value<'static>> {
+fn vlan_section(config: &VlanConfig) -> HashMap<&'static str, Variant<'static>> {
     let mut s = HashMap::new();
 
-    s.insert("parent", Value::from(config.parent.clone()));
-    s.insert("id", Value::from(u32::from(config.id)));
+    s.insert("parent", Variant::from(config.parent.clone()));
+    s.insert("id", Variant::from(u32::from(config.id)));
 
     if let Some(flags) = config.flags {
-        s.insert("flags", Value::from(flags));
+        s.insert("flags", Variant::from(flags));
     }
 
     if let Some(ref map) = config.ingress_priority_map {
-        s.insert("ingress-priority-map", Value::from(map.clone()));
+        s.insert("ingress-priority-map", Variant::from(map.clone()));
     }
 
     if let Some(ref map) = config.egress_priority_map {
-        s.insert("egress-priority-map", Value::from(map.clone()));
+        s.insert("egress-priority-map", Variant::from(map.clone()));
     }
 
     s
@@ -135,25 +135,28 @@ mod tests {
 
         let conn = build_vlan_connection(&config, &opts).unwrap();
         let connection = conn.get("connection").unwrap();
-        assert_eq!(connection.get("type"), Some(&Value::from("vlan")));
-        assert_eq!(connection.get("id"), Some(&Value::from("VLAN 100 on eth0")));
+        assert_eq!(connection.get("type"), Some(&Variant::from("vlan")));
+        assert_eq!(
+            connection.get("id"),
+            Some(&Variant::from("VLAN 100 on eth0"))
+        );
         assert_eq!(
             connection.get("interface-name"),
-            Some(&Value::from("eth0.100"))
+            Some(&Variant::from("eth0.100"))
         );
-        assert_eq!(connection.get("autoconnect"), Some(&Value::from(true)));
+        assert_eq!(connection.get("autoconnect"), Some(&Variant::from(true)));
         assert_eq!(
             connection.get("autoconnect-priority"),
-            Some(&Value::from(10i32))
+            Some(&Variant::from(10i32))
         );
         assert_eq!(
             connection.get("autoconnect-retries"),
-            Some(&Value::from(3i32))
+            Some(&Variant::from(3i32))
         );
-        assert_eq!(conn["vlan"].get("parent"), Some(&Value::from("eth0")));
-        assert_eq!(conn["vlan"].get("id"), Some(&Value::from(100u32)));
-        assert_eq!(conn["ipv4"].get("method"), Some(&Value::from("auto")));
-        assert_eq!(conn["ipv6"].get("method"), Some(&Value::from("auto")));
+        assert_eq!(conn["vlan"].get("parent"), Some(&Variant::from("eth0")));
+        assert_eq!(conn["vlan"].get("id"), Some(&Variant::from(100u32)));
+        assert_eq!(conn["ipv4"].get("method"), Some(&Variant::from("auto")));
+        assert_eq!(conn["ipv6"].get("method"), Some(&Variant::from("auto")));
     }
 
     #[test]
@@ -164,7 +167,7 @@ mod tests {
         let conn = build_vlan_connection(&config, &opts).unwrap();
         let connection = conn.get("connection").unwrap();
 
-        assert_eq!(connection.get("type"), Some(&Value::from("vlan")));
+        assert_eq!(connection.get("type"), Some(&Variant::from("vlan")));
     }
 
     #[test]
@@ -175,8 +178,8 @@ mod tests {
         let conn = build_vlan_connection(&config, &opts).unwrap();
         let vlan = conn.get("vlan").unwrap();
 
-        assert_eq!(vlan.get("parent"), Some(&Value::from("enp3s0")));
-        assert_eq!(vlan.get("id"), Some(&Value::from(200u32)));
+        assert_eq!(vlan.get("parent"), Some(&Variant::from("enp3s0")));
+        assert_eq!(vlan.get("id"), Some(&Variant::from(200u32)));
     }
 
     #[test]
@@ -189,7 +192,7 @@ mod tests {
 
         assert_eq!(
             connection.get("interface-name"),
-            Some(&Value::from("eth0.100"))
+            Some(&Variant::from("eth0.100"))
         );
     }
 
@@ -203,7 +206,7 @@ mod tests {
 
         assert_eq!(
             connection.get("interface-name"),
-            Some(&Value::from("office-vlan"))
+            Some(&Variant::from("office-vlan"))
         );
     }
 
@@ -215,7 +218,10 @@ mod tests {
         let conn = build_vlan_connection(&config, &opts).unwrap();
         let connection = conn.get("connection").unwrap();
 
-        assert_eq!(connection.get("id"), Some(&Value::from("VLAN 100 on eth0")));
+        assert_eq!(
+            connection.get("id"),
+            Some(&Variant::from("VLAN 100 on eth0"))
+        );
     }
 
     #[test]
@@ -226,7 +232,7 @@ mod tests {
         let conn = build_vlan_connection(&config, &opts).unwrap();
         let connection = conn.get("connection").unwrap();
 
-        assert_eq!(connection.get("id"), Some(&Value::from("Office Network")));
+        assert_eq!(connection.get("id"), Some(&Variant::from("Office Network")));
     }
 
     #[test]
@@ -237,7 +243,7 @@ mod tests {
         let conn = build_vlan_connection(&config, &opts).unwrap();
         let vlan = conn.get("vlan").unwrap();
 
-        assert_eq!(vlan.get("flags"), Some(&Value::from(0x5u32)));
+        assert_eq!(vlan.get("flags"), Some(&Variant::from(0x5u32)));
     }
 
     #[test]
@@ -249,7 +255,7 @@ mod tests {
             .get("802-3-ethernet")
             .expect("MTU requires an 802-3-ethernet setting");
 
-        assert_eq!(wired.get("mtu"), Some(&Value::from(1496u32)));
+        assert_eq!(wired.get("mtu"), Some(&Variant::from(1496u32)));
         assert_eq!(wired["mtu"].value_signature().to_string(), "u");
         assert!(!conn["vlan"].contains_key("mtu"));
     }
@@ -276,11 +282,11 @@ mod tests {
         assert_eq!(egress.value_signature().to_string(), "as");
         assert_eq!(
             ingress,
-            &Value::from(vec!["0:0".to_string(), "7:3".to_string()])
+            &Variant::from(vec!["0:0".to_string(), "7:3".to_string()])
         );
         assert_eq!(
             egress,
-            &Value::from(vec!["0:1".to_string(), "4:7".to_string()])
+            &Variant::from(vec!["0:1".to_string(), "4:7".to_string()])
         );
     }
 
@@ -304,10 +310,10 @@ mod tests {
         let conn1 = build_vlan_connection(&config, &opts).unwrap();
         let conn2 = build_vlan_connection(&config, &opts).unwrap();
 
-        let Value::Str(uuid1) = &conn1["connection"]["uuid"] else {
+        let Variant::Str(uuid1) = &conn1["connection"]["uuid"] else {
             panic!("conn1 UUID must be a string");
         };
-        let Value::Str(uuid2) = &conn2["connection"]["uuid"] else {
+        let Variant::Str(uuid2) = &conn2["connection"]["uuid"] else {
             panic!("conn2 UUID must be a string");
         };
         let uuid1 = uuid::Uuid::parse_str(uuid1.as_str()).expect("conn1 UUID must be valid");

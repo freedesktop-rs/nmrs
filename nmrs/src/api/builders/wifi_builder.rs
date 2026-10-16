@@ -4,7 +4,7 @@
 //! with support for different security modes (Open, WPA-PSK, WPA-EAP).
 
 use std::collections::HashMap;
-use zvariant::Value;
+use zbus::Variant;
 
 use super::connection_builder::ConnectionBuilder;
 use crate::api::models::{self, ConnectionError, ConnectionOptions, EapMethod};
@@ -209,10 +209,10 @@ impl WifiConnectionBuilder {
     #[must_use]
     pub fn wpa_psk(mut self, psk: impl Into<String>) -> Self {
         let mut security = HashMap::new();
-        security.insert("key-mgmt", Value::from("wpa-psk"));
-        security.insert("psk", Value::from(psk.into()));
-        security.insert("psk-flags", Value::from(0u32));
-        security.insert("auth-alg", Value::from("open"));
+        security.insert("key-mgmt", Variant::from("wpa-psk"));
+        security.insert("psk", Variant::from(psk.into()));
+        security.insert("psk-flags", Variant::from(0u32));
+        security.insert("auth-alg", Variant::from("open"));
 
         self.inner = self
             .inner
@@ -235,9 +235,9 @@ impl WifiConnectionBuilder {
     #[must_use]
     pub fn sae(mut self, psk: impl Into<String>) -> Self {
         let mut security = HashMap::new();
-        security.insert("key-mgmt", Value::from("sae"));
-        security.insert("psk", Value::from(psk.into()));
-        security.insert("psk-flags", Value::from(0u32));
+        security.insert("key-mgmt", Variant::from("sae"));
+        security.insert("psk", Variant::from(psk.into()));
+        security.insert("psk-flags", Variant::from(0u32));
 
         self.inner = self
             .inner
@@ -313,8 +313,8 @@ impl WifiConnectionBuilder {
 
     fn wpa_eap_shared(mut self, key_mgmt: &'static str, opts: models::EapOptions) -> Self {
         let mut security = HashMap::new();
-        security.insert("key-mgmt", Value::from(key_mgmt));
-        security.insert("auth-alg", Value::from("open"));
+        security.insert("key-mgmt", Variant::from(key_mgmt));
+        security.insert("auth-alg", Variant::from("open"));
 
         self.inner = self
             .inner
@@ -329,21 +329,21 @@ impl WifiConnectionBuilder {
             EapMethod::Tls => "tls",
         };
         e1x.insert("eap", Self::string_array(&[eap_str]));
-        e1x.insert("identity", Value::from(opts.identity));
+        e1x.insert("identity", Variant::from(opts.identity));
 
         match opts.method {
             EapMethod::Peap | EapMethod::Ttls => {
-                e1x.insert("password", Value::from(opts.password));
+                e1x.insert("password", Variant::from(opts.password));
 
                 if let Some(ai) = opts.anonymous_identity {
-                    e1x.insert("anonymous-identity", Value::from(ai));
+                    e1x.insert("anonymous-identity", Variant::from(ai));
                 }
 
                 let p2 = match opts.phase2 {
                     models::Phase2::Mschapv2 => "mschapv2",
                     models::Phase2::Pap => "pap",
                 };
-                e1x.insert("phase2-auth", Value::from(p2));
+                e1x.insert("phase2-auth", Variant::from(p2));
             }
             EapMethod::Tls => {
                 if let Some(cert) =
@@ -353,7 +353,7 @@ impl WifiConnectionBuilder {
                 }
 
                 if let Some(password) = opts.private_key_password {
-                    e1x.insert("private-key-password", Value::from(password));
+                    e1x.insert("private-key-password", Variant::from(password));
                 }
 
                 if let Some(cert) =
@@ -365,13 +365,13 @@ impl WifiConnectionBuilder {
         }
 
         if opts.system_ca_certs {
-            e1x.insert("system-ca-certs", Value::from(true));
+            e1x.insert("system-ca-certs", Variant::from(true));
         }
         if let Some(cert) = Self::path_or_blob("ca_cert", opts.ca_cert_path, opts.ca_cert_blob) {
             e1x.insert("ca-cert", cert);
         }
         if let Some(dom) = opts.domain_suffix_match {
-            e1x.insert("domain-suffix-match", Value::from(dom));
+            e1x.insert("domain-suffix-match", Variant::from(dom));
         }
 
         self.inner = self.inner.with_section("802-1x", e1x);
@@ -490,15 +490,15 @@ impl WifiConnectionBuilder {
     /// This method adds the WiFi-specific "802-11-wireless" section and links
     /// it to the security section if configured.
     #[must_use]
-    pub fn build(mut self) -> HashMap<&'static str, HashMap<&'static str, Value<'static>>> {
+    pub fn build(mut self) -> HashMap<&'static str, HashMap<&'static str, Variant<'static>>> {
         // Build the 802-11-wireless section
         let mut wireless = HashMap::new();
-        wireless.insert("ssid", Value::from(self.ssid.as_bytes().to_vec()));
-        wireless.insert("mode", Value::from(self.mode.as_nm_str()));
+        wireless.insert("ssid", Variant::from(self.ssid.as_bytes().to_vec()));
+        wireless.insert("mode", Variant::from(self.mode.as_nm_str()));
 
         // Add optional WiFi settings
         if let Some(hidden) = self.hidden {
-            wireless.insert("hidden", Value::from(hidden));
+            wireless.insert("hidden", Variant::from(hidden));
         }
 
         if let Some(band) = self.band {
@@ -506,15 +506,15 @@ impl WifiConnectionBuilder {
                 WifiBand::Bg => "bg",
                 WifiBand::A => "a",
             };
-            wireless.insert("band", Value::from(band_str));
+            wireless.insert("band", Variant::from(band_str));
         }
 
         if let Some(bssid) = self.bssid {
-            wireless.insert("bssid", Value::from(bssid));
+            wireless.insert("bssid", Variant::from(bssid));
         }
 
         if self.security_configured {
-            wireless.insert("security", Value::from("802-11-wireless-security"));
+            wireless.insert("security", Variant::from("802-11-wireless-security"));
         }
 
         self.inner = self.inner.with_section("802-11-wireless", wireless);
@@ -524,16 +524,16 @@ impl WifiConnectionBuilder {
 
     // Helper functions
 
-    fn string_array(xs: &[&str]) -> Value<'static> {
+    fn string_array(xs: &[&str]) -> Variant<'static> {
         let vals: Vec<String> = xs.iter().map(|s| s.to_string()).collect();
-        Value::from(vals)
+        Variant::from(vals)
     }
 
     fn path_or_blob(
         attribute: &str,
         path: Option<String>,
         blob: Option<Vec<u8>>,
-    ) -> Option<Value<'static>> {
+    ) -> Option<Variant<'static>> {
         // A path/blob conflict is rejected by `validate_eap_opts` on the `try_*`
         // path and warned about by `warn_eap_conflicts` on the deprecated one,
         // so preferring the path here is a deterministic last resort rather
@@ -546,13 +546,13 @@ impl WifiConnectionBuilder {
         }
     }
 
-    fn path(mut value: String) -> Value<'static> {
+    fn path(mut value: String) -> Variant<'static> {
         value.push('\0');
-        Value::from(value.into_bytes())
+        Variant::from(value.into_bytes())
     }
 
-    fn blob(value: Vec<u8>) -> Value<'static> {
-        Value::from(value)
+    fn blob(value: Vec<u8>) -> Variant<'static> {
+        Variant::from(value)
     }
 }
 
@@ -581,9 +581,9 @@ mod tests {
         let wireless = settings.get("802-11-wireless").unwrap();
         assert_eq!(
             wireless.get("ssid"),
-            Some(&Value::from(b"OpenNetwork".to_vec()))
+            Some(&Variant::from(b"OpenNetwork".to_vec()))
         );
-        assert_eq!(wireless.get("mode"), Some(&Value::from("infrastructure")));
+        assert_eq!(wireless.get("mode"), Some(&Variant::from("infrastructure")));
         assert!(
             !wireless.contains_key("security"),
             "open Wi-Fi must not reference a security section"
@@ -616,10 +616,10 @@ mod tests {
         assert!(settings.contains_key("802-11-wireless-security"));
 
         let security = settings.get("802-11-wireless-security").unwrap();
-        assert_eq!(security.get("key-mgmt"), Some(&Value::from("wpa-psk")));
+        assert_eq!(security.get("key-mgmt"), Some(&Variant::from("wpa-psk")));
         assert_eq!(
             security.get("psk"),
-            Some(&Value::from("password123".to_string()))
+            Some(&Variant::from("password123".to_string()))
         );
 
         // proto/pairwise/group must not be set so NetworkManager can
@@ -631,7 +631,7 @@ mod tests {
         let wireless = settings.get("802-11-wireless").unwrap();
         assert_eq!(
             wireless.get("security"),
-            Some(&Value::from("802-11-wireless-security"))
+            Some(&Variant::from("802-11-wireless-security"))
         );
     }
 
@@ -646,12 +646,12 @@ mod tests {
         let security = settings
             .get("802-11-wireless-security")
             .expect("SAE must produce a security section");
-        assert_eq!(security.get("key-mgmt"), Some(&Value::from("sae")));
+        assert_eq!(security.get("key-mgmt"), Some(&Variant::from("sae")));
         assert_eq!(
             security.get("psk"),
-            Some(&Value::from("password123".to_string()))
+            Some(&Variant::from("password123".to_string()))
         );
-        assert_eq!(security.get("psk-flags"), Some(&Value::from(0u32)));
+        assert_eq!(security.get("psk-flags"), Some(&Variant::from(0u32)));
 
         // NetworkManager rejects a profile that pairs SAE with an auth-alg.
         assert!(
@@ -663,7 +663,7 @@ mod tests {
         let wireless = settings.get("802-11-wireless").unwrap();
         assert_eq!(
             wireless.get("security"),
-            Some(&Value::from("802-11-wireless-security"))
+            Some(&Variant::from("802-11-wireless-security"))
         );
     }
 
@@ -675,7 +675,7 @@ mod tests {
             .build();
 
         let security = settings.get("802-11-wireless-security").unwrap();
-        assert_eq!(security.get("key-mgmt"), Some(&Value::from("sae")));
+        assert_eq!(security.get("key-mgmt"), Some(&Variant::from("sae")));
         assert!(
             security.get("auth-alg").is_none(),
             "the earlier wpa_psk auth-alg must not survive"
@@ -713,14 +713,14 @@ mod tests {
         assert!(settings.contains_key("802-1x"));
 
         let security = settings.get("802-11-wireless-security").unwrap();
-        assert_eq!(security.get("key-mgmt"), Some(&Value::from("wpa-eap")));
+        assert_eq!(security.get("key-mgmt"), Some(&Variant::from("wpa-eap")));
 
         let e1x = settings.get("802-1x").unwrap();
         assert_eq!(
             e1x.get("identity"),
-            Some(&Value::from("user@example.com".to_string()))
+            Some(&Variant::from("user@example.com".to_string()))
         );
-        assert_eq!(e1x.get("phase2-auth"), Some(&Value::from("mschapv2")));
+        assert_eq!(e1x.get("phase2-auth"), Some(&Variant::from("mschapv2")));
     }
 
     #[test]
@@ -775,7 +775,7 @@ mod tests {
             .build();
 
         let wireless = settings.get("802-11-wireless").unwrap();
-        assert_eq!(wireless.get("hidden"), Some(&Value::from(true)));
+        assert_eq!(wireless.get("hidden"), Some(&Variant::from(true)));
     }
 
     #[test]
@@ -787,7 +787,7 @@ mod tests {
             .build();
 
         let wireless = settings.get("802-11-wireless").unwrap();
-        assert_eq!(wireless.get("band"), Some(&Value::from("a")));
+        assert_eq!(wireless.get("band"), Some(&Variant::from("a")));
     }
 
     #[test]
@@ -801,7 +801,7 @@ mod tests {
         let wireless = settings.get("802-11-wireless").unwrap();
         assert_eq!(
             wireless.get("bssid"),
-            Some(&Value::from("00:11:22:33:44:55"))
+            Some(&Variant::from("00:11:22:33:44:55"))
         );
     }
 
@@ -813,7 +813,7 @@ mod tests {
             .build();
 
         let wireless = settings.get("802-11-wireless").unwrap();
-        assert_eq!(wireless.get("mode"), Some(&Value::from("infrastructure")));
+        assert_eq!(wireless.get("mode"), Some(&Variant::from("infrastructure")));
     }
 
     #[test]
@@ -826,13 +826,13 @@ mod tests {
             .build();
 
         let wireless = settings.get("802-11-wireless").unwrap();
-        assert_eq!(wireless.get("mode"), Some(&Value::from("ap")));
+        assert_eq!(wireless.get("mode"), Some(&Variant::from("ap")));
 
         let ipv4 = settings.get("ipv4").unwrap();
-        assert_eq!(ipv4.get("method"), Some(&Value::from("shared")));
+        assert_eq!(ipv4.get("method"), Some(&Variant::from("shared")));
 
         let ipv6 = settings.get("ipv6").unwrap();
-        assert_eq!(ipv6.get("method"), Some(&Value::from("ignore")));
+        assert_eq!(ipv6.get("method"), Some(&Variant::from("ignore")));
     }
 
     #[test]
@@ -844,7 +844,7 @@ mod tests {
             .build();
 
         let wireless = settings.get("802-11-wireless").unwrap();
-        assert_eq!(wireless.get("mode"), Some(&Value::from("adhoc")));
+        assert_eq!(wireless.get("mode"), Some(&Variant::from("adhoc")));
     }
 
     #[test]
@@ -862,7 +862,7 @@ mod tests {
             .build();
 
         let conn = settings.get("connection").unwrap();
-        assert_eq!(conn.get("autoconnect"), Some(&Value::from(false)));
-        assert_eq!(conn.get("autoconnect-priority"), Some(&Value::from(5i32)));
+        assert_eq!(conn.get("autoconnect"), Some(&Variant::from(false)));
+        assert_eq!(conn.get("autoconnect-priority"), Some(&Variant::from(5i32)));
     }
 }

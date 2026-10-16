@@ -98,7 +98,7 @@ pub(crate) async fn bluetooth_radio_state(conn: &Connection) -> Result<RadioStat
     let mut any_powered = false;
     for path in &adapter_paths {
         match BluezAdapterProxy::builder(conn)
-            .path(path.as_str())?
+            .path(path.as_str())
             .build()
             .await
         {
@@ -203,16 +203,14 @@ pub(crate) async fn set_bluetooth_radio_enabled(conn: &Connection, enabled: bool
     let n_adapters = adapter_paths.len();
 
     let toggle_futures = adapter_paths.iter().map(|path| async move {
-        let proxy = match BluezAdapterProxy::builder(conn).path(path.as_str()) {
-            Ok(builder) => match builder.build().await {
-                Ok(proxy) => proxy,
-                Err(e) => {
-                    warn!("failed to build proxy for adapter {}: {}", path, e);
-                    return None;
-                }
-            },
+        let proxy = match BluezAdapterProxy::builder(conn)
+            .path(path.as_str())
+            .build()
+            .await
+        {
+            Ok(proxy) => proxy,
             Err(e) => {
-                warn!("invalid adapter path {}: {}", path, e);
+                warn!("failed to build proxy for adapter {}: {}", path, e);
                 return None;
             }
         };
@@ -338,8 +336,8 @@ fn finalize_airplane_toggle_results(
 /// Returns adapter object paths (e.g. `/org/bluez/hci0`).
 async fn enumerate_bluetooth_adapters(conn: &Connection) -> Result<Vec<String>> {
     let manager = zbus::fdo::ObjectManagerProxy::builder(conn)
-        .destination("org.bluez")?
-        .path("/")?
+        .destination("org.bluez")
+        .path("/")
         .build()
         .await
         .map_err(|e| {
@@ -383,7 +381,7 @@ pub(crate) async fn fetch_present_device_types(conn: &Connection) -> Option<Hash
 
     let mut types = HashSet::new();
     for p in paths {
-        let builder = NMDeviceProxy::builder(conn).path(p).ok()?;
+        let builder = NMDeviceProxy::builder(conn).path(p);
         let dev = builder.build().await.ok()?;
         let t = dev.device_type().await.ok()?;
         types.insert(t);

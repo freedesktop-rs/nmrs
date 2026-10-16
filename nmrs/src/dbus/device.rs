@@ -1,7 +1,7 @@
 //! NetworkManager Device proxy.
 
+use zbus::OwnedObjectPath;
 use zbus::{Result, proxy};
-use zvariant::OwnedObjectPath;
 
 /// Proxy for NetworkManager device interface.
 ///

@@ -1,8 +1,8 @@
 //! NetworkManager Settings.Connection D-Bus proxy.
 
 use std::collections::HashMap;
+use zbus::OwnedVariant;
 use zbus::proxy;
-use zvariant::OwnedValue;
 
 /// Proxy for `org.freedesktop.NetworkManager.Settings.Connection` instances.
 #[proxy(
@@ -11,16 +11,16 @@ use zvariant::OwnedValue;
 )]
 pub trait NMSettingsConnection {
     /// Full connection settings (`a{sa{sv}}`), excluding secrets.
-    fn get_settings(&self) -> zbus::Result<HashMap<String, HashMap<String, OwnedValue>>>;
+    fn get_settings(&self) -> zbus::Result<HashMap<String, HashMap<String, OwnedVariant>>>;
 
     /// Replaces this profile with the provided complete settings map.
-    fn update(&self, settings: HashMap<String, HashMap<String, OwnedValue>>) -> zbus::Result<()>;
+    fn update(&self, settings: HashMap<String, HashMap<String, OwnedVariant>>) -> zbus::Result<()>;
 
     /// Like [`update`](Self::update) for in-memory (unsaved) profiles.
     #[zbus(name = "UpdateUnsaved")]
     fn update_unsaved(
         &self,
-        settings: HashMap<String, HashMap<String, OwnedValue>>,
+        settings: HashMap<String, HashMap<String, OwnedVariant>>,
     ) -> zbus::Result<()>;
 
     /// Deletes this saved connection.

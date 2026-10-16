@@ -335,10 +335,10 @@ async fn connection_devices(
 
     let mut devices = Vec::with_capacity(device_paths.len());
     for dev_path in device_paths {
-        let Ok(builder) = NMDeviceProxy::builder(conn).path(dev_path.clone()) else {
-            continue;
-        };
-        match builder.cache_properties(CacheProperties::No).build().await {
+        let builder = NMDeviceProxy::builder(conn)
+            .path(dev_path.clone())
+            .cache_properties(CacheProperties::No);
+        match builder.build().await {
             Ok(dev) => devices.push(dev),
             Err(error) => warn!("Failed to build device proxy for {dev_path}: {error}"),
         }
@@ -429,11 +429,11 @@ const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// * `timeout` - Optional timeout duration (uses default if None)
 pub(crate) async fn wait_for_connection_activation(
     conn: &Connection,
-    active_conn_path: &zvariant::OwnedObjectPath,
+    active_conn_path: &zbus::OwnedObjectPath,
     timeout: Option<Duration>,
 ) -> Result<()> {
     let active_conn = NMActiveConnectionProxy::builder(conn)
-        .path(active_conn_path.clone())?
+        .path(active_conn_path.clone())
         .build()
         .await?;
 

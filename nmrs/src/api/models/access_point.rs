@@ -9,7 +9,7 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
-use zvariant::OwnedObjectPath;
+use zbus::OwnedObjectPath;
 
 use super::DeviceState;
 

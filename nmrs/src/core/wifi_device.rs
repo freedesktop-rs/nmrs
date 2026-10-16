@@ -23,10 +23,7 @@ pub(crate) async fn list_wifi_devices(conn: &Connection) -> Result<Vec<WifiDevic
 
     let mut out = Vec::new();
     for p in paths {
-        let dev = NMDeviceProxy::builder(conn)
-            .path(p.clone())?
-            .build()
-            .await?;
+        let dev = NMDeviceProxy::builder(conn).path(p.clone()).build().await?;
         if dev.device_type().await? != device_type::WIFI {
             continue;
         }
@@ -42,7 +39,7 @@ pub(crate) async fn list_wifi_devices(conn: &Connection) -> Result<Vec<WifiDevic
         let autoconnect = dev.autoconnect().await.unwrap_or(true);
 
         let wifi = NMWirelessProxy::builder(conn)
-            .path(p.clone())?
+            .path(p.clone())
             .build()
             .await?;
         let permanent_hw_address = wifi.perm_hw_address().await.ok().filter(|a| !a.is_empty());
@@ -50,7 +47,7 @@ pub(crate) async fn list_wifi_devices(conn: &Connection) -> Result<Vec<WifiDevic
         let (is_active, active_ssid, active_frequency_mhz) = match active_ap_path {
             Some(ap_path) if ap_path.as_str() != "/" => {
                 match NMAccessPointProxy::builder(conn)
-                    .path(ap_path)?
+                    .path(ap_path)
                     .build()
                     .await
                 {
@@ -111,7 +108,7 @@ pub(crate) async fn set_wifi_enabled_for_interface(
     };
 
     let dev = NMDeviceProxy::builder(conn)
-        .path(path.clone())?
+        .path(path.clone())
         .build()
         .await?;
     if dev.device_type().await? != device_type::WIFI {
