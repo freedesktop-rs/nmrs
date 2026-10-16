@@ -350,9 +350,14 @@ fn lexer(input: &str) -> Result<Vec<OvpnItem>, OvpnParseError> {
         let mut cleaned = String::new();
         let mut prev_whitespace = true;
         let mut quote: Option<char> = None;
+        // Inside double quotes a backslash escapes the next character, as in
+        // `split_args`, so `\"` doesn't end the quote.
+        let mut escaped = false;
 
         for c in line.chars() {
             match quote {
+                Some('"') if escaped => escaped = false,
+                Some('"') if c == '\\' => escaped = true,
                 Some(q) if c == q => quote = None,
                 Some(_) => {}
                 None if c == '"' || c == '\'' => quote = Some(c),
@@ -1505,6 +1510,21 @@ mod tests {
 
         let f = parse_ok(r#"setenv NOTE "a \"quoted\" ; b""#);
         assert_eq!(f.options["setenv"], vec!["NOTE", r#"a "quoted" ; b"#]);
+    }
+
+    #[test]
+    fn comment_chars_after_escaped_quote_stay_in_the_argument() {
+        let f = parse_ok(r#"verify-x509-name "CN=vpn\" # prod" subject"#);
+        assert_eq!(
+            f.verify_x509_name,
+            Some((r#"CN=vpn" # prod"#.into(), "subject".into()))
+        );
+
+        let f = parse_ok(r#"setenv NOTE "a \" ; b" # comment"#);
+        assert_eq!(f.options["setenv"], vec!["NOTE", r#"a " ; b"#]);
+
+        let f = parse_ok(r#"setenv PATH "C:\\dir" # comment"#);
+        assert_eq!(f.options["setenv"], vec!["PATH", r"C:\dir"]);
     }
 
     #[test]
