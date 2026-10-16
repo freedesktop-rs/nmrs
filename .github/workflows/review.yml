@@ -37,7 +37,7 @@ jobs:
           id=$(gh api repos/$REPO/issues/$PR/comments -f body="don't fucking touch anything, let me review this shit first." --jq .id)
           echo "id=$id" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           ref: refs/pull/${{ github.event.pull_request.number || github.event.issue.number }}/head
           fetch-depth: 0
