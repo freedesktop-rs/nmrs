@@ -398,7 +398,9 @@ fn lexer(input: &str) -> Result<Vec<OvpnItem>, OvpnParseError> {
             continuing = false;
         }
 
-        let line = current_line.trim();
+        // Keep trailing whitespace: it may be escaped (`a\ `). The scanner
+        // drops unescaped whitespace between arguments on its own.
+        let line = current_line.trim_start();
 
         // Remove comments. Uses the same scanner as `split_args`, so a `#` or
         // `;` only starts a comment where a new argument could start.
@@ -442,7 +444,7 @@ fn lexer(input: &str) -> Result<Vec<OvpnItem>, OvpnParseError> {
             });
         }
 
-        let mut parts = split_args(line, line_number)?.into_iter();
+        let mut parts = split_args(cleaned.trim_start(), line_number)?.into_iter();
         let key = match parts.next() {
             Some(k) => k.to_lowercase(),
             None => {
@@ -1616,6 +1618,15 @@ mod tests {
         assert!(
             matches!(f.ca, Some(CertSource::File(ref p)) if p == r"C:\Program Files\vpn\ca.pem")
         );
+    }
+
+    #[test]
+    fn escaped_trailing_space_is_kept() {
+        let f = parse_ok("setenv X a\\ ");
+        assert_eq!(f.options["setenv"], vec!["X", "a "]);
+
+        let f = parse_ok("setenv X a   ");
+        assert_eq!(f.options["setenv"], vec!["X", "a"]);
     }
 
     #[test]
