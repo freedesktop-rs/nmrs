@@ -67,6 +67,17 @@ pub struct OvpnFile {
     // is ignored (NM handles interactive prompts).
     pub auth_user_pass: bool,
 
+    // remote-cert-tls directive ("server" or "client"). Requires the peer's
+    // certificate to carry the matching extended key usage.
+    pub remote_cert_tls: Option<String>,
+
+    // verify-x509-name directive: (name, type). Type is "name",
+    // "name-prefix", or "subject" (OpenVPN's default when omitted).
+    pub verify_x509_name: Option<(String, String)>,
+
+    // crl-verify directive or inline <crl-verify> block.
+    pub crl_verify: Option<CrlVerify>,
+
     // Catch-all for unmodeled or less common directives.
     // Key = directive name, Value = list of argument lists.
     // Preserves information for round-tripping / forward compatibility.
@@ -84,6 +95,15 @@ pub struct Remote {
 pub enum CertSource {
     File(String),
     Inline(String),
+}
+
+/// Where `crl-verify` reads revocations from.
+#[derive(Debug, Clone)]
+pub enum CrlVerify {
+    /// A CRL file, given as a path or an inline `<crl-verify>` block.
+    File(CertSource),
+    /// A directory of revoked serial numbers (`crl-verify DIR dir`).
+    Dir(String),
 }
 
 #[derive(Debug, Clone)]
@@ -155,6 +175,9 @@ struct OvpnFileBuilder {
     routes: Vec<Route>,
     redirect_gateway: Option<RedirectGateway>,
     auth_user_pass: bool,
+    remote_cert_tls: Option<String>,
+    verify_x509_name: Option<(String, String)>,
+    crl_verify: Option<CrlVerify>,
     flags: Vec<String>,
     options: HashMap<String, Vec<String>>,
 }
@@ -184,6 +207,9 @@ impl OvpnFileBuilder {
             routes: self.routes,
             redirect_gateway: self.redirect_gateway,
             auth_user_pass: self.auth_user_pass,
+            remote_cert_tls: self.remote_cert_tls,
+            verify_x509_name: self.verify_x509_name,
+            crl_verify: self.crl_verify,
             flags: self.flags,
             options: self.options,
         }
@@ -702,6 +728,71 @@ pub fn parse_ovpn(content: &str) -> Result<OvpnFile, ConnectionError> {
                         // Optional file path is ignored — NM handles interactive prompts.
                         b.auth_user_pass = true;
                     }
+                    "remote-cert-tls" => {
+                        // remote-cert-tls <server|client>
+
+                        let value =
+                            args.first()
+                                .ok_or_else(|| OvpnParseError::MissingArgument {
+                                    key: key.clone(),
+                                    line,
+                                })?;
+
+                        if args.len() != 1 || !matches!(value.as_str(), "server" | "client") {
+                            Err(OvpnParseError::InvalidArgument {
+                                key,
+                                arg: format!("{args:?}"),
+                                line,
+                            })?;
+                        }
+
+                        b.remote_cert_tls = Some(value.clone());
+                    }
+                    "verify-x509-name" => {
+                        // verify-x509-name <NAME> [name|name-prefix|subject]
+
+                        let name = args
+                            .first()
+                            .ok_or_else(|| OvpnParseError::MissingArgument {
+                                key: key.clone(),
+                                line,
+                            })?;
+
+                        let name_type = args.get(1).map_or("subject", String::as_str);
+                        if name.is_empty()
+                            || args.len() > 2
+                            || !matches!(name_type, "name" | "name-prefix" | "subject")
+                        {
+                            Err(OvpnParseError::InvalidArgument {
+                                key,
+                                arg: format!("{args:?}"),
+                                line,
+                            })?;
+                        }
+
+                        b.verify_x509_name = Some((name.clone(), name_type.to_string()));
+                    }
+                    "crl-verify" => {
+                        // crl-verify <FILE>
+                        // crl-verify <DIR> dir
+
+                        let path = args
+                            .first()
+                            .ok_or_else(|| OvpnParseError::MissingArgument {
+                                key: key.clone(),
+                                line,
+                            })?;
+
+                        b.crl_verify = Some(match args.get(1).map(String::as_str) {
+                            None => CrlVerify::File(CertSource::File(path.clone())),
+                            Some("dir") if args.len() == 2 => CrlVerify::Dir(path.clone()),
+                            _ => Err(OvpnParseError::InvalidArgument {
+                                key,
+                                arg: format!("{args:?}"),
+                                line,
+                            })?,
+                        });
+                    }
                     "redirect-gateway" => {
                         let mut rg = RedirectGateway {
                             def1: false,
@@ -759,6 +850,10 @@ pub fn parse_ovpn(content: &str) -> Result<OvpnFile, ConnectionError> {
 
                 "tls-crypt" => {
                     b.tls_crypt = Some(CertSource::Inline(content));
+                }
+
+                "crl-verify" => {
+                    b.crl_verify = Some(CrlVerify::File(CertSource::Inline(content)));
                 }
 
                 _ => {
@@ -1325,6 +1420,85 @@ mod tests {
     }
 
     #[test]
+    fn parse_remote_cert_tls() {
+        let f = parse_ok("remote-cert-tls server");
+        assert_eq!(f.remote_cert_tls.as_deref(), Some("server"));
+        assert!(!f.options.contains_key("remote-cert-tls"));
+
+        let f = parse_ok("remote-cert-tls client");
+        assert_eq!(f.remote_cert_tls.as_deref(), Some("client"));
+    }
+
+    #[test]
+    fn remote_cert_tls_rejects_bad_values() {
+        assert_parse_err!("remote-cert-tls", OvpnParseError::MissingArgument { .. });
+        assert_parse_err!(
+            "remote-cert-tls peer",
+            OvpnParseError::InvalidArgument { .. }
+        );
+        assert_parse_err!(
+            "remote-cert-tls server client",
+            OvpnParseError::InvalidArgument { .. }
+        );
+    }
+
+    #[test]
+    fn parse_verify_x509_name_with_type() {
+        let f = parse_ok("verify-x509-name vpn.example.com name");
+        assert_eq!(
+            f.verify_x509_name,
+            Some(("vpn.example.com".into(), "name".into()))
+        );
+
+        let f = parse_ok("verify-x509-name vpn. name-prefix");
+        assert_eq!(
+            f.verify_x509_name,
+            Some(("vpn.".into(), "name-prefix".into()))
+        );
+    }
+
+    #[test]
+    fn verify_x509_name_defaults_to_subject() {
+        let f = parse_ok("verify-x509-name CN=vpn.example.com");
+        assert_eq!(
+            f.verify_x509_name,
+            Some(("CN=vpn.example.com".into(), "subject".into()))
+        );
+    }
+
+    #[test]
+    fn verify_x509_name_keeps_quoted_subject_with_spaces() {
+        let f = parse_ok("verify-x509-name 'C=US, O=Example Inc, CN=vpn' subject");
+        assert_eq!(
+            f.verify_x509_name,
+            Some(("C=US, O=Example Inc, CN=vpn".into(), "subject".into()))
+        );
+
+        let f = parse_ok(r#"verify-x509-name "C=US, CN=a \"b\" # c" subject"#);
+        assert_eq!(
+            f.verify_x509_name,
+            Some((r#"C=US, CN=a "b" # c"#.into(), "subject".into()))
+        );
+    }
+
+    #[test]
+    fn verify_x509_name_rejects_bad_values() {
+        assert_parse_err!("verify-x509-name", OvpnParseError::MissingArgument { .. });
+        assert_parse_err!(
+            "verify-x509-name vpn.example.com hostname",
+            OvpnParseError::InvalidArgument { .. }
+        );
+        assert_parse_err!(
+            "verify-x509-name vpn.example.com name extra",
+            OvpnParseError::InvalidArgument { .. }
+        );
+        assert_parse_err!(
+            "verify-x509-name ''",
+            OvpnParseError::InvalidArgument { .. }
+        );
+    }
+
+    #[test]
     fn quoted_arguments_stay_together() {
         let f = parse_ok("setenv FRIENDLY_NAME 'My VPN' # comment");
         assert_eq!(f.options["setenv"], vec!["FRIENDLY_NAME", "My VPN"]);
@@ -1338,6 +1512,48 @@ mod tests {
         assert_parse_err!(
             "setenv FRIENDLY_NAME 'My VPN",
             OvpnParseError::InvalidDirectiveSyntax { line: 1 }
+        );
+    }
+
+    #[test]
+    fn unquoted_comment_after_quoted_arg_is_stripped() {
+        let f = parse_ok("verify-x509-name 'CN=vpn # not a comment' subject # comment");
+        assert_eq!(
+            f.verify_x509_name,
+            Some(("CN=vpn # not a comment".into(), "subject".into()))
+        );
+    }
+
+    #[test]
+    fn parse_crl_verify_file_dir_and_inline() {
+        let f = parse_ok("crl-verify /etc/openvpn/crl.pem");
+        assert!(matches!(
+            f.crl_verify,
+            Some(CrlVerify::File(CertSource::File(ref p))) if p == "/etc/openvpn/crl.pem"
+        ));
+
+        let f = parse_ok("crl-verify /etc/openvpn/crl.d dir");
+        assert!(matches!(
+            f.crl_verify,
+            Some(CrlVerify::Dir(ref p)) if p == "/etc/openvpn/crl.d"
+        ));
+
+        let f = parse_ok(
+            "<crl-verify>\n-----BEGIN X509 CRL-----\nFAKECRL\n-----END X509 CRL-----\n</crl-verify>",
+        );
+        match f.crl_verify {
+            Some(CrlVerify::File(ref source)) => assert_inline_cert(source, "FAKECRL"),
+            other => panic!("expected inline CRL, got {other:?}"),
+        }
+        assert!(!f.options.contains_key("crl-verify"));
+    }
+
+    #[test]
+    fn crl_verify_rejects_bad_values() {
+        assert_parse_err!("crl-verify", OvpnParseError::MissingArgument { .. });
+        assert_parse_err!(
+            "crl-verify /etc/openvpn/crl.d directory",
+            OvpnParseError::InvalidArgument { .. }
         );
     }
 }
