@@ -15,7 +15,6 @@ readme = "README.md"
 [dependencies]
 log.workspace = true
 zbus.workspace = true
-zvariant.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 uuid.workspace = true

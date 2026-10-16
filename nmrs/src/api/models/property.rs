@@ -9,7 +9,7 @@
 
 use std::marker::PhantomData;
 
-use zvariant::{OwnedValue, Value};
+use zbus::{OwnedVariant, Variant};
 
 /// One `section.key` of a NetworkManager profile, decoded as `T`.
 ///
@@ -61,12 +61,12 @@ impl<T> Property<T> {
 /// panicking.
 pub trait FromSetting: Sized {
     /// Decodes `value`, or `None` if it is not a `Self`.
-    fn from_setting(value: &OwnedValue) -> Option<Self>;
+    fn from_setting(value: &OwnedVariant) -> Option<Self>;
 }
 
 /// Strips the `v` boxes NetworkManager wraps around `a{sv}` values.
-pub(crate) fn unbox_value<'a, 'v>(mut value: &'a Value<'v>) -> &'a Value<'v> {
-    while let Value::Value(inner) = value {
+pub(crate) fn unbox_value<'a, 'v>(mut value: &'a Variant<'v>) -> &'a Variant<'v> {
+    while let Variant::Variant(inner) = value {
         value = inner;
     }
     value
@@ -76,9 +76,9 @@ macro_rules! from_setting_scalar {
     ($($ty:ty => $variant:ident),* $(,)?) => {
         $(
             impl FromSetting for $ty {
-                fn from_setting(value: &OwnedValue) -> Option<Self> {
+                fn from_setting(value: &OwnedVariant) -> Option<Self> {
                     match unbox_value(value) {
-                        Value::$variant(inner) => Some(*inner),
+                        Variant::$variant(inner) => Some(*inner),
                         _ => None,
                     }
                 }
@@ -100,21 +100,21 @@ from_setting_scalar! {
 }
 
 impl FromSetting for String {
-    fn from_setting(value: &OwnedValue) -> Option<Self> {
+    fn from_setting(value: &OwnedVariant) -> Option<Self> {
         match unbox_value(value) {
-            Value::Str(inner) => Some(inner.to_string()),
+            Variant::Str(inner) => Some(inner.to_string()),
             _ => None,
         }
     }
 }
 
 impl FromSetting for Vec<String> {
-    fn from_setting(value: &OwnedValue) -> Option<Self> {
+    fn from_setting(value: &OwnedVariant) -> Option<Self> {
         match unbox_value(value) {
-            Value::Array(array) => array
+            Variant::Array(array) => array
                 .iter()
                 .map(|item| match unbox_value(item) {
-                    Value::Str(inner) => Some(inner.to_string()),
+                    Variant::Str(inner) => Some(inner.to_string()),
                     _ => None,
                 })
                 .collect(),
@@ -124,12 +124,12 @@ impl FromSetting for Vec<String> {
 }
 
 impl FromSetting for Vec<u8> {
-    fn from_setting(value: &OwnedValue) -> Option<Self> {
+    fn from_setting(value: &OwnedVariant) -> Option<Self> {
         match unbox_value(value) {
-            Value::Array(array) => array
+            Variant::Array(array) => array
                 .iter()
                 .map(|item| match unbox_value(item) {
-                    Value::U8(inner) => Some(*inner),
+                    Variant::U8(inner) => Some(*inner),
                     _ => None,
                 })
                 .collect(),
@@ -139,12 +139,12 @@ impl FromSetting for Vec<u8> {
 }
 
 impl FromSetting for Vec<u32> {
-    fn from_setting(value: &OwnedValue) -> Option<Self> {
+    fn from_setting(value: &OwnedVariant) -> Option<Self> {
         match unbox_value(value) {
-            Value::Array(array) => array
+            Variant::Array(array) => array
                 .iter()
                 .map(|item| match unbox_value(item) {
-                    Value::U32(inner) => Some(*inner),
+                    Variant::U32(inner) => Some(*inner),
                     _ => None,
                 })
                 .collect(),
@@ -154,8 +154,8 @@ impl FromSetting for Vec<u32> {
 }
 
 /// The raw value, for keys whose type has no `FromSetting` impl.
-impl FromSetting for OwnedValue {
-    fn from_setting(value: &OwnedValue) -> Option<Self> {
+impl FromSetting for OwnedVariant {
+    fn from_setting(value: &OwnedVariant) -> Option<Self> {
         value.try_clone().ok()
     }
 }
@@ -421,49 +421,52 @@ pub mod properties {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zvariant::Str;
+    use zbus::Str;
 
-    fn boxed(value: Value<'static>) -> OwnedValue {
-        OwnedValue::try_from(Value::Value(Box::new(value))).expect("owned boxed value")
+    fn boxed(value: Variant<'static>) -> OwnedVariant {
+        OwnedVariant::try_from(Variant::Variant(Box::new(value))).expect("owned boxed value")
     }
 
     #[test]
     fn scalars_decode_boxed_and_unboxed() {
-        assert_eq!(bool::from_setting(&OwnedValue::from(true)), Some(true));
-        assert_eq!(bool::from_setting(&boxed(Value::from(false))), Some(false));
-        assert_eq!(i32::from_setting(&OwnedValue::from(-3i32)), Some(-3));
-        assert_eq!(u32::from_setting(&boxed(Value::from(7u32))), Some(7));
-        assert_eq!(u64::from_setting(&OwnedValue::from(9u64)), Some(9));
+        assert_eq!(bool::from_setting(&OwnedVariant::from(true)), Some(true));
         assert_eq!(
-            String::from_setting(&OwnedValue::from(Str::from("zone"))),
+            bool::from_setting(&boxed(Variant::from(false))),
+            Some(false)
+        );
+        assert_eq!(i32::from_setting(&OwnedVariant::from(-3i32)), Some(-3));
+        assert_eq!(u32::from_setting(&boxed(Variant::from(7u32))), Some(7));
+        assert_eq!(u64::from_setting(&OwnedVariant::from(9u64)), Some(9));
+        assert_eq!(
+            String::from_setting(&OwnedVariant::from(Str::from("zone"))),
             Some("zone".to_string())
         );
         assert_eq!(
-            String::from_setting(&boxed(Value::from("boxed"))),
+            String::from_setting(&boxed(Variant::from("boxed"))),
             Some("boxed".to_string())
         );
     }
 
     #[test]
     fn wrong_type_reads_as_absent() {
-        let text = OwnedValue::from(Str::from("not a number"));
+        let text = OwnedVariant::from(Str::from("not a number"));
         assert_eq!(u32::from_setting(&text), None);
         assert_eq!(bool::from_setting(&text), None);
         assert_eq!(Vec::<String>::from_setting(&text), None);
-        assert_eq!(String::from_setting(&OwnedValue::from(1u32)), None);
+        assert_eq!(String::from_setting(&OwnedVariant::from(1u32)), None);
     }
 
     #[test]
     fn arrays_decode_elements() {
-        let strings = OwnedValue::try_from(Value::from(vec!["a".to_string(), "b".to_string()]))
+        let strings = OwnedVariant::try_from(Variant::from(vec!["a".to_string(), "b".to_string()]))
             .expect("owned as");
         assert_eq!(
             Vec::<String>::from_setting(&strings),
             Some(vec!["a".to_string(), "b".to_string()])
         );
-        let bytes = OwnedValue::try_from(Value::from(vec![1u8, 2, 3])).expect("owned ay");
+        let bytes = OwnedVariant::try_from(Variant::from(vec![1u8, 2, 3])).expect("owned ay");
         assert_eq!(Vec::<u8>::from_setting(&bytes), Some(vec![1, 2, 3]));
-        let ints = OwnedValue::try_from(Value::from(vec![10u32, 20])).expect("owned au");
+        let ints = OwnedVariant::try_from(Variant::from(vec![10u32, 20])).expect("owned au");
         assert_eq!(Vec::<u32>::from_setting(&ints), Some(vec![10, 20]));
         // Mixed element types are not silently truncated.
         assert_eq!(Vec::<u8>::from_setting(&ints), None);
@@ -471,8 +474,8 @@ mod tests {
 
     #[test]
     fn raw_value_is_available_for_anything() {
-        let raw = OwnedValue::from(42u16);
-        let copy = OwnedValue::from_setting(&raw).expect("clone");
+        let raw = OwnedVariant::from(42u16);
+        let copy = OwnedVariant::from_setting(&raw).expect("clone");
         assert_eq!(u16::from_setting(&copy), Some(42));
     }
 }

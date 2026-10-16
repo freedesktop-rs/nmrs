@@ -1055,15 +1055,12 @@ key /etc/openvpn/client.key
 
     /// Reads a string value from the `vpn.data` dict of built settings.
     fn vpn_data_value(
-        settings: &std::collections::HashMap<
-            &str,
-            std::collections::HashMap<&str, zvariant::Value>,
-        >,
+        settings: &std::collections::HashMap<&str, std::collections::HashMap<&str, zbus::Variant>>,
         key: &str,
     ) -> Option<String> {
         match settings.get("vpn")?.get("data")? {
-            zvariant::Value::Dict(dict) => dict
-                .get::<zvariant::Value, String>(&zvariant::Value::from(key))
+            zbus::Variant::Dict(dict) => dict
+                .get::<zbus::Variant, String>(&zbus::Variant::from(key))
                 .ok()?,
             _ => None,
         }

@@ -28,7 +28,7 @@
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use uuid::Uuid;
-use zvariant::Value;
+use zbus::Variant;
 
 use crate::api::models::ConnectionOptions;
 
@@ -115,7 +115,7 @@ impl Route {
 ///     .build();
 /// ```
 pub struct ConnectionBuilder {
-    settings: HashMap<&'static str, HashMap<&'static str, Value<'static>>>,
+    settings: HashMap<&'static str, HashMap<&'static str, Variant<'static>>>,
 }
 
 impl ConnectionBuilder {
@@ -139,9 +139,9 @@ impl ConnectionBuilder {
         let mut settings = HashMap::new();
         let mut connection = HashMap::new();
 
-        connection.insert("type", Value::from(connection_type.to_string()));
-        connection.insert("id", Value::from(id.into()));
-        connection.insert("uuid", Value::from(Uuid::new_v4().to_string()));
+        connection.insert("type", Variant::from(connection_type.to_string()));
+        connection.insert("id", Variant::from(id.into()));
+        connection.insert("uuid", Variant::from(Uuid::new_v4().to_string()));
 
         settings.insert("connection", connection);
 
@@ -155,7 +155,7 @@ impl ConnectionBuilder {
     #[must_use]
     pub fn uuid(mut self, uuid: Uuid) -> Self {
         if let Some(conn) = self.settings.get_mut("connection") {
-            conn.insert("uuid", Value::from(uuid.to_string()));
+            conn.insert("uuid", Variant::from(uuid.to_string()));
         }
         self
     }
@@ -166,7 +166,7 @@ impl ConnectionBuilder {
     #[must_use]
     pub fn interface_name(mut self, name: impl Into<String>) -> Self {
         if let Some(conn) = self.settings.get_mut("connection") {
-            conn.insert("interface-name", Value::from(name.into()));
+            conn.insert("interface-name", Variant::from(name.into()));
         }
         self
     }
@@ -175,7 +175,7 @@ impl ConnectionBuilder {
     #[must_use]
     pub fn autoconnect(mut self, enabled: bool) -> Self {
         if let Some(conn) = self.settings.get_mut("connection") {
-            conn.insert("autoconnect", Value::from(enabled));
+            conn.insert("autoconnect", Variant::from(enabled));
         }
         self
     }
@@ -187,7 +187,7 @@ impl ConnectionBuilder {
     #[must_use]
     pub fn autoconnect_priority(mut self, priority: i32) -> Self {
         if let Some(conn) = self.settings.get_mut("connection") {
-            conn.insert("autoconnect-priority", Value::from(priority));
+            conn.insert("autoconnect-priority", Variant::from(priority));
         }
         self
     }
@@ -199,7 +199,7 @@ impl ConnectionBuilder {
     #[must_use]
     pub fn autoconnect_retries(mut self, retries: i32) -> Self {
         if let Some(conn) = self.settings.get_mut("connection") {
-            conn.insert("autoconnect-retries", Value::from(retries));
+            conn.insert("autoconnect-retries", Variant::from(retries));
         }
         self
     }
@@ -210,14 +210,14 @@ impl ConnectionBuilder {
     #[must_use]
     pub fn options(mut self, opts: &ConnectionOptions) -> Self {
         if let Some(conn) = self.settings.get_mut("connection") {
-            conn.insert("autoconnect", Value::from(opts.autoconnect));
+            conn.insert("autoconnect", Variant::from(opts.autoconnect));
 
             if let Some(priority) = opts.autoconnect_priority {
-                conn.insert("autoconnect-priority", Value::from(priority));
+                conn.insert("autoconnect-priority", Variant::from(priority));
             }
 
             if let Some(retries) = opts.autoconnect_retries {
-                conn.insert("autoconnect-retries", Value::from(retries));
+                conn.insert("autoconnect-retries", Variant::from(retries));
             }
         }
         self
@@ -227,7 +227,7 @@ impl ConnectionBuilder {
     #[must_use]
     pub fn ipv4_auto(mut self) -> Self {
         let mut ipv4 = HashMap::new();
-        ipv4.insert("method", Value::from("auto"));
+        ipv4.insert("method", Variant::from("auto"));
         self.settings.insert("ipv4", ipv4);
         self
     }
@@ -248,20 +248,20 @@ impl ConnectionBuilder {
     #[must_use]
     pub fn ipv4_manual(mut self, addresses: Vec<IpConfig>) -> Self {
         let mut ipv4 = HashMap::new();
-        ipv4.insert("method", Value::from("manual"));
+        ipv4.insert("method", Variant::from("manual"));
 
         // Convert to address-data format (array of dictionaries)
-        let address_data: Vec<HashMap<String, Value<'static>>> = addresses
+        let address_data: Vec<HashMap<String, Variant<'static>>> = addresses
             .into_iter()
             .map(|config| {
                 let mut addr_dict = HashMap::new();
-                addr_dict.insert("address".to_string(), Value::from(config.address));
-                addr_dict.insert("prefix".to_string(), Value::from(config.prefix));
+                addr_dict.insert("address".to_string(), Variant::from(config.address));
+                addr_dict.insert("prefix".to_string(), Variant::from(config.prefix));
                 addr_dict
             })
             .collect();
 
-        ipv4.insert("address-data", Value::from(address_data));
+        ipv4.insert("address-data", Variant::from(address_data));
         self.settings.insert("ipv4", ipv4);
         self
     }
@@ -270,7 +270,7 @@ impl ConnectionBuilder {
     #[must_use]
     pub fn ipv4_disabled(mut self) -> Self {
         let mut ipv4 = HashMap::new();
-        ipv4.insert("method", Value::from("disabled"));
+        ipv4.insert("method", Variant::from("disabled"));
         self.settings.insert("ipv4", ipv4);
         self
     }
@@ -279,7 +279,7 @@ impl ConnectionBuilder {
     #[must_use]
     pub fn ipv4_link_local(mut self) -> Self {
         let mut ipv4 = HashMap::new();
-        ipv4.insert("method", Value::from("link-local"));
+        ipv4.insert("method", Variant::from("link-local"));
         self.settings.insert("ipv4", ipv4);
         self
     }
@@ -290,7 +290,7 @@ impl ConnectionBuilder {
     #[must_use]
     pub fn ipv4_shared(mut self) -> Self {
         let mut ipv4 = HashMap::new();
-        ipv4.insert("method", Value::from("shared"));
+        ipv4.insert("method", Variant::from("shared"));
         self.settings.insert("ipv4", ipv4);
         self
     }
@@ -302,18 +302,18 @@ impl ConnectionBuilder {
     #[must_use]
     pub fn ipv4_shared_with_ip_range(mut self, addresses: Vec<IpConfig>) -> Self {
         let mut ipv4 = HashMap::new();
-        ipv4.insert("method", Value::from("shared"));
+        ipv4.insert("method", Variant::from("shared"));
 
-        let address_data: Vec<HashMap<String, Value<'static>>> = addresses
+        let address_data: Vec<HashMap<String, Variant<'static>>> = addresses
             .into_iter()
             .map(|config| {
                 let mut addr_dict = HashMap::new();
-                addr_dict.insert("address".to_string(), Value::from(config.address));
-                addr_dict.insert("prefix".to_string(), Value::from(config.prefix));
+                addr_dict.insert("address".to_string(), Variant::from(config.address));
+                addr_dict.insert("prefix".to_string(), Variant::from(config.prefix));
                 addr_dict
             })
             .collect();
-        ipv4.insert("address-data", Value::from(address_data));
+        ipv4.insert("address-data", Variant::from(address_data));
 
         self.settings.insert("ipv4", ipv4);
         self
@@ -335,7 +335,7 @@ impl ConnectionBuilder {
             .collect();
 
         if let Some(ipv4) = self.settings.get_mut("ipv4") {
-            ipv4.insert("dns", Value::from(dns_u32));
+            ipv4.insert("dns", Variant::from(dns_u32));
         }
         self
     }
@@ -344,7 +344,7 @@ impl ConnectionBuilder {
     #[must_use]
     pub fn ipv4_gateway(mut self, gateway: Ipv4Addr) -> Self {
         if let Some(ipv4) = self.settings.get_mut("ipv4") {
-            ipv4.insert("gateway", Value::from(gateway.to_string()));
+            ipv4.insert("gateway", Variant::from(gateway.to_string()));
         }
         self
     }
@@ -352,19 +352,19 @@ impl ConnectionBuilder {
     /// Adds IPv4 static routes.
     #[must_use]
     pub fn ipv4_routes(mut self, routes: Vec<Route>) -> Self {
-        let route_data: Vec<HashMap<String, Value<'static>>> = routes
+        let route_data: Vec<HashMap<String, Variant<'static>>> = routes
             .into_iter()
             .map(|route| {
                 let mut route_dict = HashMap::new();
-                route_dict.insert("dest".to_string(), Value::from(route.dest));
-                route_dict.insert("prefix".to_string(), Value::from(route.prefix));
+                route_dict.insert("dest".to_string(), Variant::from(route.dest));
+                route_dict.insert("prefix".to_string(), Variant::from(route.prefix));
 
                 if let Some(next_hop) = route.next_hop {
-                    route_dict.insert("next-hop".to_string(), Value::from(next_hop));
+                    route_dict.insert("next-hop".to_string(), Variant::from(next_hop));
                 }
 
                 if let Some(metric) = route.metric {
-                    route_dict.insert("metric".to_string(), Value::from(metric));
+                    route_dict.insert("metric".to_string(), Variant::from(metric));
                 }
 
                 route_dict
@@ -372,7 +372,7 @@ impl ConnectionBuilder {
             .collect();
 
         if let Some(ipv4) = self.settings.get_mut("ipv4") {
-            ipv4.insert("route-data", Value::from(route_data));
+            ipv4.insert("route-data", Variant::from(route_data));
         }
         self
     }
@@ -381,7 +381,7 @@ impl ConnectionBuilder {
     #[must_use]
     pub fn ipv6_auto(mut self) -> Self {
         let mut ipv6 = HashMap::new();
-        ipv6.insert("method", Value::from("auto"));
+        ipv6.insert("method", Variant::from("auto"));
         self.settings.insert("ipv6", ipv6);
         self
     }
@@ -390,19 +390,19 @@ impl ConnectionBuilder {
     #[must_use]
     pub fn ipv6_manual(mut self, addresses: Vec<IpConfig>) -> Self {
         let mut ipv6 = HashMap::new();
-        ipv6.insert("method", Value::from("manual"));
+        ipv6.insert("method", Variant::from("manual"));
 
-        let address_data: Vec<HashMap<String, Value<'static>>> = addresses
+        let address_data: Vec<HashMap<String, Variant<'static>>> = addresses
             .into_iter()
             .map(|config| {
                 let mut addr_dict = HashMap::new();
-                addr_dict.insert("address".to_string(), Value::from(config.address));
-                addr_dict.insert("prefix".to_string(), Value::from(config.prefix));
+                addr_dict.insert("address".to_string(), Variant::from(config.address));
+                addr_dict.insert("prefix".to_string(), Variant::from(config.prefix));
                 addr_dict
             })
             .collect();
 
-        ipv6.insert("address-data", Value::from(address_data));
+        ipv6.insert("address-data", Variant::from(address_data));
         self.settings.insert("ipv6", ipv6);
         self
     }
@@ -411,7 +411,7 @@ impl ConnectionBuilder {
     #[must_use]
     pub fn ipv6_ignore(mut self) -> Self {
         let mut ipv6 = HashMap::new();
-        ipv6.insert("method", Value::from("ignore"));
+        ipv6.insert("method", Variant::from("ignore"));
         self.settings.insert("ipv6", ipv6);
         self
     }
@@ -420,7 +420,7 @@ impl ConnectionBuilder {
     #[must_use]
     pub fn ipv6_link_local(mut self) -> Self {
         let mut ipv6 = HashMap::new();
-        ipv6.insert("method", Value::from("link-local"));
+        ipv6.insert("method", Variant::from("link-local"));
         self.settings.insert("ipv6", ipv6);
         self
     }
@@ -434,7 +434,7 @@ impl ConnectionBuilder {
             .collect();
 
         if let Some(ipv6) = self.settings.get_mut("ipv6") {
-            ipv6.insert("dns", Value::from(dns_bytes));
+            ipv6.insert("dns", Variant::from(dns_bytes));
         }
         self
     }
@@ -443,7 +443,7 @@ impl ConnectionBuilder {
     #[must_use]
     pub fn ipv6_gateway(mut self, gateway: Ipv6Addr) -> Self {
         if let Some(ipv6) = self.settings.get_mut("ipv6") {
-            ipv6.insert("gateway", Value::from(gateway.to_string()));
+            ipv6.insert("gateway", Variant::from(gateway.to_string()));
         }
         self
     }
@@ -451,19 +451,19 @@ impl ConnectionBuilder {
     /// Adds IPv6 static routes.
     #[must_use]
     pub fn ipv6_routes(mut self, routes: Vec<Route>) -> Self {
-        let route_data: Vec<HashMap<String, Value<'static>>> = routes
+        let route_data: Vec<HashMap<String, Variant<'static>>> = routes
             .into_iter()
             .map(|route| {
                 let mut route_dict = HashMap::new();
-                route_dict.insert("dest".to_string(), Value::from(route.dest));
-                route_dict.insert("prefix".to_string(), Value::from(route.prefix));
+                route_dict.insert("dest".to_string(), Variant::from(route.dest));
+                route_dict.insert("prefix".to_string(), Variant::from(route.prefix));
 
                 if let Some(next_hop) = route.next_hop {
-                    route_dict.insert("next-hop".to_string(), Value::from(next_hop));
+                    route_dict.insert("next-hop".to_string(), Variant::from(next_hop));
                 }
 
                 if let Some(metric) = route.metric {
-                    route_dict.insert("metric".to_string(), Value::from(metric));
+                    route_dict.insert("metric".to_string(), Variant::from(metric));
                 }
 
                 route_dict
@@ -471,7 +471,7 @@ impl ConnectionBuilder {
             .collect();
 
         if let Some(ipv6) = self.settings.get_mut("ipv6") {
-            ipv6.insert("route-data", Value::from(route_data));
+            ipv6.insert("route-data", Variant::from(route_data));
         }
         self
     }
@@ -487,10 +487,10 @@ impl ConnectionBuilder {
     /// ```rust
     /// use nmrs::builders::ConnectionBuilder;
     /// use std::collections::HashMap;
-    /// use zvariant::Value;
+    /// use zbus::Variant;
     ///
     /// let mut bridge_section = HashMap::new();
-    /// bridge_section.insert("stp", Value::from(true));
+    /// bridge_section.insert("stp", Variant::from(true));
     ///
     /// let settings = ConnectionBuilder::new("bridge", "br0")
     ///     .with_section("bridge", bridge_section)
@@ -500,7 +500,7 @@ impl ConnectionBuilder {
     pub fn with_section(
         mut self,
         name: &'static str,
-        section: HashMap<&'static str, Value<'static>>,
+        section: HashMap<&'static str, Variant<'static>>,
     ) -> Self {
         self.settings.insert(name, section);
         self
@@ -520,19 +520,19 @@ impl ConnectionBuilder {
     ///
     /// ```rust
     /// use nmrs::builders::ConnectionBuilder;
-    /// use zvariant::Value;
+    /// use zbus::Variant;
     ///
     /// let settings = ConnectionBuilder::new("802-3-ethernet", "eth0")
     ///     .ipv4_auto()
     ///     .update_section("ipv4", |ipv4| {
-    ///         ipv4.insert("may-fail", Value::from(false));
+    ///         ipv4.insert("may-fail", Variant::from(false));
     ///     })
     ///     .build();
     /// ```
     #[must_use]
     pub fn update_section<F>(mut self, name: &'static str, f: F) -> Self
     where
-        F: FnOnce(&mut HashMap<&'static str, Value<'static>>),
+        F: FnOnce(&mut HashMap<&'static str, Variant<'static>>),
     {
         if let Some(section) = self.settings.get_mut(name) {
             f(section);
@@ -545,7 +545,7 @@ impl ConnectionBuilder {
     /// This consumes the builder and returns the complete settings structure
     /// ready to be passed to NetworkManager's D-Bus API.
     #[must_use]
-    pub fn build(self) -> HashMap<&'static str, HashMap<&'static str, Value<'static>>> {
+    pub fn build(self) -> HashMap<&'static str, HashMap<&'static str, Variant<'static>>> {
         self.settings
     }
 }
@@ -554,11 +554,11 @@ impl ConnectionBuilder {
 mod tests {
     use super::*;
 
-    fn address_data(address: &str, prefix: u32) -> Value<'static> {
+    fn address_data(address: &str, prefix: u32) -> Variant<'static> {
         let mut entry = HashMap::new();
-        entry.insert("address".to_string(), Value::from(address.to_string()));
-        entry.insert("prefix".to_string(), Value::from(prefix));
-        Value::from(vec![entry])
+        entry.insert("address".to_string(), Variant::from(address.to_string()));
+        entry.insert("prefix".to_string(), Variant::from(prefix));
+        Variant::from(vec![entry])
     }
 
     fn route_data(
@@ -566,17 +566,17 @@ mod tests {
         prefix: u32,
         next_hop: Option<&str>,
         metric: Option<u32>,
-    ) -> Value<'static> {
+    ) -> Variant<'static> {
         let mut entry = HashMap::new();
-        entry.insert("dest".to_string(), Value::from(dest.to_string()));
-        entry.insert("prefix".to_string(), Value::from(prefix));
+        entry.insert("dest".to_string(), Variant::from(dest.to_string()));
+        entry.insert("prefix".to_string(), Variant::from(prefix));
         if let Some(next_hop) = next_hop {
-            entry.insert("next-hop".to_string(), Value::from(next_hop.to_string()));
+            entry.insert("next-hop".to_string(), Variant::from(next_hop.to_string()));
         }
         if let Some(metric) = metric {
-            entry.insert("metric".to_string(), Value::from(metric));
+            entry.insert("metric".to_string(), Variant::from(metric));
         }
-        Value::from(vec![entry])
+        Variant::from(vec![entry])
     }
 
     #[test]
@@ -585,8 +585,8 @@ mod tests {
 
         assert!(settings.contains_key("connection"));
         let conn = settings.get("connection").unwrap();
-        assert_eq!(conn.get("type"), Some(&Value::from("802-11-wireless")));
-        assert_eq!(conn.get("id"), Some(&Value::from("TestNetwork")));
+        assert_eq!(conn.get("type"), Some(&Variant::from("802-11-wireless")));
+        assert_eq!(conn.get("id"), Some(&Variant::from("TestNetwork")));
         assert!(conn.contains_key("uuid"));
     }
 
@@ -598,7 +598,10 @@ mod tests {
             .build();
 
         let conn = settings.get("connection").unwrap();
-        assert_eq!(conn.get("uuid"), Some(&Value::from(test_uuid.to_string())));
+        assert_eq!(
+            conn.get("uuid"),
+            Some(&Variant::from(test_uuid.to_string()))
+        );
     }
 
     #[test]
@@ -608,7 +611,7 @@ mod tests {
             .build();
 
         let conn = settings.get("connection").unwrap();
-        assert_eq!(conn.get("interface-name"), Some(&Value::from("eth0")));
+        assert_eq!(conn.get("interface-name"), Some(&Variant::from("eth0")));
     }
 
     #[test]
@@ -620,9 +623,12 @@ mod tests {
             .build();
 
         let conn = settings.get("connection").unwrap();
-        assert_eq!(conn.get("autoconnect"), Some(&Value::from(false)));
-        assert_eq!(conn.get("autoconnect-priority"), Some(&Value::from(10i32)));
-        assert_eq!(conn.get("autoconnect-retries"), Some(&Value::from(3i32)));
+        assert_eq!(conn.get("autoconnect"), Some(&Variant::from(false)));
+        assert_eq!(
+            conn.get("autoconnect-priority"),
+            Some(&Variant::from(10i32))
+        );
+        assert_eq!(conn.get("autoconnect-retries"), Some(&Variant::from(3i32)));
     }
 
     #[test]
@@ -638,9 +644,9 @@ mod tests {
             .build();
 
         let conn = settings.get("connection").unwrap();
-        assert_eq!(conn.get("autoconnect"), Some(&Value::from(true)));
-        assert_eq!(conn.get("autoconnect-priority"), Some(&Value::from(5i32)));
-        assert_eq!(conn.get("autoconnect-retries"), Some(&Value::from(2i32)));
+        assert_eq!(conn.get("autoconnect"), Some(&Variant::from(true)));
+        assert_eq!(conn.get("autoconnect-priority"), Some(&Variant::from(5i32)));
+        assert_eq!(conn.get("autoconnect-retries"), Some(&Variant::from(2i32)));
     }
 
     #[test]
@@ -650,7 +656,7 @@ mod tests {
             .build();
 
         let conn = settings.get("connection").unwrap();
-        assert_eq!(conn.get("autoconnect"), Some(&Value::from(false)));
+        assert_eq!(conn.get("autoconnect"), Some(&Variant::from(false)));
         assert!(!conn.contains_key("autoconnect-priority"));
         assert!(!conn.contains_key("autoconnect-retries"));
     }
@@ -662,7 +668,7 @@ mod tests {
             .build();
 
         let ipv4 = settings.get("ipv4").unwrap();
-        assert_eq!(ipv4.get("method"), Some(&Value::from("auto")));
+        assert_eq!(ipv4.get("method"), Some(&Variant::from("auto")));
     }
 
     #[test]
@@ -672,7 +678,7 @@ mod tests {
             .build();
 
         let ipv4 = settings.get("ipv4").unwrap();
-        assert_eq!(ipv4.get("method"), Some(&Value::from("manual")));
+        assert_eq!(ipv4.get("method"), Some(&Variant::from("manual")));
         let addresses = ipv4.get("address-data").unwrap();
         assert_eq!(addresses.value_signature().to_string(), "aa{sv}");
         assert_eq!(addresses, &address_data("192.168.1.100", 24));
@@ -685,7 +691,7 @@ mod tests {
             .build();
 
         let ipv4 = settings.get("ipv4").unwrap();
-        assert_eq!(ipv4.get("method"), Some(&Value::from("disabled")));
+        assert_eq!(ipv4.get("method"), Some(&Variant::from("disabled")));
     }
 
     #[test]
@@ -695,7 +701,7 @@ mod tests {
             .build();
         assert_eq!(
             link_local["ipv4"].get("method"),
-            Some(&Value::from("link-local"))
+            Some(&Variant::from("link-local"))
         );
     }
 
@@ -704,7 +710,7 @@ mod tests {
         let shared = ConnectionBuilder::new("802-3-ethernet", "shared")
             .ipv4_shared()
             .build();
-        assert_eq!(shared["ipv4"].get("method"), Some(&Value::from("shared")));
+        assert_eq!(shared["ipv4"].get("method"), Some(&Variant::from("shared")));
     }
 
     #[test]
@@ -713,7 +719,7 @@ mod tests {
             .ipv4_shared_with_ip_range(vec![IpConfig::new("192.168.1.100", 24)])
             .build();
         let shared = settings.get("ipv4").unwrap();
-        assert_eq!(shared.get("method"), Some(&Value::from("shared")));
+        assert_eq!(shared.get("method"), Some(&Variant::from("shared")));
         let addresses = shared.get("address-data").unwrap();
         assert_eq!(addresses.value_signature().to_string(), "aa{sv}");
         assert_eq!(addresses, &address_data("192.168.1.100", 24));
@@ -724,7 +730,7 @@ mod tests {
     /// Each entry is an `in_addr_t`, so the address octets are the `u32`'s
     /// in-memory bytes. Deliberately expressed as the inverse of the contract
     /// rather than by reusing the builder's own conversion.
-    fn decode_ipv4_dns(value: &Value<'_>) -> Vec<Ipv4Addr> {
+    fn decode_ipv4_dns(value: &Variant<'_>) -> Vec<Ipv4Addr> {
         <Vec<u32>>::try_from(value.try_clone().unwrap())
             .unwrap()
             .into_iter()
@@ -781,7 +787,7 @@ mod tests {
             .build();
 
         let ipv4 = settings.get("ipv4").unwrap();
-        assert_eq!(ipv4.get("gateway"), Some(&Value::from("192.168.1.1")));
+        assert_eq!(ipv4.get("gateway"), Some(&Variant::from("192.168.1.1")));
         let routes = ipv4.get("route-data").unwrap();
         assert_eq!(routes.value_signature().to_string(), "aa{sv}");
         assert_eq!(
@@ -797,7 +803,7 @@ mod tests {
             .build();
 
         let ipv6 = settings.get("ipv6").unwrap();
-        assert_eq!(ipv6.get("method"), Some(&Value::from("auto")));
+        assert_eq!(ipv6.get("method"), Some(&Variant::from("auto")));
     }
 
     #[test]
@@ -807,7 +813,7 @@ mod tests {
             .build();
 
         let ipv6 = settings.get("ipv6").unwrap();
-        assert_eq!(ipv6.get("method"), Some(&Value::from("manual")));
+        assert_eq!(ipv6.get("method"), Some(&Variant::from("manual")));
         let addresses = ipv6.get("address-data").unwrap();
         assert_eq!(addresses.value_signature().to_string(), "aa{sv}");
         assert_eq!(addresses, &address_data("2001:db8::10", 64));
@@ -820,7 +826,7 @@ mod tests {
             .build();
 
         let ipv6 = settings.get("ipv6").unwrap();
-        assert_eq!(ipv6.get("method"), Some(&Value::from("ignore")));
+        assert_eq!(ipv6.get("method"), Some(&Variant::from("ignore")));
     }
 
     #[test]
@@ -831,7 +837,7 @@ mod tests {
 
         assert_eq!(
             settings["ipv6"].get("method"),
-            Some(&Value::from("link-local"))
+            Some(&Variant::from("link-local"))
         );
     }
 
@@ -857,13 +863,13 @@ mod tests {
         assert_eq!(dns_value.value_signature().to_string(), "aay");
         assert_eq!(
             dns_value,
-            &Value::from(
+            &Variant::from(
                 dns.into_iter()
                     .map(|server| server.octets().to_vec())
                     .collect::<Vec<_>>()
             )
         );
-        assert_eq!(ipv6.get("gateway"), Some(&Value::from("2001:db8::1")));
+        assert_eq!(ipv6.get("gateway"), Some(&Variant::from("2001:db8::1")));
         let routes = ipv6.get("route-data").unwrap();
         assert_eq!(routes.value_signature().to_string(), "aa{sv}");
         assert_eq!(
@@ -875,7 +881,7 @@ mod tests {
     #[test]
     fn adds_custom_section() {
         let mut bridge = HashMap::new();
-        bridge.insert("stp", Value::from(true));
+        bridge.insert("stp", Variant::from(true));
 
         let settings = ConnectionBuilder::new("bridge", "br0")
             .with_section("bridge", bridge)
@@ -883,7 +889,7 @@ mod tests {
 
         assert!(settings.contains_key("bridge"));
         let bridge_section = settings.get("bridge").unwrap();
-        assert_eq!(bridge_section.get("stp"), Some(&Value::from(true)));
+        assert_eq!(bridge_section.get("stp"), Some(&Variant::from(true)));
     }
 
     #[test]
@@ -891,12 +897,12 @@ mod tests {
         let settings = ConnectionBuilder::new("802-3-ethernet", "eth0")
             .ipv4_auto()
             .update_section("ipv4", |ipv4| {
-                ipv4.insert("may-fail", Value::from(false));
+                ipv4.insert("may-fail", Variant::from(false));
             })
             .build();
 
         let ipv4 = settings.get("ipv4").unwrap();
-        assert_eq!(ipv4.get("may-fail"), Some(&Value::from(false)));
+        assert_eq!(ipv4.get("may-fail"), Some(&Variant::from(false)));
     }
 
     #[test]
@@ -908,12 +914,12 @@ mod tests {
             .build();
 
         let ipv4 = settings.get("ipv4").unwrap();
-        assert_eq!(ipv4.get("method"), Some(&Value::from("manual")));
+        assert_eq!(ipv4.get("method"), Some(&Variant::from("manual")));
         assert_eq!(
             ipv4.get("address-data"),
             Some(&address_data("192.168.1.100", 24))
         );
-        assert_eq!(ipv4.get("gateway"), Some(&Value::from("192.168.1.1")));
+        assert_eq!(ipv4.get("gateway"), Some(&Variant::from("192.168.1.1")));
         assert_eq!(
             decode_ipv4_dns(ipv4.get("dns").unwrap()),
             vec![Ipv4Addr::new(192, 168, 1, 53)]

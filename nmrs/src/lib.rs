@@ -145,8 +145,9 @@
 //!
 //! ## Raw D-Bus Access
 //!
-//! The [`raw`] module re-exports [`zbus`] and [`zvariant`] so builder output
-//! types stay compatible with the connection returned by
+//! The [`raw`] module re-exports [`zbus`] (which, since zbus 6, includes the
+//! former `zvariant` wire types such as `Variant` and `OwnedObjectPath`) so
+//! builder output types stay compatible with the connection returned by
 //! [`NetworkManager::dbus_connection`](crate::NetworkManager::dbus_connection).
 //!
 //! ## Secret Agent
@@ -319,14 +320,22 @@ mod util;
 /// lifecycle, and a full example.
 pub mod agent;
 
-/// Low-level D-Bus dependencies used by [`builders`](crate::builders).
+/// Low-level D-Bus dependency used by [`builders`](crate::builders).
 ///
-/// Re-exports [`zbus`] and [`zvariant`] so advanced callers can construct
-/// proxies against [`NetworkManager::dbus_connection`](crate::NetworkManager::dbus_connection)
-/// without pinning their own potentially incompatible versions.
+/// Re-exports [`zbus`] so advanced callers can construct proxies against
+/// [`NetworkManager::dbus_connection`](crate::NetworkManager::dbus_connection)
+/// without pinning their own potentially incompatible version. zbus 6 merged
+/// the former `zvariant` crate, so its wire types (`Variant`, `OwnedVariant`,
+/// `OwnedObjectPath`, `Dict`, `Str`, ...) live at the `zbus` root.
+///
+/// `raw::zvariant` is zbus's own deprecated compatibility module and is kept
+/// for one release so existing `nmrs::raw::zvariant::...` paths still
+/// compile, with deprecation warnings. zbus removes it in 7.0; switch to
+/// `raw::zbus::...` now.
 pub mod raw {
     pub use zbus;
-    pub use zvariant;
+    #[allow(deprecated)]
+    pub use zbus::zvariant;
 }
 
 // ============================================================================

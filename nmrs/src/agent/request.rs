@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use log::warn;
-use zvariant::{OwnedObjectPath, OwnedValue, Str};
+use zbus::{OwnedObjectPath, OwnedVariant, Str};
 
 use crate::ConnectionError;
 
@@ -202,7 +202,7 @@ pub enum SecretStoreEvent {
     },
 }
 
-pub(crate) type ConnectionDict = HashMap<String, HashMap<String, OwnedValue>>;
+pub(crate) type ConnectionDict = HashMap<String, HashMap<String, OwnedVariant>>;
 
 pub(crate) enum SecretReply {
     Secrets(ConnectionDict),
@@ -231,7 +231,7 @@ impl SecretResponder {
     /// request was cancelled by NetworkManager).
     pub async fn wifi_psk(mut self, psk: impl Into<String>) -> crate::Result<()> {
         let mut inner = HashMap::new();
-        inner.insert("psk".to_owned(), OwnedValue::from(Str::from(psk.into())));
+        inner.insert("psk".to_owned(), OwnedVariant::from(Str::from(psk.into())));
         let mut outer = HashMap::new();
         outer.insert("802-11-wireless-security".to_owned(), inner);
         self.send_reply(SecretReply::Secrets(outer))
@@ -248,9 +248,12 @@ impl SecretResponder {
         password: String,
     ) -> crate::Result<()> {
         let mut inner = HashMap::new();
-        inner.insert("password".to_owned(), OwnedValue::from(Str::from(password)));
+        inner.insert(
+            "password".to_owned(),
+            OwnedVariant::from(Str::from(password)),
+        );
         if let Some(id) = identity {
-            inner.insert("identity".to_owned(), OwnedValue::from(Str::from(id)));
+            inner.insert("identity".to_owned(), OwnedVariant::from(Str::from(id)));
         }
         let mut outer = HashMap::new();
         outer.insert("802-1x".to_owned(), inner);
@@ -268,7 +271,7 @@ impl SecretResponder {
     /// Returns an error if the reply channel is already closed.
     pub async fn vpn_secrets(mut self, secrets: HashMap<String, String>) -> crate::Result<()> {
         let mut inner = HashMap::new();
-        inner.insert("secrets".to_owned(), OwnedValue::from(secrets));
+        inner.insert("secrets".to_owned(), OwnedVariant::from(secrets));
         let mut outer = HashMap::new();
         outer.insert("vpn".to_owned(), inner);
         self.send_reply(SecretReply::Secrets(outer))
@@ -286,7 +289,7 @@ impl SecretResponder {
     pub async fn raw(
         mut self,
         setting_name: impl Into<String>,
-        data: HashMap<String, OwnedValue>,
+        data: HashMap<String, OwnedVariant>,
     ) -> crate::Result<()> {
         let mut outer = HashMap::new();
         outer.insert(setting_name.into(), data);
@@ -423,7 +426,7 @@ mod tests {
         (SecretResponder::new(tx, "requested-setting".into()), rx)
     }
 
-    fn string_value<'a>(dict: &'a HashMap<String, OwnedValue>, key: &str) -> &'a str {
+    fn string_value<'a>(dict: &'a HashMap<String, OwnedVariant>, key: &str) -> &'a str {
         <&str>::try_from(dict.get(key).expect("missing secret value"))
             .expect("secret value should be a string")
     }
@@ -447,7 +450,7 @@ mod tests {
         let mut wireless = HashMap::new();
         wireless.insert(
             "ssid".to_owned(),
-            OwnedValue::try_from(zvariant::Array::from(vec![b'n', b'm', b'r', b's']))
+            OwnedVariant::try_from(zbus::Array::from(vec![b'n', b'm', b'r', b's']))
                 .expect("owned byte array"),
         );
         let mut connection = HashMap::new();
@@ -465,9 +468,9 @@ mod tests {
         let mut eap = HashMap::new();
         eap.insert(
             "identity".to_owned(),
-            OwnedValue::from(Str::from("alice@example.com")),
+            OwnedVariant::from(Str::from("alice@example.com")),
         );
-        eap.insert("eap".to_owned(), OwnedValue::from(Str::from("peap")));
+        eap.insert("eap".to_owned(), OwnedVariant::from(Str::from("peap")));
         let mut connection = HashMap::new();
         connection.insert("802-1x".to_owned(), eap);
 
@@ -485,9 +488,12 @@ mod tests {
         let mut vpn = HashMap::new();
         vpn.insert(
             "service-type".to_owned(),
-            OwnedValue::from(Str::from("org.freedesktop.NetworkManager.openvpn")),
+            OwnedVariant::from(Str::from("org.freedesktop.NetworkManager.openvpn")),
         );
-        vpn.insert("user-name".to_owned(), OwnedValue::from(Str::from("alice")));
+        vpn.insert(
+            "user-name".to_owned(),
+            OwnedVariant::from(Str::from("alice")),
+        );
         let mut connection = HashMap::new();
         connection.insert("vpn".to_owned(), vpn);
 
@@ -535,7 +541,7 @@ mod tests {
             "802-11-wireless".into(),
             HashMap::from([(
                 "ssid".into(),
-                OwnedValue::from(Str::from("legacy-string-ssid")),
+                OwnedVariant::from(Str::from("legacy-string-ssid")),
             )]),
         );
         assert_eq!(
@@ -547,7 +553,7 @@ mod tests {
             "802-11-wireless".into(),
             HashMap::from([(
                 "ssid".into(),
-                OwnedValue::try_from(zvariant::Array::from(vec![b'n', 0xff, b'm']))
+                OwnedVariant::try_from(zbus::Array::from(vec![b'n', 0xff, b'm']))
                     .expect("owned byte array"),
             )]),
         );
@@ -561,7 +567,7 @@ mod tests {
         secrets.insert("Xauth password".to_owned(), "otp".to_owned());
 
         let mut vpn = HashMap::new();
-        vpn.insert("secrets".to_owned(), OwnedValue::from(secrets));
+        vpn.insert("secrets".to_owned(), OwnedVariant::from(secrets));
         let mut connection = ConnectionDict::new();
         connection.insert("vpn".to_owned(), vpn);
 
@@ -596,7 +602,7 @@ mod tests {
         let mut inner = HashMap::new();
         inner.insert(
             "psk".to_owned(),
-            OwnedValue::from(Str::from("should-be-ignored")),
+            OwnedVariant::from(Str::from("should-be-ignored")),
         );
         let mut connection = ConnectionDict::new();
         connection.insert("802-11-wireless-security".to_owned(), inner);
@@ -681,7 +687,7 @@ mod tests {
     #[tokio::test]
     async fn responder_raw_preserves_setting_and_values() {
         let (responder, rx) = responder();
-        let data = HashMap::from([("pin".to_owned(), OwnedValue::from(Str::from("1234")))]);
+        let data = HashMap::from([("pin".to_owned(), OwnedVariant::from(Str::from("1234")))]);
 
         responder.raw("gsm", data).await.unwrap();
         let SecretReply::Secrets(settings) = rx.await.expect("reply channel closed") else {

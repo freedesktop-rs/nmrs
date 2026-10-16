@@ -11,7 +11,7 @@ use std::pin::Pin;
 use tokio::select;
 use tokio::sync::{oneshot, watch};
 use zbus::Connection;
-use zvariant::OwnedObjectPath;
+use zbus::OwnedObjectPath;
 
 use crate::Result;
 use crate::api::models::ConnectionError;
@@ -165,7 +165,7 @@ async fn initial_network_change_streams(
 
     for dev_path in devices {
         let dev = NMDeviceProxy::builder(conn)
-            .path(dev_path.clone())?
+            .path(dev_path.clone())
             .build()
             .await?;
 
@@ -174,7 +174,7 @@ async fn initial_network_change_streams(
         }
 
         let wifi = NMWirelessProxy::builder(conn)
-            .path(dev_path.clone())?
+            .path(dev_path.clone())
             .build()
             .await?;
 
@@ -247,7 +247,7 @@ async fn subscribe_wifi_device(
     monitored_access_points: &mut HashSet<String>,
 ) -> Result<()> {
     let dev = NMDeviceProxy::builder(conn)
-        .path(dev_path.clone())?
+        .path(dev_path.clone())
         .build()
         .await?;
 
@@ -256,7 +256,7 @@ async fn subscribe_wifi_device(
     }
 
     let wifi = NMWirelessProxy::builder(conn)
-        .path(dev_path.clone())?
+        .path(dev_path.clone())
         .build()
         .await?;
 
@@ -305,7 +305,7 @@ async fn access_point_strength_stream(
     ap_path: OwnedObjectPath,
 ) -> Result<NetworkChangeStream> {
     let ap = NMAccessPointProxy::builder(conn)
-        .path(ap_path.clone())?
+        .path(ap_path.clone())
         .build()
         .await?;
 

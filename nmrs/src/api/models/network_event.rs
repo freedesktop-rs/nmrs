@@ -3,7 +3,7 @@
 use std::pin::Pin;
 
 use futures::Stream;
-use zvariant::OwnedObjectPath;
+use zbus::OwnedObjectPath;
 
 /// Stream of high-level network refresh events.
 pub type NetworkEventStream =

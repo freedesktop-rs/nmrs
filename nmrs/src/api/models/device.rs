@@ -1,6 +1,6 @@
 use std::fmt::{Display, Formatter};
 
-use zvariant::OwnedObjectPath;
+use zbus::OwnedObjectPath;
 
 /// Represents a network device managed by NetworkManager.
 ///

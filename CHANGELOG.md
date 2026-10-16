@@ -3,6 +3,31 @@
 All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
+### Changed
+
+- **Breaking:** nmrs now builds on zbus 6, which merged the `zvariant` crate
+  into `zbus` and renamed `Value` / `OwnedValue` to `zbus::Variant` /
+  `zbus::OwnedVariant`. Every public type that came from `zvariant` now comes
+  from `zbus`: builder output (`ConnectionBuilder::build`,
+  `WifiConnectionBuilder::build`),
+  `FromSetting::from_setting`, `SavedConnection::raw_overlay`, the secret
+  agent's `ConnectionDict` and `SecretRequest::connection_path`, and every
+  `OwnedObjectPath` in the API. Callers that pass or inspect those values need
+  zbus 6 themselves, or should reach the types through `nmrs::raw::zbus`.
+  `nmrs::raw::zvariant` now re-exports zbus's deprecated compatibility module,
+  so existing `nmrs::raw::zvariant::...` paths keep compiling with deprecation
+  warnings until zbus 7 removes it.
+  ([#578](https://github.com/freedesktop-rs/nmrs/pull/578))
+- D-Bus I/O runs on the caller's Tokio runtime when one is current (zbus's
+  `tokio` feature), instead of on a separate zbus thread. Outside Tokio, zbus's
+  own runtime drives the connection from a helper thread, so async-std, smol
+  and GLib keep working. ([#578](https://github.com/freedesktop-rs/nmrs/pull/578))
+- zbus 6 reports an error reply named `org.freedesktop.DBus.Error.*` as
+  `zbus::Error::FDO` instead of `zbus::Error::MethodError`. nmrs's own
+  matching already handles both; code that inspects `ConnectionError::Dbus`
+  directly may see the other variant.
+  ([#578](https://github.com/freedesktop-rs/nmrs/pull/578))
+
 ### Fixed
 
 - `PermHwAddress` is now read from NetworkManager's `Device.Wired` and

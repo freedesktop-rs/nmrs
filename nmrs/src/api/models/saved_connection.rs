@@ -14,12 +14,12 @@ use std::{
     sync::Arc,
 };
 
-use zvariant::{OwnedObjectPath, OwnedValue};
+use zbus::{OwnedObjectPath, OwnedVariant};
 
 use crate::models::{FromSetting, IpAddress, IpRoute, Property};
 
 /// Raw `GetSettings` output: section name to key to value.
-pub(crate) type RawSettings = HashMap<String, HashMap<String, OwnedValue>>;
+pub(crate) type RawSettings = HashMap<String, HashMap<String, OwnedVariant>>;
 
 /// Full saved profile with a structured [`SettingsSummary`].
 ///
@@ -156,7 +156,7 @@ pub struct SettingsPatch {
     /// `Some(Some(name))` sets `interface-name`; `Some(None)` clears it (best-effort empty string).
     pub interface_name: Option<Option<String>>,
     /// Merged after the fields above; section → key → value. Overwrites keys present.
-    pub raw_overlay: Option<HashMap<String, HashMap<String, OwnedValue>>>,
+    pub raw_overlay: Option<HashMap<String, HashMap<String, OwnedVariant>>>,
 }
 
 /// NM `password-flags` / `psk-flags` style bitmask (subset used for summaries).

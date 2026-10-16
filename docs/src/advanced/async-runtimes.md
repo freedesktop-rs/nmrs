@@ -100,7 +100,12 @@ glib::MainContext::default().spawn_local(async {
 
 ## How It Works
 
-nmrs uses `zbus` for D-Bus communication, which itself uses an internal async runtime. When you call `NetworkManager::new().await`, zbus establishes a connection to the system D-Bus. This connection is runtime-agnostic — zbus handles the async I/O internally.
+nmrs uses `zbus` for D-Bus communication. When you call `NetworkManager::new().await`, zbus establishes a connection to the system D-Bus and picks the runtime that drives it:
+
+- Inside a Tokio runtime, the connection's I/O and internal tasks run on that runtime (nmrs enables zbus's `tokio` feature).
+- Anywhere else, zbus's own runtime ([`zruntime`](https://docs.rs/zruntime)) drives the connection from a helper thread, so async-std, smol, and GLib keep working without configuration.
+
+Either way, nothing in nmrs's API depends on which runtime is in use.
 
 The `NetworkManager` struct is `Clone` and `Send`, so you can share it across tasks regardless of which runtime you use.
 

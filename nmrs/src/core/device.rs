@@ -6,7 +6,7 @@
 
 use log::{debug, trace, warn};
 use zbus::Connection;
-use zvariant::OwnedObjectPath;
+use zbus::OwnedObjectPath;
 
 use crate::Result;
 use crate::api::models::{
@@ -57,7 +57,6 @@ async fn read_perm_hw_address(
         PermHwAddressSource::Wired => {
             NMWiredProxy::builder(conn)
                 .path(path.clone())
-                .ok()?
                 .build()
                 .await
                 .ok()?
@@ -67,7 +66,6 @@ async fn read_perm_hw_address(
         PermHwAddressSource::Wireless => {
             NMWirelessProxy::builder(conn)
                 .path(path.clone())
-                .ok()?
                 .build()
                 .await
                 .ok()?
@@ -105,10 +103,7 @@ pub(crate) async fn list_devices(conn: &Connection) -> Result<Vec<Device>> {
 
     let mut devices = Vec::new();
     for p in paths {
-        let d_proxy = NMDeviceProxy::builder(conn)
-            .path(p.clone())?
-            .build()
-            .await?;
+        let d_proxy = NMDeviceProxy::builder(conn).path(p.clone()).build().await?;
 
         let interface = d_proxy
             .interface()
@@ -173,15 +168,11 @@ pub(crate) async fn list_devices(conn: &Connection) -> Result<Vec<Device>> {
             }
         };
         let frequency = if raw_type == device_type::WIFI {
-            match NMWirelessProxy::builder(conn)
-                .path(p.clone())?
-                .build()
-                .await
-            {
+            match NMWirelessProxy::builder(conn).path(p.clone()).build().await {
                 Ok(wifi) => match wifi.active_access_point().await {
                     Ok(ap_path) if ap_path.as_str() != "/" => {
                         match NMAccessPointProxy::builder(conn)
-                            .path(ap_path)?
+                            .path(ap_path)
                             .build()
                             .await
                         {
@@ -221,7 +212,7 @@ pub(crate) async fn list_devices(conn: &Connection) -> Result<Vec<Device>> {
 
         let speed_mbps = if device_type_registry::is_wired(raw_type) {
             async {
-                let wired = NMWiredProxy::builder(conn).path(p.clone())?.build().await?;
+                let wired = NMWiredProxy::builder(conn).path(p.clone()).build().await?;
                 wired.speed().await
             }
             .await
@@ -260,7 +251,7 @@ pub(crate) async fn set_device_autoconnect(
             ConnectionError::NotFound => ConnectionError::InterfaceNotFound(interface.to_string()),
             other => other,
         })?;
-    let device = NMDeviceProxy::builder(conn).path(path)?.build().await?;
+    let device = NMDeviceProxy::builder(conn).path(path).build().await?;
 
     device
         .set_autoconnect(autoconnect)
@@ -283,7 +274,7 @@ pub(crate) async fn set_device_managed(
             ConnectionError::NotFound => ConnectionError::InterfaceNotFound(interface.to_string()),
             other => other,
         })?;
-    let device = NMDeviceProxy::builder(conn).path(path)?.build().await?;
+    let device = NMDeviceProxy::builder(conn).path(path).build().await?;
 
     device
         .set_managed(managed)
@@ -307,10 +298,7 @@ pub(crate) async fn list_wired_device_details(conn: &Connection) -> Result<Vec<W
 
     let mut devices = Vec::new();
     for p in paths {
-        let d_proxy = NMDeviceProxy::builder(conn)
-            .path(p.clone())?
-            .build()
-            .await?;
+        let d_proxy = NMDeviceProxy::builder(conn).path(p.clone()).build().await?;
 
         if !device_type_registry::is_wired(d_proxy.device_type().await?) {
             continue;
@@ -330,7 +318,7 @@ pub(crate) async fn list_wired_device_details(conn: &Connection) -> Result<Vec<W
             .unwrap_or_else(|_| String::from("00:00:00:00:00:00"));
         let state = d_proxy.state().await?.into();
 
-        let wired = async { NMWiredProxy::builder(conn).path(p.clone())?.build().await }
+        let wired = async { NMWiredProxy::builder(conn).path(p.clone()).build().await }
             .await
             .ok();
         let (speed_mbps, permanent_hw_address) = match &wired {
@@ -347,7 +335,6 @@ pub(crate) async fn list_wired_device_details(conn: &Connection) -> Result<Vec<W
                 async {
                     let active = NMActiveConnectionProxy::builder(conn)
                         .path(path.clone())
-                        .ok()?
                         .build()
                         .await
                         .ok()?;
@@ -391,7 +378,7 @@ pub(crate) async fn is_connecting(conn: &Connection) -> Result<bool> {
 
     for dp in devices {
         let dev = NMDeviceProxy::builder(conn)
-            .path(dp.clone())?
+            .path(dp.clone())
             .build()
             .await?;
 
@@ -424,7 +411,7 @@ pub(crate) async fn is_connecting_on_interface(conn: &Connection, interface: &st
     };
 
     let dev = NMDeviceProxy::builder(conn)
-        .path(path.clone())?
+        .path(path.clone())
         .build()
         .await?;
 
@@ -446,10 +433,7 @@ pub(crate) async fn list_bluetooth_devices(conn: &Connection) -> Result<Vec<Blue
     let mut devices = Vec::new();
     for p in paths {
         // So we can get the device type and state
-        let d_proxy = NMDeviceProxy::builder(conn)
-            .path(p.clone())?
-            .build()
-            .await?;
+        let d_proxy = NMDeviceProxy::builder(conn).path(p.clone()).build().await?;
 
         // Only process Bluetooth devices
         let dev_type = d_proxy
@@ -470,7 +454,7 @@ pub(crate) async fn list_bluetooth_devices(conn: &Connection) -> Result<Vec<Blue
         // Bluetooth-specific proxy
         // to get BD_ADDR and capabilities
         let bd_proxy = NMBluetoothProxy::builder(conn)
-            .path(p.clone())?
+            .path(p.clone())
             .build()
             .await?;
 
@@ -514,7 +498,7 @@ pub(crate) async fn wait_for_wifi_ready(conn: &Connection) -> Result<()> {
     // so keep it as a wait candidate.
     for dev_path in devices {
         let dev = NMDeviceProxy::builder(conn)
-            .path(dev_path.clone())?
+            .path(dev_path.clone())
             .build()
             .await?;
 
@@ -540,7 +524,7 @@ pub(crate) async fn wait_for_wifi_ready(conn: &Connection) -> Result<()> {
     }
 
     if let Some(dev_path) = pending_wifi_device {
-        let dev = NMDeviceProxy::builder(conn).path(dev_path)?.build().await?;
+        let dev = NMDeviceProxy::builder(conn).path(dev_path).build().await?;
         return wait_for_wifi_device_ready(&dev).await;
     }
 

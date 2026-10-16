@@ -6,7 +6,7 @@ use futures::channel::{mpsc, oneshot};
 use futures::stream::{Stream, StreamExt};
 use log::trace;
 use zbus::Connection;
-use zvariant::OwnedObjectPath;
+use zbus::OwnedObjectPath;
 
 use crate::Result;
 use crate::api::models::{ConnectionError, NetworkEvent, NetworkEventStream, SettingsChange};
@@ -233,7 +233,7 @@ async fn device_state_stream<'a>(
     path: OwnedObjectPath,
 ) -> Result<InternalEventStream<'a>> {
     let device = NMDeviceProxy::builder(conn)
-        .path(path.clone())?
+        .path(path.clone())
         .build()
         .await?;
     let interface = device.interface().await.ok();
@@ -248,7 +248,6 @@ async fn device_changed_for_path(conn: &Connection, path: &OwnedObjectPath) -> N
     let interface = async {
         let device = NMDeviceProxy::builder(conn)
             .path(path.clone())
-            .ok()?
             .build()
             .await
             .ok()?;
@@ -281,7 +280,7 @@ async fn wireless_device_streams<'a>(
 ) -> Result<Vec<InternalEventStream<'a>>> {
     let mut streams: Vec<InternalEventStream<'_>> = Vec::new();
     let device = NMDeviceProxy::builder(conn)
-        .path(device_path.clone())?
+        .path(device_path.clone())
         .build()
         .await?;
 
@@ -290,7 +289,7 @@ async fn wireless_device_streams<'a>(
     }
 
     let wifi = NMWirelessProxy::builder(conn)
-        .path(device_path.clone())?
+        .path(device_path.clone())
         .build()
         .await?;
 
@@ -330,7 +329,7 @@ async fn access_point_strength_stream<'a>(
     path: OwnedObjectPath,
 ) -> Result<InternalEventStream<'a>> {
     let access_point = NMAccessPointProxy::builder(conn)
-        .path(path.clone())?
+        .path(path.clone())
         .build()
         .await?;
 

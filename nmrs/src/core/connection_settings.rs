@@ -7,7 +7,7 @@
 use log::trace;
 use std::collections::HashMap;
 use zbus::Connection;
-use zvariant::{OwnedObjectPath, OwnedValue, Value};
+use zbus::{OwnedObjectPath, OwnedVariant, Variant};
 
 use crate::Result;
 use crate::api::models::ConnectionError;
@@ -53,12 +53,12 @@ async fn find_saved_connection_by_name(
         };
 
         let body = msg.body();
-        let all: HashMap<String, HashMap<String, Value>> = body.deserialize()?;
+        let all: HashMap<String, HashMap<String, Variant>> = body.deserialize()?;
 
         if let Some(conn_section) = all.get("connection")
-            && let Some(Value::Str(id)) = conn_section.get("id")
+            && let Some(Variant::Str(id)) = conn_section.get("id")
             && id == name
-            && let Some(Value::Str(uuid)) = conn_section.get("uuid")
+            && let Some(Variant::Str(uuid)) = conn_section.get("uuid")
         {
             return Ok(Some((cpath, uuid.to_string())));
         }
@@ -73,7 +73,7 @@ async fn find_saved_connection_by_name(
 /// created by other tools or renamed by the user are still found. Hotspot
 /// (`mode = ap`) profiles are skipped.
 fn wifi_profile_matches_ssid(
-    settings: &HashMap<String, HashMap<String, OwnedValue>>,
+    settings: &HashMap<String, HashMap<String, OwnedVariant>>,
     ssid: &[u8],
 ) -> bool {
     let is_wifi = settings
@@ -133,7 +133,7 @@ pub(crate) async fn get_saved_wifi_connection_path(
             }
         };
 
-        let all: HashMap<String, HashMap<String, OwnedValue>> = msg.body().deserialize()?;
+        let all: HashMap<String, HashMap<String, OwnedVariant>> = msg.body().deserialize()?;
 
         if wifi_profile_matches_ssid(&all, ssid.as_bytes()) {
             return Ok(Some(cpath));
@@ -241,18 +241,18 @@ mod tests {
         ty: &str,
         ssid: &[u8],
         mode: Option<&str>,
-    ) -> HashMap<String, HashMap<String, OwnedValue>> {
+    ) -> HashMap<String, HashMap<String, OwnedVariant>> {
         let mut connection = HashMap::new();
-        connection.insert("id".into(), OwnedValue::from(zvariant::Str::from(id)));
-        connection.insert("type".into(), OwnedValue::from(zvariant::Str::from(ty)));
+        connection.insert("id".into(), OwnedVariant::from(zbus::Str::from(id)));
+        connection.insert("type".into(), OwnedVariant::from(zbus::Str::from(ty)));
 
         let mut wireless = HashMap::new();
         wireless.insert(
             "ssid".into(),
-            OwnedValue::try_from(zvariant::Array::from(ssid.to_vec())).expect("ssid array"),
+            OwnedVariant::try_from(zbus::Array::from(ssid.to_vec())).expect("ssid array"),
         );
         if let Some(mode) = mode {
-            wireless.insert("mode".into(), OwnedValue::from(zvariant::Str::from(mode)));
+            wireless.insert("mode".into(), OwnedVariant::from(zbus::Str::from(mode)));
         }
 
         let mut settings = HashMap::new();

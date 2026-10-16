@@ -13,7 +13,7 @@ use futures::SinkExt;
 use futures::channel::{mpsc, oneshot};
 use futures::future::{self, Either};
 use log::{debug, trace, warn};
-use zvariant::{ObjectPath, OwnedObjectPath};
+use zbus::{ObjectPath, OwnedObjectPath};
 
 use super::request::{
     CancelReason, ConnectionDict, SecretAgentFlags, SecretReply, SecretRequest, SecretResponder,
@@ -222,7 +222,7 @@ mod tests {
     use std::time::Duration;
 
     use futures::StreamExt;
-    use zvariant::{ObjectPath, OwnedValue, Str};
+    use zbus::{ObjectPath, OwnedVariant, Str};
 
     use super::*;
 
@@ -260,17 +260,17 @@ mod tests {
 
     fn connection() -> ConnectionDict {
         let mut metadata = HashMap::new();
-        metadata.insert("uuid".into(), OwnedValue::from(Str::from("test-uuid")));
-        metadata.insert("id".into(), OwnedValue::from(Str::from("test-id")));
+        metadata.insert("uuid".into(), OwnedVariant::from(Str::from("test-uuid")));
+        metadata.insert("id".into(), OwnedVariant::from(Str::from("test-id")));
         metadata.insert(
             "type".into(),
-            OwnedValue::from(Str::from("802-11-wireless")),
+            OwnedVariant::from(Str::from("802-11-wireless")),
         );
 
         let mut wireless = HashMap::new();
         wireless.insert(
             "ssid".into(),
-            OwnedValue::try_from(zvariant::Array::from(b"test-ssid".to_vec()))
+            OwnedVariant::try_from(zbus::Array::from(b"test-ssid".to_vec()))
                 .expect("owned byte array"),
         );
 

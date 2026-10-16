@@ -68,7 +68,7 @@ pub struct OvpnFile {
     pub auth_user_pass: bool,
 
     // Catch-all for unmodeled or less common directives.
-    // Key = directive name, Value = list of argument lists.
+    // Key = directive name, Variant = list of argument lists.
     // Preserves information for round-tripping / forward compatibility.
     pub options: HashMap<String, Vec<String>>,
 }

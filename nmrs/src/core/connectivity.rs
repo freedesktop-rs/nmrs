@@ -78,7 +78,6 @@ async fn detect_captive_portal_url(conn: &Connection, nm: &NMProxy<'_>) -> Optio
 
     let active = crate::dbus::NMActiveConnectionProxy::builder(conn)
         .path(primary)
-        .ok()?
         .build()
         .await
         .ok()?;
@@ -96,7 +95,7 @@ async fn detect_captive_portal_url(conn: &Connection, nm: &NMProxy<'_>) -> Optio
 /// Newer NM versions expose a `CaptivePortal` or `WebPortalUrl` property on Ip4Config.
 async fn try_ip4_captive_portal(
     conn: &Connection,
-    ip4_path: &zvariant::OwnedObjectPath,
+    ip4_path: &zbus::OwnedObjectPath,
 ) -> Option<String> {
     let raw = crate::util::utils::nm_proxy(
         conn,

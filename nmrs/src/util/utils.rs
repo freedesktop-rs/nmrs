@@ -8,7 +8,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::str;
 use zbus::Connection;
-use zvariant::OwnedObjectPath;
+use zbus::OwnedObjectPath;
 
 use crate::Result;
 use crate::api::models::ConnectionStateReason;
@@ -135,7 +135,7 @@ where
 
     for dp in devices {
         let d_proxy = NMDeviceProxy::builder(conn)
-            .path(dp.clone())?
+            .path(dp.clone())
             .build()
             .await?;
 
@@ -144,7 +144,7 @@ where
         }
 
         let wifi = NMWirelessProxy::builder(conn)
-            .path(dp.clone())?
+            .path(dp.clone())
             .build()
             .await?;
 
@@ -164,7 +164,7 @@ where
 
         for ap_path in wifi.access_points().await? {
             let ap = NMAccessPointProxy::builder(conn)
-                .path(ap_path.clone())?
+                .path(ap_path.clone())
                 .build()
                 .await?;
             if let Some(result) =
@@ -192,9 +192,9 @@ where
 {
     let owned_path = path.try_into().map_err(Into::into)?;
     Ok(zbus::proxy::Builder::new(conn)
-        .destination("org.freedesktop.NetworkManager")?
-        .path(owned_path)?
-        .interface(interface)?
+        .destination("org.freedesktop.NetworkManager")
+        .path(owned_path)
+        .interface(interface)
         .build()
         .await?)
 }
@@ -242,28 +242,26 @@ pub(crate) async fn extract_connection_state_reason(
     conn: &Connection,
     active_conn_path: &OwnedObjectPath,
 ) -> ConnectionStateReason {
-    match NMActiveConnectionProxy::builder(conn).path(active_conn_path.clone()) {
-        Ok(builder) => match builder.build().await {
-            Ok(ac) => match ac.state().await {
-                Ok(state) => {
-                    trace!(
-                        "Active connection state: {}, but reason not available as property",
-                        state
-                    );
-                    ConnectionStateReason::Unknown
-                }
-                Err(e) => {
-                    warn!("Failed to query active connection state: {}", e);
-                    ConnectionStateReason::Unknown
-                }
-            },
+    match NMActiveConnectionProxy::builder(conn)
+        .path(active_conn_path.clone())
+        .build()
+        .await
+    {
+        Ok(ac) => match ac.state().await {
+            Ok(state) => {
+                trace!(
+                    "Active connection state: {}, but reason not available as property",
+                    state
+                );
+                ConnectionStateReason::Unknown
+            }
             Err(e) => {
-                warn!("Failed to build active connection proxy: {}", e);
+                warn!("Failed to query active connection state: {}", e);
                 ConnectionStateReason::Unknown
             }
         },
         Err(e) => {
-            warn!("Failed to create active connection proxy builder: {}", e);
+            warn!("Failed to build active connection proxy: {}", e);
             ConnectionStateReason::Unknown
         }
     }
@@ -291,16 +289,16 @@ async fn extract_ip_address(
     interface: &str,
 ) -> Option<String> {
     let proxy = nm_proxy(conn, config_path, interface).await.ok()?;
-    let addr_array: Vec<HashMap<String, zvariant::Value>> =
+    let addr_array: Vec<HashMap<String, zbus::OwnedVariant>> =
         proxy.get_property("AddressData").await.ok()?;
 
     addr_array.first().and_then(|addr_map| {
-        let address = match addr_map.get("address")? {
-            zvariant::Value::Str(s) => s.as_str().to_string(),
+        let address = match &**addr_map.get("address")? {
+            zbus::Variant::Str(s) => s.as_str().to_string(),
             _ => return None,
         };
-        let prefix = match addr_map.get("prefix")? {
-            zvariant::Value::U32(p) => *p,
+        let prefix = match &**addr_map.get("prefix")? {
+            zbus::Variant::U32(p) => *p,
             _ => return None,
         };
         Some(format!("{}/{}", address, prefix))
@@ -320,7 +318,6 @@ pub(crate) async fn get_ip_addresses_from_active_connection(
     let ac_proxy = match async {
         NMActiveConnectionProxy::builder(conn)
             .path(active_conn_path.clone())
-            .ok()?
             .build()
             .await
             .ok()

@@ -350,7 +350,7 @@ mod tests {
         ActiveConnectionState, ActiveVpnConnection, ActiveWifiConnection, ApMode,
         ConnectivityState, DeviceState, SecurityFeatures, VpnSecretFlags,
     };
-    use zvariant::OwnedObjectPath;
+    use zbus::OwnedObjectPath;
 
     fn saved(connection_type: &str) -> SavedConnection {
         SavedConnection {

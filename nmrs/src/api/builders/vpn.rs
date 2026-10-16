@@ -66,7 +66,7 @@
 #![allow(deprecated)]
 
 use std::collections::HashMap;
-use zvariant::{Dict, Value, signature};
+use zbus::{Dict, Variant, signature};
 
 use super::wireguard_builder::WireGuardBuilder;
 use crate::api::models::{
@@ -92,7 +92,7 @@ use crate::api::models::{
 pub fn build_wireguard_connection(
     creds: &VpnCredentials,
     opts: &ConnectionOptions,
-) -> Result<HashMap<&'static str, HashMap<&'static str, Value<'static>>>, ConnectionError> {
+) -> Result<HashMap<&'static str, HashMap<&'static str, Variant<'static>>>, ConnectionError> {
     let mut builder = WireGuardBuilder::new(&creds.name)
         .private_key(&creds.private_key)
         .address(&creds.address)
@@ -114,7 +114,7 @@ pub fn build_wireguard_connection(
     builder.build()
 }
 
-/// Converts a list of string key-value pairs into a `zvariant::Dict` with
+/// Converts a list of string key-value pairs into a `zbus::Dict` with
 /// D-Bus signature `a{ss}`, which NetworkManager requires for `vpn.data`
 /// and `vpn.secrets`.
 fn string_pairs_to_dict(
@@ -123,9 +123,10 @@ fn string_pairs_to_dict(
     let sig = signature!("s");
     let mut dict = Dict::new(&sig, &sig);
     for (k, v) in pairs {
-        dict.append(Value::from(k), Value::from(v)).map_err(|e| {
-            ConnectionError::VpnFailed(format!("failed to append VPN setting: {e}"))
-        })?;
+        dict.append(Variant::from(k), Variant::from(v))
+            .map_err(|e| {
+                ConnectionError::VpnFailed(format!("failed to append VPN setting: {e}"))
+            })?;
     }
     Ok(dict)
 }
@@ -170,7 +171,7 @@ fn push_opt_display<T: std::fmt::Display>(
 pub fn build_openvpn_connection(
     config: &OpenVpnConfig,
     opts: &ConnectionOptions,
-) -> Result<HashMap<&'static str, HashMap<&'static str, Value<'static>>>, ConnectionError> {
+) -> Result<HashMap<&'static str, HashMap<&'static str, Variant<'static>>>, ConnectionError> {
     if config.remote.is_empty() {
         return Err(ConnectionError::InvalidGateway(
             "OpenVPN remote must not be empty".into(),
@@ -179,16 +180,16 @@ pub fn build_openvpn_connection(
 
     let uuid = config.uuid.unwrap_or_else(uuid::Uuid::new_v4).to_string();
 
-    let mut connection: HashMap<&'static str, Value<'static>> = HashMap::new();
-    connection.insert("type", Value::from("vpn"));
-    connection.insert("id", Value::from(config.name.clone()));
-    connection.insert("uuid", Value::from(uuid));
-    connection.insert("autoconnect", Value::from(opts.autoconnect));
+    let mut connection: HashMap<&'static str, Variant<'static>> = HashMap::new();
+    connection.insert("type", Variant::from("vpn"));
+    connection.insert("id", Variant::from(config.name.clone()));
+    connection.insert("uuid", Variant::from(uuid));
+    connection.insert("autoconnect", Variant::from(opts.autoconnect));
     if let Some(p) = opts.autoconnect_priority {
-        connection.insert("autoconnect-priority", Value::from(p));
+        connection.insert("autoconnect-priority", Variant::from(p));
     }
     if let Some(retries) = opts.autoconnect_retries {
-        connection.insert("autoconnect-retries", Value::from(retries));
+        connection.insert("autoconnect-retries", Variant::from(retries));
     }
 
     let mut vpn_data: Vec<(String, String)> = Vec::new();
@@ -331,46 +332,46 @@ pub fn build_openvpn_connection(
     push_opt_str(&mut vpn_secrets, "password", config.password.as_ref());
     push_opt_str(&mut vpn_secrets, "cert-pass", config.key_password.as_ref());
 
-    let mut vpn: HashMap<&'static str, Value<'static>> = HashMap::new();
+    let mut vpn: HashMap<&'static str, Variant<'static>> = HashMap::new();
     vpn.insert(
         "service-type",
-        Value::from("org.freedesktop.NetworkManager.openvpn"),
+        Variant::from("org.freedesktop.NetworkManager.openvpn"),
     );
-    vpn.insert("data", Value::from(data_dict));
+    vpn.insert("data", Variant::from(data_dict));
     if !vpn_secrets.is_empty() {
-        vpn.insert("secrets", Value::from(string_pairs_to_dict(vpn_secrets)?));
+        vpn.insert("secrets", Variant::from(string_pairs_to_dict(vpn_secrets)?));
     }
 
-    let mut ipv4: HashMap<&'static str, Value<'static>> = HashMap::new();
-    ipv4.insert("method", Value::from("auto"));
+    let mut ipv4: HashMap<&'static str, Variant<'static>> = HashMap::new();
+    ipv4.insert("method", Variant::from("auto"));
     if config.redirect_gateway {
-        ipv4.insert("never-default", Value::from(false));
+        ipv4.insert("never-default", Variant::from(false));
     }
     if !config.routes.is_empty() {
-        let route_data: Vec<HashMap<String, Value<'static>>> = config
+        let route_data: Vec<HashMap<String, Variant<'static>>> = config
             .routes
             .iter()
             .map(|route| {
                 let mut route_dict = HashMap::new();
-                route_dict.insert("dest".to_string(), Value::from(route.dest.clone()));
-                route_dict.insert("prefix".to_string(), Value::from(route.prefix));
+                route_dict.insert("dest".to_string(), Variant::from(route.dest.clone()));
+                route_dict.insert("prefix".to_string(), Variant::from(route.prefix));
                 if let Some(ref nh) = route.next_hop {
-                    route_dict.insert("next-hop".to_string(), Value::from(nh.clone()));
+                    route_dict.insert("next-hop".to_string(), Variant::from(nh.clone()));
                 }
                 if let Some(m) = route.metric {
-                    route_dict.insert("metric".to_string(), Value::from(m));
+                    route_dict.insert("metric".to_string(), Variant::from(m));
                 }
                 route_dict
             })
             .collect();
-        ipv4.insert("route-data", Value::from(route_data));
+        ipv4.insert("route-data", Variant::from(route_data));
     }
     if let Some(dns) = &config.dns {
-        ipv4.insert("dns-data", Value::from(dns.clone()));
+        ipv4.insert("dns-data", Variant::from(dns.clone()));
     }
 
-    let mut ipv6: HashMap<&'static str, Value<'static>> = HashMap::new();
-    ipv6.insert("method", Value::from("ignore"));
+    let mut ipv6: HashMap<&'static str, Variant<'static>> = HashMap::new();
+    ipv6.insert("method", Variant::from("ignore"));
 
     let mut settings = HashMap::new();
     settings.insert("connection", connection);
@@ -412,31 +413,31 @@ mod tests {
         ConnectionOptions::new(false)
     }
 
-    fn address_data(address: &str, prefix: u32) -> Value<'static> {
+    fn address_data(address: &str, prefix: u32) -> Variant<'static> {
         let mut entry = HashMap::new();
-        entry.insert("address".to_string(), Value::from(address.to_string()));
-        entry.insert("prefix".to_string(), Value::from(prefix));
-        Value::from(vec![entry])
+        entry.insert("address".to_string(), Variant::from(address.to_string()));
+        entry.insert("prefix".to_string(), Variant::from(prefix));
+        Variant::from(vec![entry])
     }
 
     fn peer_string_array(peer: &Dict<'_, '_>, key: &str) -> Vec<String> {
         let value = peer
             .iter()
             .find_map(|(candidate, value)| {
-                matches!(candidate, Value::Str(candidate) if candidate.as_str() == key)
+                matches!(candidate, Variant::Str(candidate) if candidate.as_str() == key)
                     .then_some(value)
             })
             .unwrap_or_else(|| panic!("missing peer property {key}"));
-        let Value::Value(value) = value else {
+        let Variant::Variant(value) = value else {
             panic!("peer property {key} must be stored as a variant");
         };
-        let Value::Array(values) = value.as_ref() else {
+        let Variant::Array(values) = value.as_ref() else {
             panic!("peer property {key} must be an array");
         };
         values
             .iter()
             .map(|value| match value {
-                Value::Str(value) => value.as_str().to_string(),
+                Variant::Str(value) => value.as_str().to_string(),
                 _ => panic!("peer property {key} entries must be strings"),
             })
             .collect()
@@ -451,10 +452,10 @@ mod tests {
         let connection = settings.get("connection").unwrap();
 
         let conn_type = connection.get("type").unwrap();
-        assert_eq!(conn_type, &Value::from("wireguard"));
+        assert_eq!(conn_type, &Variant::from("wireguard"));
 
         let id = connection.get("id").unwrap();
-        assert_eq!(id, &Value::from("TestVPN"));
+        assert_eq!(id, &Variant::from("TestVPN"));
     }
 
     #[test]
@@ -480,7 +481,7 @@ mod tests {
         let ipv4 = settings.get("ipv4").unwrap();
 
         let method = ipv4.get("method").unwrap();
-        assert_eq!(method, &Value::from("manual"));
+        assert_eq!(method, &Variant::from("manual"));
     }
 
     #[test]
@@ -492,7 +493,7 @@ mod tests {
         let ipv6 = settings.get("ipv6").unwrap();
 
         let method = ipv6.get("method").unwrap();
-        assert_eq!(method, &Value::from("ignore"));
+        assert_eq!(method, &Variant::from("ignore"));
     }
 
     #[test]
@@ -504,10 +505,13 @@ mod tests {
         let settings = build_wireguard_connection(&creds, &opts).unwrap();
         assert_eq!(
             settings["ipv4"].get("method"),
-            Some(&Value::from("disabled"))
+            Some(&Variant::from("disabled"))
         );
         assert!(!settings["ipv4"].contains_key("address-data"));
-        assert_eq!(settings["ipv6"].get("method"), Some(&Value::from("manual")));
+        assert_eq!(
+            settings["ipv6"].get("method"),
+            Some(&Variant::from("manual"))
+        );
         assert_eq!(
             settings["ipv6"].get("address-data"),
             Some(&address_data("fd00::2", 64))
@@ -530,7 +534,7 @@ mod tests {
         let settings = build_wireguard_connection(&creds, &opts).unwrap();
         let peers = settings["wireguard"].get("peers").unwrap();
         assert_eq!(peers.value_signature().to_string(), "aa{sv}");
-        let Value::Array(peers) = peers else {
+        let Variant::Array(peers) = peers else {
             panic!("wireguard.peers must be an array");
         };
         let peers = peers.iter().collect::<Vec<_>>();
@@ -538,19 +542,19 @@ mod tests {
         assert_eq!(peers[0].value_signature().to_string(), "a{sv}");
         assert_eq!(peers[1].value_signature().to_string(), "a{sv}");
 
-        let Value::Dict(first) = peers[0] else {
+        let Variant::Dict(first) = peers[0] else {
             panic!("first wireguard peer must be a dictionary");
         };
         assert_eq!(
             first
-                .get::<Value, String>(&Value::from("public-key"))
+                .get::<Variant, String>(&Variant::from("public-key"))
                 .unwrap()
                 .as_deref(),
             Some("HIgo9xNzJMWLKAShlKl6/bUT1VI9Q0SDBXGtLXkPFXc=")
         );
         assert_eq!(
             first
-                .get::<Value, String>(&Value::from("endpoint"))
+                .get::<Variant, String>(&Variant::from("endpoint"))
                 .unwrap()
                 .as_deref(),
             Some("vpn.example.com:51820")
@@ -561,36 +565,36 @@ mod tests {
         );
         assert!(
             first
-                .get::<Value, String>(&Value::from("preshared-key"))
+                .get::<Variant, String>(&Variant::from("preshared-key"))
                 .unwrap()
                 .is_none()
         );
         assert!(
             first
-                .get::<Value, u32>(&Value::from("preshared-key-flags"))
+                .get::<Variant, u32>(&Variant::from("preshared-key-flags"))
                 .unwrap()
                 .is_none()
         );
         assert_eq!(
             first
-                .get::<Value, u32>(&Value::from("persistent-keepalive"))
+                .get::<Variant, u32>(&Variant::from("persistent-keepalive"))
                 .unwrap(),
             Some(25)
         );
 
-        let Value::Dict(second) = peers[1] else {
+        let Variant::Dict(second) = peers[1] else {
             panic!("second wireguard peer must be a dictionary");
         };
         assert_eq!(
             second
-                .get::<Value, String>(&Value::from("public-key"))
+                .get::<Variant, String>(&Variant::from("public-key"))
                 .unwrap()
                 .as_deref(),
             Some("xScVkH3fUGUVRvGLFcjkx+GGD7cf5eBVyN3Gh4FLjmI=")
         );
         assert_eq!(
             second
-                .get::<Value, String>(&Value::from("endpoint"))
+                .get::<Variant, String>(&Variant::from("endpoint"))
                 .unwrap()
                 .as_deref(),
             Some("peer2.example.com:51821")
@@ -601,20 +605,20 @@ mod tests {
         );
         assert_eq!(
             second
-                .get::<Value, String>(&Value::from("preshared-key"))
+                .get::<Variant, String>(&Variant::from("preshared-key"))
                 .unwrap()
                 .as_deref(),
             Some("PSKABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklm=")
         );
         assert_eq!(
             second
-                .get::<Value, u32>(&Value::from("preshared-key-flags"))
+                .get::<Variant, u32>(&Variant::from("preshared-key-flags"))
                 .unwrap(),
             Some(0)
         );
         assert!(
             second
-                .get::<Value, u32>(&Value::from("persistent-keepalive"))
+                .get::<Variant, u32>(&Variant::from("persistent-keepalive"))
                 .unwrap()
                 .is_none()
         );
@@ -676,7 +680,7 @@ mod tests {
         let settings = build_wireguard_connection(&creds, &opts).unwrap();
         assert_eq!(
             settings["wireguard"].get("mtu"),
-            Some(&Value::from(1420u32))
+            Some(&Variant::from(1420u32))
         );
         assert!(!settings["ipv4"].contains_key("mtu"));
     }
@@ -691,7 +695,7 @@ mod tests {
         let connection = settings.get("connection").unwrap();
 
         let autoconnect = connection.get("autoconnect").unwrap();
-        assert_eq!(autoconnect, &Value::from(true));
+        assert_eq!(autoconnect, &Variant::from(true));
     }
 
     #[test]
@@ -705,7 +709,7 @@ mod tests {
 
         assert_eq!(
             connection.get("autoconnect-priority"),
-            Some(&Value::from(10i32))
+            Some(&Variant::from(10i32))
         );
     }
 
@@ -731,7 +735,7 @@ mod tests {
         let connection = settings.get("connection").unwrap();
 
         let uuid = connection.get("uuid").unwrap();
-        assert_eq!(uuid, &Value::from(test_uuid.to_string()));
+        assert_eq!(uuid, &Variant::from(test_uuid.to_string()));
     }
 
     #[test]
@@ -741,20 +745,20 @@ mod tests {
         let opts = create_test_options();
 
         let settings = build_wireguard_connection(&creds, &opts).unwrap();
-        let Value::Array(peers) = &settings["wireguard"]["peers"] else {
+        let Variant::Array(peers) = &settings["wireguard"]["peers"] else {
             panic!("wireguard.peers must be an array");
         };
-        let Value::Dict(peer) = peers.iter().next().unwrap() else {
+        let Variant::Dict(peer) = peers.iter().next().unwrap() else {
             panic!("wireguard peer must be a dictionary");
         };
         assert_eq!(
-            peer.get::<Value, String>(&Value::from("preshared-key"))
+            peer.get::<Variant, String>(&Variant::from("preshared-key"))
                 .unwrap()
                 .as_deref(),
             Some("PSKABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklm=")
         );
         assert_eq!(
-            peer.get::<Value, u32>(&Value::from("preshared-key-flags"))
+            peer.get::<Variant, u32>(&Variant::from("preshared-key-flags"))
                 .unwrap(),
             Some(0)
         );
@@ -767,14 +771,14 @@ mod tests {
         let opts = create_test_options();
 
         let settings = build_wireguard_connection(&creds, &opts).unwrap();
-        let Value::Array(peers) = &settings["wireguard"]["peers"] else {
+        let Variant::Array(peers) = &settings["wireguard"]["peers"] else {
             panic!("wireguard.peers must be an array");
         };
-        let Value::Dict(peer) = peers.iter().next().unwrap() else {
+        let Variant::Dict(peer) = peers.iter().next().unwrap() else {
             panic!("wireguard peer must be a dictionary");
         };
         assert!(
-            peer.get::<Value, u32>(&Value::from("persistent-keepalive"))
+            peer.get::<Variant, u32>(&Variant::from("persistent-keepalive"))
                 .unwrap()
                 .is_none()
         );
@@ -788,28 +792,28 @@ mod tests {
         let opts = create_test_options();
 
         let settings = build_wireguard_connection(&creds, &opts).unwrap();
-        let Value::Array(peers) = &settings["wireguard"]["peers"] else {
+        let Variant::Array(peers) = &settings["wireguard"]["peers"] else {
             panic!("wireguard.peers must be an array");
         };
-        let Value::Dict(peer) = peers.iter().next().unwrap() else {
+        let Variant::Dict(peer) = peers.iter().next().unwrap() else {
             panic!("wireguard peer must be a dictionary");
         };
         let allowed_ips = peer
             .iter()
             .find_map(|(key, value)| {
-                matches!(key, Value::Str(key) if key.as_str() == "allowed-ips").then_some(value)
+                matches!(key, Variant::Str(key) if key.as_str() == "allowed-ips").then_some(value)
             })
             .expect("allowed-ips peer property");
-        let Value::Value(allowed_ips) = allowed_ips else {
+        let Variant::Variant(allowed_ips) = allowed_ips else {
             panic!("allowed-ips must be stored as a variant");
         };
-        let Value::Array(allowed_ips) = allowed_ips.as_ref() else {
+        let Variant::Array(allowed_ips) = allowed_ips.as_ref() else {
             panic!("allowed-ips must be an array");
         };
         let allowed_ips = allowed_ips
             .iter()
             .map(|value| match value {
-                Value::Str(value) => value.as_str(),
+                Variant::Str(value) => value.as_str(),
                 _ => panic!("allowed-ips entries must be strings"),
             })
             .collect::<Vec<_>>();
@@ -869,14 +873,14 @@ mod tests {
 
             let settings = build_wireguard_connection(&creds, &opts)
                 .unwrap_or_else(|error| panic!("valid gateway {gateway} failed: {error}"));
-            let Value::Array(peers) = &settings["wireguard"]["peers"] else {
+            let Variant::Array(peers) = &settings["wireguard"]["peers"] else {
                 panic!("wireguard.peers must be an array");
             };
-            let Value::Dict(peer) = peers.iter().next().unwrap() else {
+            let Variant::Dict(peer) = peers.iter().next().unwrap() else {
                 panic!("wireguard peer must be a dictionary");
             };
             assert_eq!(
-                peer.get::<Value, String>(&Value::from("endpoint"))
+                peer.get::<Variant, String>(&Variant::from("endpoint"))
                     .unwrap()
                     .as_deref(),
                 Some(gateway)
@@ -898,7 +902,7 @@ mod tests {
         let opts = create_test_options();
         let settings = build_openvpn_connection(&config, &opts).unwrap();
         let conn = settings.get("connection").unwrap();
-        assert_eq!(conn.get("type").unwrap(), &Value::from("vpn"));
+        assert_eq!(conn.get("type").unwrap(), &Variant::from("vpn"));
     }
 
     #[test]
@@ -909,7 +913,7 @@ mod tests {
         let vpn = settings.get("vpn").unwrap();
         assert_eq!(
             vpn.get("service-type").unwrap(),
-            &Value::from("org.freedesktop.NetworkManager.openvpn")
+            &Variant::from("org.freedesktop.NetworkManager.openvpn")
         );
     }
 
@@ -1081,7 +1085,7 @@ mod tests {
         assert_eq!(dns.value_signature().to_string(), "as");
         assert_eq!(
             dns,
-            &Value::from(vec!["1.1.1.1".to_string(), "8.8.8.8".to_string()])
+            &Variant::from(vec!["1.1.1.1".to_string(), "8.8.8.8".to_string()])
         );
     }
 
@@ -1104,14 +1108,14 @@ mod tests {
         let settings = build_openvpn_connection(&create_openvpn_config(), &opts).unwrap();
         let connection = settings.get("connection").unwrap();
 
-        assert_eq!(connection.get("autoconnect"), Some(&Value::from(true)));
+        assert_eq!(connection.get("autoconnect"), Some(&Variant::from(true)));
         assert_eq!(
             connection.get("autoconnect-priority"),
-            Some(&Value::from(12i32))
+            Some(&Variant::from(12i32))
         );
         assert_eq!(
             connection.get("autoconnect-retries"),
-            Some(&Value::from(7i32))
+            Some(&Variant::from(7i32))
         );
     }
 
@@ -1130,13 +1134,13 @@ mod tests {
     }
 
     fn get_vpn_data_value(
-        settings: &HashMap<&str, HashMap<&str, Value>>,
+        settings: &HashMap<&str, HashMap<&str, Variant>>,
         key: &str,
     ) -> Option<String> {
         let vpn = settings.get("vpn")?;
         let data = vpn.get("data")?;
-        if let Value::Dict(dict) = data {
-            let val: String = dict.get::<Value, String>(&Value::from(key)).ok()??;
+        if let Variant::Dict(dict) = data {
+            let val: String = dict.get::<Variant, String>(&Variant::from(key)).ok()??;
             return Some(val);
         }
         None
@@ -1361,14 +1365,14 @@ mod tests {
         let rd = ipv4.get("route-data").unwrap();
         assert_eq!(rd.value_signature().to_string(), "aa{sv}");
         let mut expected = HashMap::new();
-        expected.insert("dest".to_string(), Value::from("10.0.0.0".to_string()));
-        expected.insert("prefix".to_string(), Value::from(24u32));
+        expected.insert("dest".to_string(), Variant::from("10.0.0.0".to_string()));
+        expected.insert("prefix".to_string(), Variant::from(24u32));
         expected.insert(
             "next-hop".to_string(),
-            Value::from("192.168.1.1".to_string()),
+            Variant::from("192.168.1.1".to_string()),
         );
-        expected.insert("metric".to_string(), Value::from(75u32));
-        assert_eq!(rd, &Value::from(vec![expected]));
+        expected.insert("metric".to_string(), Variant::from(75u32));
+        assert_eq!(rd, &Variant::from(vec![expected]));
     }
 
     #[test]
@@ -1377,6 +1381,6 @@ mod tests {
         let opts = create_test_options();
         let settings = build_openvpn_connection(&config, &opts).unwrap();
         let ipv4 = settings.get("ipv4").unwrap();
-        assert_eq!(ipv4.get("never-default"), Some(&Value::from(false)));
+        assert_eq!(ipv4.get("never-default"), Some(&Variant::from(false)));
     }
 }

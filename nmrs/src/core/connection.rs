@@ -2,7 +2,7 @@ use futures_timer::Delay;
 use log::{debug, error, info, trace, warn};
 use std::collections::HashMap;
 use zbus::Connection;
-use zvariant::OwnedObjectPath;
+use zbus::OwnedObjectPath;
 
 use crate::api::builders::wifi::{build_ethernet_connection, try_build_wifi_connection};
 use crate::api::models::access_point::{SecurityFeatures, decode_security};
@@ -76,7 +76,7 @@ pub(crate) async fn connect(
     trace!("Resolved WiFi device: {}", wifi_device.as_str());
 
     let wifi = NMWirelessProxy::builder(conn)
-        .path(wifi_device.clone())?
+        .path(wifi_device.clone())
         .build()
         .await?;
 
@@ -236,7 +236,7 @@ pub(crate) async fn connect_wired(
 
     // Check if already connected
     let dev = NMDeviceProxy::builder(conn)
-        .path(wired_device.clone())?
+        .path(wired_device.clone())
         .build()
         .await?;
     let current_state = dev.state().await?;
@@ -279,7 +279,7 @@ pub(crate) async fn connect_wired(
     }
 
     if let Ok(wired) = NMWiredProxy::builder(conn)
-        .path(wired_device.clone())?
+        .path(wired_device.clone())
         .build()
         .await
         && let Ok(speed) = wired.speed().await
@@ -313,7 +313,7 @@ pub(crate) async fn forget_by_name_and_type(
     timeout_config: Option<TimeoutConfig>,
 ) -> Result<()> {
     use std::collections::HashMap;
-    use zvariant::{OwnedObjectPath, Value};
+    use zbus::{OwnedObjectPath, Variant};
 
     // Validate SSID
     validate_ssid(name)?;
@@ -329,7 +329,7 @@ pub(crate) async fn forget_by_name_and_type(
     let devices = nm.get_devices().await?;
     for dev_path in &devices {
         let dev = NMDeviceProxy::builder(conn)
-            .path(dev_path.clone())?
+            .path(dev_path.clone())
             .build()
             .await?;
 
@@ -345,14 +345,14 @@ pub(crate) async fn forget_by_name_and_type(
         // Handle WiFi-specific disconnect logic
         if dev_type == device_type::WIFI {
             let wifi = NMWirelessProxy::builder(conn)
-                .path(dev_path.clone())?
+                .path(dev_path.clone())
                 .build()
                 .await?;
             if let Ok(ap_path) = wifi.active_access_point().await
                 && ap_path.as_str() != "/"
             {
                 let ap = NMAccessPointProxy::builder(conn)
-                    .path(ap_path.clone())?
+                    .path(ap_path.clone())
                     .build()
                     .await?;
                 if let Ok(bytes) = ap.ssid().await
@@ -434,13 +434,13 @@ pub(crate) async fn forget_by_name_and_type(
 
         if let Ok(msg) = cproxy.call_method("GetSettings", &()).await {
             let body = msg.body();
-            let settings_map: HashMap<String, HashMap<String, Value>> = body.deserialize()?;
+            let settings_map: HashMap<String, HashMap<String, Variant>> = body.deserialize()?;
 
             let mut should_delete = false;
 
             // Match by connection ID (works for all connection types)
             if let Some(conn_sec) = settings_map.get("connection")
-                && let Some(Value::Str(id)) = conn_sec.get("id")
+                && let Some(Variant::Str(id)) = conn_sec.get("id")
                 && id.as_str() == name
             {
                 should_delete = true;
@@ -449,7 +449,7 @@ pub(crate) async fn forget_by_name_and_type(
 
             // Additional WiFi-specific matching by SSID
             if let Some(wifi_sec) = settings_map.get("802-11-wireless")
-                && let Some(Value::Array(arr)) = wifi_sec.get("ssid")
+                && let Some(Variant::Array(arr)) = wifi_sec.get("ssid")
             {
                 let mut raw = Vec::new();
                 for v in arr.iter() {
@@ -465,7 +465,7 @@ pub(crate) async fn forget_by_name_and_type(
 
             // Matching by bdaddr for Bluetooth connections
             if let Some(bt_sec) = settings_map.get("bluetooth")
-                && let Some(Value::Str(bdaddr)) = bt_sec.get("bdaddr")
+                && let Some(Variant::Str(bdaddr)) = bt_sec.get("bdaddr")
                 && bdaddr.as_str() == name
             {
                 should_delete = true;
@@ -474,7 +474,7 @@ pub(crate) async fn forget_by_name_and_type(
 
             if let Some(wsec) = settings_map.get("802-11-wireless-security") {
                 let missing_psk = !wsec.contains_key("psk");
-                let empty_psk = matches!(wsec.get("psk"), Some(Value::Str(s)) if s.is_empty());
+                let empty_psk = matches!(wsec.get("psk"), Some(Variant::Str(s)) if s.is_empty());
 
                 if (missing_psk || empty_psk) && should_delete {
                     trace!("Connection has missing/empty PSK, will delete");
@@ -525,7 +525,7 @@ pub(crate) async fn disconnect_wifi_and_wait(
     timeout_config: Option<TimeoutConfig>,
 ) -> Result<()> {
     let dev = NMDeviceProxy::builder(conn)
-        .path(dev_path.clone())?
+        .path(dev_path.clone())
         .build()
         .await?;
 
@@ -582,7 +582,7 @@ async fn find_device_by_type(
 
     for dp in devices {
         let dev = NMDeviceProxy::builder(conn)
-            .path(dp.clone())?
+            .path(dp.clone())
             .build()
             .await?;
         if device_matches_type(
@@ -645,7 +645,7 @@ pub(crate) async fn resolve_wifi_device(
                 Err(e) => return Err(e),
             };
             let dev = NMDeviceProxy::builder(conn)
-                .path(path.clone())?
+                .path(path.clone())
                 .build()
                 .await?;
             if dev.device_type().await? != device_type::WIFI {
@@ -672,7 +672,7 @@ async fn find_ap(
 
     for ap_path in access_points {
         let ap = NMAccessPointProxy::builder(conn)
-            .path(ap_path.clone())?
+            .path(ap_path.clone())
             .build()
             .await?;
 
@@ -698,7 +698,7 @@ async fn find_ap_by_bssid(
 
     for ap_path in access_points {
         let ap = NMAccessPointProxy::builder(conn)
-            .path(ap_path.clone())?
+            .path(ap_path.clone())
             .build()
             .await?;
 
@@ -758,7 +758,7 @@ pub(crate) async fn connect_to_bssid(
             let decision = decide_saved_connection(saved_raw, &creds)?;
             let wifi_device = resolve_wifi_device(conn, &nm, interface).await?;
             let wifi = NMWirelessProxy::builder(conn)
-                .path(wifi_device.clone())?
+                .path(wifi_device.clone())
                 .build()
                 .await?;
 
@@ -1124,10 +1124,11 @@ async fn upgrade_security_for_ap(
         return creds;
     }
 
-    let Ok(proxy) = NMAccessPointProxy::builder(conn).path(ap.clone()) else {
-        return creds;
-    };
-    let Ok(proxy) = proxy.build().await else {
+    let Ok(proxy) = NMAccessPointProxy::builder(conn)
+        .path(ap.clone())
+        .build()
+        .await
+    else {
         return creds;
     };
     let (Ok(flags), Ok(wpa), Ok(rsn)) = (
@@ -1200,7 +1201,7 @@ pub(crate) async fn disconnect(
     };
 
     let dev = NMDeviceProxy::builder(conn)
-        .path(wifi_device.clone())?
+        .path(wifi_device.clone())
         .build()
         .await?;
 
@@ -1213,7 +1214,7 @@ pub(crate) async fn disconnect(
     if let Ok(conns) = nm.active_connections().await {
         for conn_path in conns {
             let active = match crate::dbus::NMActiveConnectionProxy::builder(conn)
-                .path(conn_path.clone())?
+                .path(conn_path.clone())
                 .build()
                 .await
             {
@@ -1255,7 +1256,7 @@ pub(crate) async fn get_device_by_interface(
 
     for dev_path in devices {
         let dev = NMDeviceProxy::builder(conn)
-            .path(dev_path.clone())?
+            .path(dev_path.clone())
             .build()
             .await?;
 

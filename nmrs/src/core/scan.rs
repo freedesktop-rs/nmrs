@@ -29,7 +29,7 @@ pub(crate) async fn scan_networks(conn: &Connection, interface: Option<&str>) ->
     let mut scanned_any = false;
     for dp in devices {
         let d_proxy = NMDeviceProxy::builder(conn)
-            .path(dp.clone())?
+            .path(dp.clone())
             .build()
             .await?;
 
@@ -61,7 +61,7 @@ pub(crate) async fn scan_networks(conn: &Connection, interface: Option<&str>) ->
         }
 
         let wifi = NMWirelessProxy::builder(conn)
-            .path(dp.clone())?
+            .path(dp.clone())
             .build()
             .await?;
 
@@ -104,7 +104,7 @@ pub(crate) async fn list_access_points(
 
     for dp in devices {
         let dev = NMDeviceProxy::builder(conn)
-            .path(dp.clone())?
+            .path(dp.clone())
             .build()
             .await?;
 
@@ -124,18 +124,18 @@ pub(crate) async fn list_access_points(
         let device_state: DeviceState = raw_state.into();
 
         let wifi = NMWirelessProxy::builder(conn)
-            .path(dp.clone())?
+            .path(dp.clone())
             .build()
             .await?;
 
         let active_ap = wifi.active_access_point().await?;
-        let is_active_ap = |path: &zvariant::OwnedObjectPath| -> bool {
+        let is_active_ap = |path: &zbus::OwnedObjectPath| -> bool {
             active_ap.as_str() != "/" && &active_ap == path
         };
 
         for ap_path in wifi.access_points().await? {
             let ap = NMAccessPointProxy::builder(conn)
-                .path(ap_path.clone())?
+                .path(ap_path.clone())
                 .build()
                 .await?;
 
@@ -246,13 +246,13 @@ pub(crate) async fn list_networks(
 /// Helper to get IP addresses from the active connection on a device.
 async fn active_ip_addresses(
     conn: &Connection,
-    device_path: &zvariant::OwnedObjectPath,
+    device_path: &zbus::OwnedObjectPath,
 ) -> (Option<String>, Option<String>) {
-    let builder = match NMDeviceProxy::builder(conn).path(device_path.clone()) {
-        Ok(b) => b,
-        Err(_) => return (None, None),
-    };
-    let dev = match builder.build().await {
+    let dev = match NMDeviceProxy::builder(conn)
+        .path(device_path.clone())
+        .build()
+        .await
+    {
         Ok(d) => d,
         Err(_) => return (None, None),
     };
@@ -279,7 +279,7 @@ pub(crate) async fn current_network(conn: &Connection) -> Result<Option<Network>
 
     for dev_path in devices {
         let dev = NMDeviceProxy::builder(conn)
-            .path(dev_path.clone())?
+            .path(dev_path.clone())
             .build()
             .await?;
 
@@ -288,7 +288,7 @@ pub(crate) async fn current_network(conn: &Connection) -> Result<Option<Network>
         }
 
         let wifi = NMWirelessProxy::builder(conn)
-            .path(dev_path.clone())?
+            .path(dev_path.clone())
             .build()
             .await?;
 
@@ -298,7 +298,7 @@ pub(crate) async fn current_network(conn: &Connection) -> Result<Option<Network>
         }
 
         let ap = NMAccessPointProxy::builder(conn)
-            .path(ap_path)?
+            .path(ap_path)
             .build()
             .await?;
 

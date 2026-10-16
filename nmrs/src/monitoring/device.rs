@@ -63,7 +63,7 @@ where
         // Existing devices also expose more specific state transitions.
         for dev_path in nm.get_devices().await? {
             if let Ok(dev) = NMDeviceProxy::builder(conn)
-                .path(dev_path.clone())?
+                .path(dev_path.clone())
                 .build()
                 .await
                 && let Ok(state_stream) = dev.receive_device_state_changed().await

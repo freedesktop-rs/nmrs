@@ -29,7 +29,7 @@
 //! ```
 
 use std::collections::HashMap;
-use zvariant::Value;
+use zbus::Variant;
 
 use super::connection_builder::ConnectionBuilder;
 use super::wifi_builder::WifiConnectionBuilder;
@@ -70,7 +70,7 @@ pub fn build_wifi_connection(
     ssid: &str,
     security: &models::WifiSecurity,
     opts: &ConnectionOptions,
-) -> HashMap<&'static str, HashMap<&'static str, Value<'static>>> {
+) -> HashMap<&'static str, HashMap<&'static str, Variant<'static>>> {
     // The deprecated EAP builders warn about path/blob conflicts themselves.
     #[allow(deprecated)]
     let builder = match security {
@@ -115,7 +115,7 @@ pub fn try_build_wifi_connection(
     ssid: &str,
     security: &models::WifiSecurity,
     opts: &ConnectionOptions,
-) -> Result<HashMap<&'static str, HashMap<&'static str, Value<'static>>>, ConnectionError> {
+) -> Result<HashMap<&'static str, HashMap<&'static str, Variant<'static>>>, ConnectionError> {
     let base = base_wifi_builder(ssid, opts);
 
     let builder = match security {
@@ -157,7 +157,7 @@ fn base_wifi_builder(ssid: &str, opts: &ConnectionOptions) -> WifiConnectionBuil
 pub fn build_ethernet_connection(
     connection_id: &str,
     opts: &ConnectionOptions,
-) -> HashMap<&'static str, HashMap<&'static str, Value<'static>>> {
+) -> HashMap<&'static str, HashMap<&'static str, Variant<'static>>> {
     let ethernet = HashMap::new();
 
     ConnectionBuilder::new("802-3-ethernet", connection_id)
@@ -172,13 +172,13 @@ pub fn build_ethernet_connection(
 mod tests {
     use super::*;
     use crate::models::{ConnectionOptions, EapMethod, EapOptions, Phase2, WifiSecurity};
-    use zvariant::Value;
+    use zbus::Variant;
 
     fn build_wifi_connection(
         ssid: &str,
         security: &WifiSecurity,
         opts: &ConnectionOptions,
-    ) -> HashMap<&'static str, HashMap<&'static str, Value<'static>>> {
+    ) -> HashMap<&'static str, HashMap<&'static str, Variant<'static>>> {
         super::try_build_wifi_connection(ssid, security, opts).expect("valid Wi-Fi settings")
     }
 
@@ -242,7 +242,7 @@ mod tests {
         let security = conn
             .get("802-11-wireless-security")
             .expect("SAE must produce a security section");
-        assert_eq!(security.get("key-mgmt"), Some(&Value::from("sae")));
+        assert_eq!(security.get("key-mgmt"), Some(&Variant::from("sae")));
         assert!(security.get("auth-alg").is_none());
     }
 
@@ -252,7 +252,7 @@ mod tests {
         let connection_section = conn.get("connection").unwrap();
         assert_eq!(
             connection_section.get("type"),
-            Some(&Value::from("802-11-wireless"))
+            Some(&Variant::from("802-11-wireless"))
         );
     }
 
@@ -270,8 +270,8 @@ mod tests {
             "security section missing"
         );
         let sec = conn.get("802-11-wireless-security").unwrap();
-        assert_eq!(sec.get("psk"), Some(&Value::from("pw123".to_string())));
-        assert_eq!(sec.get("key-mgmt"), Some(&Value::from("wpa-psk")));
+        assert_eq!(sec.get("psk"), Some(&Variant::from("pw123".to_string())));
+        assert_eq!(sec.get("key-mgmt"), Some(&Variant::from("wpa-psk")));
     }
 
     #[test]
@@ -284,7 +284,7 @@ mod tests {
         let wireless = conn.get("802-11-wireless").unwrap();
         assert_eq!(
             wireless.get("security"),
-            Some(&Value::from("802-11-wireless-security"))
+            Some(&Variant::from("802-11-wireless-security"))
         );
     }
 
@@ -316,19 +316,19 @@ mod tests {
         assert!(conn.contains_key("802-1x"));
 
         let sec = conn.get("802-11-wireless-security").unwrap();
-        assert_eq!(sec.get("key-mgmt"), Some(&Value::from("wpa-eap")));
+        assert_eq!(sec.get("key-mgmt"), Some(&Variant::from("wpa-eap")));
 
         let e1x = conn.get("802-1x").unwrap();
         assert_eq!(
             e1x.get("identity"),
-            Some(&Value::from("user@example.com".to_string()))
+            Some(&Variant::from("user@example.com".to_string()))
         );
         assert_eq!(
             e1x.get("password"),
-            Some(&Value::from("secret123".to_string()))
+            Some(&Variant::from("secret123".to_string()))
         );
-        assert_eq!(e1x.get("phase2-auth"), Some(&Value::from("mschapv2")));
-        assert_eq!(e1x.get("system-ca-certs"), Some(&Value::from(true)));
+        assert_eq!(e1x.get("phase2-auth"), Some(&Variant::from("mschapv2")));
+        assert_eq!(e1x.get("system-ca-certs"), Some(&Variant::from(true)));
     }
 
     #[test]
@@ -356,10 +356,10 @@ mod tests {
         );
 
         let e1x = conn.get("802-1x").unwrap();
-        assert_eq!(e1x.get("phase2-auth"), Some(&Value::from("pap")));
+        assert_eq!(e1x.get("phase2-auth"), Some(&Variant::from("pap")));
         assert_eq!(
             e1x.get("ca-cert"),
-            Some(&Value::from(b"file:///etc/ssl/certs/ca.pem\0".to_vec()))
+            Some(&Variant::from(b"file:///etc/ssl/certs/ca.pem\0".to_vec()))
         );
         // system-ca-certs should NOT be present when false
         assert!(e1x.get("system-ca-certs").is_none());
@@ -390,27 +390,29 @@ mod tests {
         );
 
         let security = conn.get("802-11-wireless-security").unwrap();
-        assert_eq!(security.get("key-mgmt"), Some(&Value::from("wpa-eap")));
+        assert_eq!(security.get("key-mgmt"), Some(&Variant::from("wpa-eap")));
 
         let e1x = conn.get("802-1x").unwrap();
         assert_eq!(e1x.get("phase2-auth"), None);
         assert_eq!(
             e1x.get("private-key"),
-            Some(&Value::from(
+            Some(&Variant::from(
                 b"file:///etc/ssl/private/client.key\0".to_vec()
             ))
         );
         assert_eq!(
             e1x.get("private-key-password"),
-            Some(&Value::from("password"))
+            Some(&Variant::from("password"))
         );
         assert_eq!(
             e1x.get("client-cert"),
-            Some(&Value::from(b"file:///etc/ssl/certs/client.crt\0".to_vec()))
+            Some(&Variant::from(
+                b"file:///etc/ssl/certs/client.crt\0".to_vec()
+            ))
         );
         assert_eq!(
             e1x.get("ca-cert"),
-            Some(&Value::from(b"file:///etc/ssl/certs/ca.pem\0".to_vec()))
+            Some(&Variant::from(b"file:///etc/ssl/certs/ca.pem\0".to_vec()))
         );
         // system-ca-certs should NOT be present when false
         assert!(e1x.get("system-ca-certs").is_none());
@@ -443,26 +445,26 @@ mod tests {
         let security = conn.get("802-11-wireless-security").unwrap();
         assert_eq!(
             security.get("key-mgmt"),
-            Some(&Value::from("wpa-eap-suite-b-192"))
+            Some(&Variant::from("wpa-eap-suite-b-192"))
         );
 
         let e1x = conn.get("802-1x").unwrap();
         assert_eq!(e1x.get("phase2-auth"), None);
         assert_eq!(
             e1x.get("private-key"),
-            Some(&Value::from(b"private_key_blob".to_vec()))
+            Some(&Variant::from(b"private_key_blob".to_vec()))
         );
         assert_eq!(
             e1x.get("private-key-password"),
-            Some(&Value::from("password"))
+            Some(&Variant::from("password"))
         );
         assert_eq!(
             e1x.get("client-cert"),
-            Some(&Value::from(b"client_cert_blob".to_vec()))
+            Some(&Variant::from(b"client_cert_blob".to_vec()))
         );
         assert_eq!(
             e1x.get("ca-cert"),
-            Some(&Value::from(b"ca_cert_blob".to_vec()))
+            Some(&Variant::from(b"ca_cert_blob".to_vec()))
         );
         // system-ca-certs should NOT be present when false
         assert!(e1x.get("system-ca-certs").is_none());
@@ -476,15 +478,15 @@ mod tests {
 
         assert_eq!(
             connection_section.get("autoconnect"),
-            Some(&Value::from(false))
+            Some(&Variant::from(false))
         );
         assert_eq!(
             connection_section.get("autoconnect-priority"),
-            Some(&Value::from(10i32))
+            Some(&Variant::from(10i32))
         );
         assert_eq!(
             connection_section.get("autoconnect-retries"),
-            Some(&Value::from(3i32))
+            Some(&Variant::from(3i32))
         );
     }
 
@@ -495,7 +497,7 @@ mod tests {
 
         assert_eq!(
             connection_section.get("autoconnect"),
-            Some(&Value::from(true))
+            Some(&Variant::from(true))
         );
         // Optional fields should not be present
         assert!(connection_section.get("autoconnect-priority").is_none());
@@ -507,7 +509,7 @@ mod tests {
         let conn = build_wifi_connection("MyNetwork", &WifiSecurity::Open, &default_opts());
         let wireless = conn.get("802-11-wireless").unwrap();
         let ssid = wireless.get("ssid").unwrap();
-        assert_eq!(ssid, &Value::from(b"MyNetwork".to_vec()));
+        assert_eq!(ssid, &Variant::from(b"MyNetwork".to_vec()));
     }
 
     #[test]
@@ -515,7 +517,7 @@ mod tests {
         let conn = build_wifi_connection("Café-Wïfì_123", &WifiSecurity::Open, &default_opts());
         let wireless = conn.get("802-11-wireless").unwrap();
         let ssid = wireless.get("ssid").unwrap();
-        assert_eq!(ssid, &Value::from("Café-Wïfì_123".as_bytes().to_vec()));
+        assert_eq!(ssid, &Variant::from("Café-Wïfì_123".as_bytes().to_vec()));
     }
 
     #[test]
@@ -531,11 +533,11 @@ mod tests {
 
         assert_eq!(
             connection_section.get("autoconnect-priority"),
-            Some(&Value::from(-5i32))
+            Some(&Variant::from(-5i32))
         );
         assert_eq!(
             connection_section.get("autoconnect-retries"),
-            Some(&Value::from(0i32))
+            Some(&Variant::from(0i32))
         );
     }
 
@@ -552,11 +554,11 @@ mod tests {
 
         assert_eq!(
             connection_section.get("autoconnect-priority"),
-            Some(&Value::from(999i32))
+            Some(&Variant::from(999i32))
         );
         assert_eq!(
             connection_section.get("autoconnect-retries"),
-            Some(&Value::from(i32::MAX))
+            Some(&Variant::from(i32::MAX))
         );
     }
 
@@ -573,11 +575,11 @@ mod tests {
 
         assert_eq!(
             connection_section.get("autoconnect-priority"),
-            Some(&Value::from(-999i32))
+            Some(&Variant::from(-999i32))
         );
         assert_eq!(
             connection_section.get("autoconnect-retries"),
-            Some(&Value::from(-1i32))
+            Some(&Variant::from(-1i32))
         );
     }
 }
