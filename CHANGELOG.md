@@ -3,8 +3,27 @@
 All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
+### Added
+
+- `OpenVpnConfig::crl_verify_dir` / `with_crl_verify_dir()` and
+  `OpenVpnBuilder::crl_verify_dir()` set `crl-verify-dir`, OpenVPN's
+  `crl-verify DIR dir` form. ([#581](https://github.com/freedesktop-rs/nmrs/pull/581))
+
 ### Fixed
 
+- Importing a `.ovpn` file now keeps `remote-cert-tls`, `verify-x509-name`, and
+  `crl-verify` (including an inline `<crl-verify>` block, stored like the other
+  inline certificates). They were dropped, so an imported profile skipped those
+  server certificate checks.
+  ([#581](https://github.com/freedesktop-rs/nmrs/pull/581))
+- `verify_x509_name` and `crl_verify` are now written to `vpn.data` under the
+  keys NetworkManager-openvpn accepts: `verify-x509-name` as `type:name`, and
+  `crl-verify-file`. The old `verify-x509-type` and `crl-verify` keys don't
+  exist in the plugin, which rejects unknown keys, so these profiles failed to
+  activate. ([#581](https://github.com/freedesktop-rs/nmrs/pull/581))
+- `.ovpn` arguments in single or double quotes are now kept together, so
+  `verify-x509-name 'C=US, O=Example, CN=vpn' subject` parses as one name.
+  ([#581](https://github.com/freedesktop-rs/nmrs/pull/581))
 - `SecretAgentHandle::unregister()` now removes the agent object from the
   D-Bus object server even when NetworkManager's `Unregister` call fails or
   the daemon is unreachable, so the object path can be reused by a later
