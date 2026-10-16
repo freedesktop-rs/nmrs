@@ -217,36 +217,66 @@ impl OvpnFileBuilder {
 }
 
 /// Where a line scanner is, mirroring OpenVPN's `parse_line`.
+///
+/// `escaped` is set right after a backslash. OpenVPN treats a backslash as an
+/// escape everywhere except inside single quotes.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ArgState {
     /// Between arguments.
-    Between,
+    Between { escaped: bool },
     /// Inside an argument that didn't start with a quote. Quotes and
     /// comment characters here are literal.
-    Unquoted,
-    /// Inside `"..."`; `escaped` is set right after a backslash.
+    Unquoted { escaped: bool },
+    /// Inside `"..."`.
     Double { escaped: bool },
     /// Inside `'...'`; everything up to the next `'` is literal.
     Single,
 }
 
+/// What a scanner step contributes to the current argument.
+enum Emit {
+    Nothing,
+    Char(char),
+    /// An escape OpenVPN would reject (anything but `\`, `"`, or
+    /// whitespace). Kept as the backslash plus the character, as nmrs has
+    /// always done, rather than failing the import.
+    BadEscape(char),
+    EndArg,
+}
+
 impl ArgState {
+    const START: Self = Self::Between { escaped: false };
+
     /// Advances past `c`. Returns `None` when `c` starts a comment.
-    fn step(self, c: char) -> Option<Self> {
+    fn step(self, c: char) -> Option<(Self, Emit)> {
+        let escape = |c: char| {
+            if c == '\\' || c == '"' || c.is_whitespace() {
+                Emit::Char(c)
+            } else {
+                Emit::BadEscape(c)
+            }
+        };
+
         Some(match self {
-            Self::Between if c.is_whitespace() => Self::Between,
-            Self::Between if c == '#' || c == ';' => return None,
-            Self::Between if c == '"' => Self::Double { escaped: false },
-            Self::Between if c == '\'' => Self::Single,
-            Self::Between => Self::Unquoted,
-            Self::Unquoted if c.is_whitespace() => Self::Between,
-            Self::Unquoted => Self::Unquoted,
-            Self::Double { escaped: true } => Self::Double { escaped: false },
-            Self::Double { .. } if c == '\\' => Self::Double { escaped: true },
-            Self::Double { .. } if c == '"' => Self::Between,
-            Self::Double { .. } => Self::Double { escaped: false },
-            Self::Single if c == '\'' => Self::Between,
-            Self::Single => Self::Single,
+            // OpenVPN checks for a comment before it looks at the backslash.
+            Self::Between { .. } if c == '#' || c == ';' => return None,
+            Self::Between { escaped: true } if c.is_whitespace() => (Self::START, Emit::Nothing),
+            Self::Between { escaped: true } => (Self::Unquoted { escaped: false }, escape(c)),
+            Self::Between { .. } if c.is_whitespace() => (Self::START, Emit::Nothing),
+            Self::Between { .. } if c == '\\' => (Self::Between { escaped: true }, Emit::Nothing),
+            Self::Between { .. } if c == '"' => (Self::Double { escaped: false }, Emit::Nothing),
+            Self::Between { .. } if c == '\'' => (Self::Single, Emit::Nothing),
+            Self::Between { .. } => (Self::Unquoted { escaped: false }, Emit::Char(c)),
+            Self::Unquoted { escaped: true } => (Self::Unquoted { escaped: false }, escape(c)),
+            Self::Unquoted { .. } if c.is_whitespace() => (Self::START, Emit::EndArg),
+            Self::Unquoted { .. } if c == '\\' => (Self::Unquoted { escaped: true }, Emit::Nothing),
+            Self::Unquoted { .. } => (self, Emit::Char(c)),
+            Self::Double { escaped: true } => (Self::Double { escaped: false }, escape(c)),
+            Self::Double { .. } if c == '\\' => (Self::Double { escaped: true }, Emit::Nothing),
+            Self::Double { .. } if c == '"' => (Self::START, Emit::EndArg),
+            Self::Double { .. } => (self, Emit::Char(c)),
+            Self::Single if c == '\'' => (Self::START, Emit::EndArg),
+            Self::Single => (self, Emit::Char(c)),
         })
     }
 }
@@ -254,40 +284,42 @@ impl ArgState {
 /// Splits a directive line into arguments the way OpenVPN's `parse_line`
 /// does. A quote only opens a quoted argument at the start of an argument;
 /// mid-token it's an ordinary character, so `Bob's` stays one argument.
-/// `'single quotes'` are literal, `"double quotes"` honor `\"` and `\\`, and a
-/// closing quote ends the argument. A backslash outside quotes is kept as-is.
+/// `'single quotes'` are literal, and a closing quote ends the argument.
+/// Elsewhere a backslash escapes the next character, so `My\ VPN` and
+/// `"My\ VPN"` are both `My VPN` and `C:\\dir` is `C:\dir`.
 fn split_args(line: &str, line_number: usize) -> Result<Vec<String>, OvpnParseError> {
     let mut args = Vec::new();
     let mut current = String::new();
-    let mut state = ArgState::Between;
+    let mut state = ArgState::START;
 
     for c in line.chars() {
-        let Some(next) = state.step(c) else {
+        let Some((next, emit)) = state.step(c) else {
             break;
         };
 
-        match (state, next) {
-            (ArgState::Between, ArgState::Unquoted) => current.push(c),
-            (ArgState::Unquoted, ArgState::Between)
-            | (ArgState::Double { escaped: false }, ArgState::Between)
-            | (ArgState::Single, ArgState::Between) => args.push(std::mem::take(&mut current)),
-            (ArgState::Double { escaped: false }, ArgState::Double { escaped: true }) => {}
-            (ArgState::Double { escaped: true }, _) => {
-                if c != '"' && c != '\\' {
-                    current.push('\\');
-                }
+        match emit {
+            Emit::Nothing => {}
+            Emit::Char(c) => current.push(c),
+            Emit::BadEscape(c) => {
+                current.push('\\');
                 current.push(c);
             }
-            (ArgState::Unquoted | ArgState::Double { .. } | ArgState::Single, _) => current.push(c),
-            (ArgState::Between, _) => {}
+            Emit::EndArg => args.push(std::mem::take(&mut current)),
         }
 
         state = next;
     }
 
     match state {
-        ArgState::Between => {}
-        ArgState::Unquoted => args.push(current),
+        ArgState::Between { escaped: false } => {}
+        // A trailing backslash is a line continuation, handled by the lexer.
+        ArgState::Between { escaped: true } => {}
+        ArgState::Unquoted { escaped } => {
+            if escaped {
+                current.push('\\');
+            }
+            args.push(current);
+        }
         ArgState::Double { .. } | ArgState::Single => {
             return Err(OvpnParseError::InvalidDirectiveSyntax { line: line_number });
         }
@@ -371,10 +403,10 @@ fn lexer(input: &str) -> Result<Vec<OvpnItem>, OvpnParseError> {
         // Remove comments. Uses the same scanner as `split_args`, so a `#` or
         // `;` only starts a comment where a new argument could start.
         let mut cleaned = String::new();
-        let mut state = ArgState::Between;
+        let mut state = ArgState::START;
 
         for c in line.chars() {
-            let Some(next) = state.step(c) else {
+            let Some((next, _)) = state.step(c) else {
                 break;
             };
             state = next;
@@ -1564,6 +1596,49 @@ mod tests {
 
         let f = parse_ok(r##"setenv "a b"#comment"##);
         assert_eq!(f.options["setenv"], vec!["a b"]);
+    }
+
+    #[test]
+    fn backslash_escapes_whitespace_quotes_and_backslashes() {
+        let f = parse_ok(r#"verify-x509-name "My\ VPN" name"#);
+        assert_eq!(f.verify_x509_name, Some(("My VPN".into(), "name".into())));
+
+        let f = parse_ok(r"setenv NOTE My\ VPN");
+        assert_eq!(f.options["setenv"], vec!["NOTE", "My VPN"]);
+
+        let f = parse_ok(r#"setenv NOTE a\"b \"quoted\""#);
+        assert_eq!(f.options["setenv"], vec!["NOTE", r#"a"b"#, r#""quoted""#]);
+
+        let f = parse_ok(r"ca C:\\certs\\ca.pem");
+        assert!(matches!(f.ca, Some(CertSource::File(ref p)) if p == r"C:\certs\ca.pem"));
+
+        let f = parse_ok(r#"ca "C:\\Program Files\\vpn\\ca.pem""#);
+        assert!(
+            matches!(f.ca, Some(CertSource::File(ref p)) if p == r"C:\Program Files\vpn\ca.pem")
+        );
+    }
+
+    #[test]
+    fn backslash_is_literal_in_single_quotes() {
+        let f = parse_ok(r"setenv NOTE 'My\ VPN'");
+        assert_eq!(f.options["setenv"], vec!["NOTE", r"My\ VPN"]);
+    }
+
+    #[test]
+    fn unsupported_escapes_keep_the_backslash() {
+        // OpenVPN rejects these; nmrs keeps importing them as before.
+        let f = parse_ok(r"ca C:\certs\ca.pem");
+        assert!(matches!(f.ca, Some(CertSource::File(ref p)) if p == r"C:\certs\ca.pem"));
+
+        let f = parse_ok(r#"setenv NOTE "a\tb""#);
+        assert_eq!(f.options["setenv"], vec!["NOTE", r"a\tb"]);
+    }
+
+    #[test]
+    fn escaped_comment_char_at_argument_start_is_still_a_comment() {
+        // OpenVPN checks for a comment before it looks at the backslash.
+        let f = parse_ok(r"setenv X \# not an argument");
+        assert_eq!(f.options["setenv"], vec!["X"]);
     }
 
     #[test]
