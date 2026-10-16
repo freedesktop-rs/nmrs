@@ -11,6 +11,12 @@ All notable changes to the `nmrs` crate will be documented in this file.
 
 ### Fixed
 
+- `.ovpn` arguments now decode backslash escapes the way OpenVPN does, in
+  double-quoted and unquoted arguments: `My\ VPN` and `"My\ VPN"` are both
+  `My VPN`, and `C:\\dir` is `C:\dir`. The backslash was kept, so a name like
+  `verify-x509-name "My\ VPN" name` never matched the server. Single quotes
+  stay literal, and escapes OpenVPN rejects keep their backslash as before.
+  ([#585](https://github.com/freedesktop-rs/nmrs/pull/585))
 - Importing a `.ovpn` file now keeps `remote-cert-tls`, `verify-x509-name`, and
   `crl-verify` (including an inline `<crl-verify>` block, stored like the other
   inline certificates). They were dropped, so an imported profile skipped those
