@@ -190,6 +190,64 @@ impl OvpnFileBuilder {
     }
 }
 
+/// Splits a directive line into arguments the way OpenVPN does: whitespace
+/// separates arguments, `'single quotes'` group text literally, and
+/// `"double quotes"` group text with `\"` and `\\` escapes. A backslash
+/// outside quotes is kept as-is.
+fn split_args(line: &str, line_number: usize) -> Result<Vec<String>, OvpnParseError> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut in_arg = false;
+    let mut chars = line.chars();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' | '"' => {
+                in_arg = true;
+                loop {
+                    match chars.next() {
+                        Some(q) if q == c => break,
+                        Some('\\') if c == '"' => match chars.next() {
+                            Some(escaped @ ('"' | '\\')) => current.push(escaped),
+                            Some(other) => {
+                                current.push('\\');
+                                current.push(other);
+                            }
+                            None => {
+                                return Err(OvpnParseError::InvalidDirectiveSyntax {
+                                    line: line_number,
+                                });
+                            }
+                        },
+                        Some(inner) => current.push(inner),
+                        None => {
+                            return Err(OvpnParseError::InvalidDirectiveSyntax {
+                                line: line_number,
+                            });
+                        }
+                    }
+                }
+            }
+            c if c.is_whitespace() => {
+                if in_arg {
+                    args.push(std::mem::take(&mut current));
+                    in_arg = false;
+                }
+            }
+            c => {
+                in_arg = true;
+                current.push(c);
+            }
+        }
+    }
+
+    if in_arg {
+        args.push(current);
+    }
+
+    Ok(args)
+}
+
 fn lexer(input: &str) -> Result<Vec<OvpnItem>, OvpnParseError> {
     let mut items = Vec::new();
 
@@ -262,13 +320,18 @@ fn lexer(input: &str) -> Result<Vec<OvpnItem>, OvpnParseError> {
 
         let line = current_line.trim();
 
-        // Remove comments
+        // Remove comments. A `#` or `;` inside quotes is part of the argument.
         let mut cleaned = String::new();
         let mut prev_whitespace = true;
+        let mut quote: Option<char> = None;
 
         for c in line.chars() {
-            if (c == '#' || c == ';') && prev_whitespace {
-                break;
+            match quote {
+                Some(q) if c == q => quote = None,
+                Some(_) => {}
+                None if c == '"' || c == '\'' => quote = Some(c),
+                None if (c == '#' || c == ';') && prev_whitespace => break,
+                None => {}
             }
 
             prev_whitespace = c.is_whitespace();
@@ -304,7 +367,7 @@ fn lexer(input: &str) -> Result<Vec<OvpnItem>, OvpnParseError> {
             });
         }
 
-        let mut parts = line.split_whitespace();
+        let mut parts = split_args(line, line_number)?.into_iter();
         let key = match parts.next() {
             Some(k) => k.to_lowercase(),
             None => {
@@ -312,7 +375,7 @@ fn lexer(input: &str) -> Result<Vec<OvpnItem>, OvpnParseError> {
             }
         };
 
-        let args: Vec<String> = parts.map(|s| s.to_string()).collect();
+        let args: Vec<String> = parts.collect();
 
         items.push(OvpnItem::Directive {
             key,
@@ -1259,5 +1322,22 @@ mod tests {
     fn auth_user_pass_absent_defaults_false() {
         let result = parse_ok("remote example.com 1194 udp");
         assert!(!result.auth_user_pass);
+    }
+
+    #[test]
+    fn quoted_arguments_stay_together() {
+        let f = parse_ok("setenv FRIENDLY_NAME 'My VPN' # comment");
+        assert_eq!(f.options["setenv"], vec!["FRIENDLY_NAME", "My VPN"]);
+
+        let f = parse_ok(r#"setenv NOTE "a \"quoted\" ; b""#);
+        assert_eq!(f.options["setenv"], vec!["NOTE", r#"a "quoted" ; b"#]);
+    }
+
+    #[test]
+    fn unterminated_quote_is_a_syntax_error() {
+        assert_parse_err!(
+            "setenv FRIENDLY_NAME 'My VPN",
+            OvpnParseError::InvalidDirectiveSyntax { line: 1 }
+        );
     }
 }
