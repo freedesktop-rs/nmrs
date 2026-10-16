@@ -216,59 +216,81 @@ impl OvpnFileBuilder {
     }
 }
 
-/// Splits a directive line into arguments the way OpenVPN does: whitespace
-/// separates arguments, `'single quotes'` group text literally, and
-/// `"double quotes"` group text with `\"` and `\\` escapes. A backslash
-/// outside quotes is kept as-is.
+/// Where a line scanner is, mirroring OpenVPN's `parse_line`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ArgState {
+    /// Between arguments.
+    Between,
+    /// Inside an argument that didn't start with a quote. Quotes and
+    /// comment characters here are literal.
+    Unquoted,
+    /// Inside `"..."`; `escaped` is set right after a backslash.
+    Double { escaped: bool },
+    /// Inside `'...'`; everything up to the next `'` is literal.
+    Single,
+}
+
+impl ArgState {
+    /// Advances past `c`. Returns `None` when `c` starts a comment.
+    fn step(self, c: char) -> Option<Self> {
+        Some(match self {
+            Self::Between if c.is_whitespace() => Self::Between,
+            Self::Between if c == '#' || c == ';' => return None,
+            Self::Between if c == '"' => Self::Double { escaped: false },
+            Self::Between if c == '\'' => Self::Single,
+            Self::Between => Self::Unquoted,
+            Self::Unquoted if c.is_whitespace() => Self::Between,
+            Self::Unquoted => Self::Unquoted,
+            Self::Double { escaped: true } => Self::Double { escaped: false },
+            Self::Double { .. } if c == '\\' => Self::Double { escaped: true },
+            Self::Double { .. } if c == '"' => Self::Between,
+            Self::Double { .. } => Self::Double { escaped: false },
+            Self::Single if c == '\'' => Self::Between,
+            Self::Single => Self::Single,
+        })
+    }
+}
+
+/// Splits a directive line into arguments the way OpenVPN's `parse_line`
+/// does. A quote only opens a quoted argument at the start of an argument;
+/// mid-token it's an ordinary character, so `Bob's` stays one argument.
+/// `'single quotes'` are literal, `"double quotes"` honor `\"` and `\\`, and a
+/// closing quote ends the argument. A backslash outside quotes is kept as-is.
 fn split_args(line: &str, line_number: usize) -> Result<Vec<String>, OvpnParseError> {
     let mut args = Vec::new();
     let mut current = String::new();
-    let mut in_arg = false;
-    let mut chars = line.chars();
+    let mut state = ArgState::Between;
 
-    while let Some(c) = chars.next() {
-        match c {
-            '\'' | '"' => {
-                in_arg = true;
-                loop {
-                    match chars.next() {
-                        Some(q) if q == c => break,
-                        Some('\\') if c == '"' => match chars.next() {
-                            Some(escaped @ ('"' | '\\')) => current.push(escaped),
-                            Some(other) => {
-                                current.push('\\');
-                                current.push(other);
-                            }
-                            None => {
-                                return Err(OvpnParseError::InvalidDirectiveSyntax {
-                                    line: line_number,
-                                });
-                            }
-                        },
-                        Some(inner) => current.push(inner),
-                        None => {
-                            return Err(OvpnParseError::InvalidDirectiveSyntax {
-                                line: line_number,
-                            });
-                        }
-                    }
+    for c in line.chars() {
+        let Some(next) = state.step(c) else {
+            break;
+        };
+
+        match (state, next) {
+            (ArgState::Between, ArgState::Unquoted) => current.push(c),
+            (ArgState::Unquoted, ArgState::Between)
+            | (ArgState::Double { escaped: false }, ArgState::Between)
+            | (ArgState::Single, ArgState::Between) => args.push(std::mem::take(&mut current)),
+            (ArgState::Double { escaped: false }, ArgState::Double { escaped: true }) => {}
+            (ArgState::Double { escaped: true }, _) => {
+                if c != '"' && c != '\\' {
+                    current.push('\\');
                 }
-            }
-            c if c.is_whitespace() => {
-                if in_arg {
-                    args.push(std::mem::take(&mut current));
-                    in_arg = false;
-                }
-            }
-            c => {
-                in_arg = true;
                 current.push(c);
             }
+            (ArgState::Unquoted | ArgState::Double { .. } | ArgState::Single, _) => current.push(c),
+            (ArgState::Between, _) => {}
         }
+
+        state = next;
     }
 
-    if in_arg {
-        args.push(current);
+    match state {
+        ArgState::Between => {}
+        ArgState::Unquoted => args.push(current),
+        ArgState::Double { .. } | ArgState::Single => {
+            return Err(OvpnParseError::InvalidDirectiveSyntax { line: line_number });
+        }
     }
 
     Ok(args)
@@ -346,26 +368,16 @@ fn lexer(input: &str) -> Result<Vec<OvpnItem>, OvpnParseError> {
 
         let line = current_line.trim();
 
-        // Remove comments. A `#` or `;` inside quotes is part of the argument.
+        // Remove comments. Uses the same scanner as `split_args`, so a `#` or
+        // `;` only starts a comment where a new argument could start.
         let mut cleaned = String::new();
-        let mut prev_whitespace = true;
-        let mut quote: Option<char> = None;
-        // Inside double quotes a backslash escapes the next character, as in
-        // `split_args`, so `\"` doesn't end the quote.
-        let mut escaped = false;
+        let mut state = ArgState::Between;
 
         for c in line.chars() {
-            match quote {
-                Some('"') if escaped => escaped = false,
-                Some('"') if c == '\\' => escaped = true,
-                Some(q) if c == q => quote = None,
-                Some(_) => {}
-                None if c == '"' || c == '\'' => quote = Some(c),
-                None if (c == '#' || c == ';') && prev_whitespace => break,
-                None => {}
-            }
-
-            prev_whitespace = c.is_whitespace();
+            let Some(next) = state.step(c) else {
+                break;
+            };
+            state = next;
             cleaned.push(c);
         }
 
@@ -1525,6 +1537,33 @@ mod tests {
 
         let f = parse_ok(r#"setenv PATH "C:\\dir" # comment"#);
         assert_eq!(f.options["setenv"], vec!["PATH", r"C:\dir"]);
+    }
+
+    #[test]
+    fn quotes_inside_a_token_are_literal() {
+        let f = parse_ok("setenv FRIENDLY_NAME Bob's VPN");
+        assert_eq!(f.options["setenv"], vec!["FRIENDLY_NAME", "Bob's", "VPN"]);
+
+        let f = parse_ok(r#"setenv NOTE say"hi" # comment"#);
+        assert_eq!(f.options["setenv"], vec!["NOTE", r#"say"hi""#]);
+    }
+
+    #[test]
+    fn comment_after_token_with_apostrophe_is_stripped() {
+        let f = parse_ok("setenv X it's # note");
+        assert_eq!(f.options["setenv"], vec!["X", "it's"]);
+
+        let f = parse_ok("setenv X it's ; note");
+        assert_eq!(f.options["setenv"], vec!["X", "it's"]);
+    }
+
+    #[test]
+    fn closing_quote_ends_the_argument() {
+        let f = parse_ok("setenv 'a b'c");
+        assert_eq!(f.options["setenv"], vec!["a b", "c"]);
+
+        let f = parse_ok(r##"setenv "a b"#comment"##);
+        assert_eq!(f.options["setenv"], vec!["a b"]);
     }
 
     #[test]
