@@ -491,8 +491,20 @@ mod tests {
         }
     }
 
+    /// Whether the agent interface is currently served at `path` on `conn`.
+    async fn agent_served_at(conn: &Connection, path: &str) -> bool {
+        conn.object_server()
+            .interface::<_, SecretAgentInterface>(path)
+            .await
+            .is_ok()
+    }
+
+    /// Introspects `path` on `conn` from a second connection. Calling
+    /// `Introspect` on the connection that serves the object hangs
+    /// intermittently on zbus 5 when several tests do it concurrently.
     async fn introspect(conn: &Connection, path: &str) -> String {
-        zbus::fdo::IntrospectableProxy::builder(conn)
+        let observer = session_connection().await;
+        zbus::fdo::IntrospectableProxy::builder(&observer)
             .destination(conn.unique_name().expect("unique name").clone())
             .expect("destination")
             .path(path.to_owned())
@@ -518,28 +530,25 @@ mod tests {
     async fn unregister_releases_the_agent_object_path() {
         let conn = session_connection().await;
         let handle = serve_agent(&conn, DEFAULT_OBJECT_PATH).await;
+        assert!(agent_served_at(&conn, DEFAULT_OBJECT_PATH).await);
 
-        assert!(
-            introspect(&conn, DEFAULT_OBJECT_PATH)
-                .await
-                .contains("org.freedesktop.NetworkManager.SecretAgent")
-        );
+        // There is no NetworkManager on the session bus, so `Unregister`
+        // fails; the object path must be released regardless.
+        assert!(handle.unregister().await.is_err());
 
-        let _ = handle.unregister().await;
-
-        assert!(
-            !introspect(&conn, DEFAULT_OBJECT_PATH)
-                .await
-                .contains("org.freedesktop.NetworkManager.SecretAgent")
-        );
+        assert!(!agent_served_at(&conn, DEFAULT_OBJECT_PATH).await);
     }
 
+    // zbus 5 removes the agent interface but leaves the auto-created ancestor
+    // nodes (`/org`, `/org/freedesktop`, ...) in the object tree. zbus 6 prunes
+    // them (z-galaxy/zbus#1916); enable this once nmrs is on zbus 6.
+    #[ignore = "needs zbus 6: ObjectServer::remove prunes empty ancestor nodes"]
     #[tokio::test(flavor = "multi_thread")]
     async fn unregister_leaves_no_objects_exported_on_the_agent_connection() {
         let conn = session_connection().await;
         let handle = serve_agent(&conn, DEFAULT_OBJECT_PATH).await;
 
-        let _ = handle.unregister().await;
+        assert!(handle.unregister().await.is_err());
 
         assert_eq!(exported_nodes(&conn).await, Vec::<String>::new());
     }
@@ -548,13 +557,10 @@ mod tests {
     async fn unregister_releases_a_custom_object_path() {
         let conn = session_connection().await;
         let handle = serve_agent(&conn, "/org/example/nmrs/Agent").await;
+        assert!(agent_served_at(&conn, "/org/example/nmrs/Agent").await);
 
-        let _ = handle.unregister().await;
+        assert!(handle.unregister().await.is_err());
 
-        assert!(
-            !introspect(&conn, "/org/example/nmrs/Agent")
-                .await
-                .contains("org.freedesktop.NetworkManager.SecretAgent")
-        );
+        assert!(!agent_served_at(&conn, "/org/example/nmrs/Agent").await);
     }
 }
