@@ -459,22 +459,30 @@ mod tests {
     async fn connection_pair() -> (Connection, Connection) {
         let (agent_socket, peer_socket) =
             std::os::unix::net::UnixStream::pair().expect("socketpair");
+        // Serving an interface at build time makes `build()` wait until the
+        // peer's object server is listening, so a call can't arrive before it
+        // subscribes and be dropped without a reply.
         let peer = zbus::connection::Builder::unix_stream(peer_socket)
             .server(zbus::Guid::generate())
             .expect("p2p server guid")
             .p2p()
+            .serve_at("/", StandInBus)
+            .expect("serving the stand-in bus")
             .build();
         let agent = zbus::connection::Builder::unix_stream(agent_socket)
             .p2p()
+            .method_timeout(std::time::Duration::from_secs(5))
             .build();
         let (peer, agent) = futures::join!(peer, agent);
         let peer = peer.expect("p2p server connection");
         let agent = agent.expect("p2p client connection");
-        // Start the peer's object server so method calls it does not serve
-        // get an error reply instead of no reply at all.
-        let _ = peer.object_server();
         (agent, peer)
     }
+
+    struct StandInBus;
+
+    #[zbus::interface(name = "org.freedesktop.nmrs.test.StandInBus")]
+    impl StandInBus {}
 
     async fn serve_agent(conn: &Connection, object_path: &str) -> SecretAgentHandle {
         let (request_tx, _request_rx) = mpsc::channel(DEFAULT_QUEUE_DEPTH);
