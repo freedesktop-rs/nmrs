@@ -1,0 +1,143 @@
+name: review
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [labeled, review_requested]
+
+jobs:
+  review:
+    if: >
+      (github.event_name == 'pull_request_target' && github.event.action == 'labeled' && github.event.label.name == 'mel') ||
+      (github.event_name == 'pull_request_target' && github.event.action == 'review_requested' && github.event.requested_reviewer.login == 'mel-the-caddie[bot]') ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+       contains(github.event.comment.body, '@mel-the-caddie') &&
+       github.event.comment.user.login == 'cachebag')
+    runs-on: [self-hosted, reviewer]
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: App token
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.REVIEWER_APP_ID }}
+          private-key: ${{ secrets.REVIEWER_PRIVATE_KEY }}
+
+      - name: Say it's started
+        id: ack
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          id=$(gh api repos/$REPO/issues/$PR/comments -f body="don't fucking touch anything, let me review this shit first." --jq .id)
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/pull/${{ github.event.pull_request.number || github.event.issue.number }}/head
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Get the diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr diff $PR --repo $REPO > "$RUNNER_TEMP/pr.diff"
+
+      - name: Changes since the last review
+        id: since
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/$REPO/pulls/$PR/reviews --paginate \
+            --jq '[.[] | select(.user.login == "mel-the-caddie[bot]" and .state != "COMMENTED")] | last // empty | {id, commit_id, body}' \
+            > "$RUNNER_TEMP/last.json"
+          sha=$(jq -r '.commit_id // empty' "$RUNNER_TEMP/last.json")
+          if [ -n "$sha" ] && git cat-file -e "$sha^{commit}" 2>/dev/null && [ "$sha" != "$(git rev-parse HEAD)" ]; then
+            git diff "$(git merge-base "$sha" HEAD)" HEAD > "$RUNNER_TEMP/since.diff"
+          fi
+          if [ -s "$RUNNER_TEMP/since.diff" ]; then
+            jq -r .body "$RUNNER_TEMP/last.json" > "$RUNNER_TEMP/last.md"
+            review_id=$(jq -r .id "$RUNNER_TEMP/last.json")
+            REVIEW_ID=$review_id gh api repos/$REPO/pulls/$PR/comments --paginate \
+              --jq '.[] | select(.pull_request_review_id == ($ENV.REVIEW_ID | tonumber)) | "- `\(.path):\(.line // .original_line)` \(.body)"' \
+              >> "$RUNNER_TEMP/last.md"
+            echo "followup=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "followup=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Review
+        env:
+          FOLLOWUP: ${{ steps.since.outputs.followup }}
+        run: |
+          if [ "$FOLLOWUP" = "true" ]; then
+            task="You already reviewed this pull request. Your previous findings are at $RUNNER_TEMP/last.md. The changes pushed since then are at $RUNNER_TEMP/since.diff; the full diff is at $RUNNER_TEMP/pr.diff for context only. Review only the new changes. A previous finding that is fixed gets no mention. One that is not fixed gets a comment on the line again. Do not raise new findings on code that did not change."
+          else
+            task="Review the pull request. The diff is at $RUNNER_TEMP/pr.diff."
+          fi
+          read -r -d '' persona <<'EOF' || true
+          You are a senior systems engineer doing code review the way a kernel maintainer does it: blunt, terse, engineering only. You do not care about feelings, style, or formatting. You care whether the code is correct, whether it fails safely, and whether the tests would catch it breaking.
+
+          What you look for, in order: data loss or corruption; wrong behavior on the unhappy path (errors swallowed, partial writes, bad input reaching the filesystem or a database); races and resource leaks; behavior that contradicts the surrounding code or the docs; tests that do not test the thing that changed. Read the surrounding code before you judge a line. If you are not sure something is a bug, say what input breaks it or drop it.
+
+          How you write: one or two sentences per finding. State the defect, the input that triggers it, and what happens. No preamble, no restating the diff, no praise, no "consider", no "it might be worth". Swearing is fine when earned. Follow any review conventions in CLAUDE.md if the repo has one, but do not mention it, your own process, or what files you read. Never explain what the PR does back to the author; they wrote it.
+
+          Verdict rules. REQUEST_CHANGES only for a real bug or broken behavior that you can show. A behavior change with no test exercising it is a finding, not a blocker. Otherwise APPROVE. When you APPROVE, summary is exactly LGTM and nothing else; nits go inline or nowhere. When you REQUEST_CHANGES, summary is one sentence naming the blocking problem, nothing more; the details are in the inline comments.
+
+          Each finding goes in comments with the file path and the line number as it appears in the new version of the file. Only use lines that are part of the diff, and check the number with Read before using it. Anything that cannot be tied to a line goes in summary only if it blocks; otherwise leave it out.
+          EOF
+          claude -p "$task
+
+          $persona" \
+            --allowedTools "Read,Grep,Glob" \
+            --disallowedTools "Bash,Edit,Write,WebFetch,WebSearch" \
+            --max-turns 30 \
+            --output-format json \
+            --json-schema '{"type":"object","required":["verdict","summary","comments"],"properties":{"verdict":{"type":"string","enum":["APPROVE","REQUEST_CHANGES"]},"summary":{"type":"string"},"comments":{"type":"array","items":{"type":"object","required":["path","line","body"],"properties":{"path":{"type":"string"},"line":{"type":"integer"},"body":{"type":"string"}}}}}}' \
+            | jq '.structured_output // (.result | fromjson)' > "$RUNNER_TEMP/review.json"
+
+      - name: Post review
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          awk '/^\+\+\+ b\//{f=substr($0,7); next} /^@@/{split($0,a," "); split(substr(a[3],2),r,","); n=r[1]-1; next} /^-/{next} /^[ +]/{n++; if(f!="") print f"\t"n}' \
+            "$RUNNER_TEMP/pr.diff" | jq -R -s 'split("\n") | map(select(length > 0)) | map({(.): true}) | add // {}' > "$RUNNER_TEMP/valid.json"
+          jq --slurpfile v "$RUNNER_TEMP/valid.json" '
+            ($v[0]) as $ok
+            | (.comments | map(. + {key: (.path + "\t" + (.line | tostring))})) as $c
+            | ($c | map(select($ok[.key]))) as $inline
+            | ($c | map(select($ok[.key] | not))) as $rest
+            | {event: .verdict,
+               body: (if .verdict == "APPROVE" then "LGTM" else .summary + (if ($rest | length) > 0 then "\n\n" + ($rest | map("- `\(.path):\(.line)` \(.body)") | join("\n")) else "" end) end),
+               comments: ($inline | map({path, line, body, side: "RIGHT"}))}' \
+            "$RUNNER_TEMP/review.json" > "$RUNNER_TEMP/payload.json"
+          if ! gh api -X POST repos/$REPO/pulls/$PR/reviews --input "$RUNNER_TEMP/payload.json" > /dev/null; then
+            jq '{event: .verdict, body: (if .verdict == "APPROVE" then "LGTM" else .summary + "\n\n" + (.comments | map("- `\(.path):\(.line)` \(.body)") | join("\n")) end)}' \
+              "$RUNNER_TEMP/review.json" > "$RUNNER_TEMP/payload.json"
+            gh api -X POST repos/$REPO/pulls/$PR/reviews --input "$RUNNER_TEMP/payload.json" > /dev/null
+          fi
+
+      - name: Remove the placeholder
+        if: success() && steps.ack.outputs.id
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: gh api -X DELETE repos/$REPO/issues/comments/${{ steps.ack.outputs.id }}
+
+      - name: Say it failed
+        if: failure() && steps.ack.outputs.id
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          gh api -X PATCH repos/$REPO/issues/comments/${{ steps.ack.outputs.id }} \
+            -f body="Review failed. Log: ${{ github.server_url }}/$REPO/actions/runs/${{ github.run_id }}"
+
+      - name: Remove the label
+        if: always() && github.event_name == 'pull_request_target'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: gh pr edit $PR --repo $REPO --remove-label mel
