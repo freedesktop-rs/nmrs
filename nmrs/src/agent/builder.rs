@@ -325,22 +325,38 @@ impl SecretAgentHandle {
         Ok(())
     }
 
-    /// Unregisters the agent from NetworkManager.
+    /// Unregisters the agent from NetworkManager and stops serving its object.
     ///
     /// After this call, the request stream returned by
-    /// [`SecretAgentBuilder::register`] will complete.
+    /// [`SecretAgentBuilder::register`] will complete and the agent's object
+    /// path is released, even if NetworkManager is no longer reachable.
     ///
     /// # Errors
     ///
-    /// Returns an error if the D-Bus `Unregister` call fails.
+    /// Returns an error if the D-Bus `Unregister` call fails or if the agent's
+    /// object could not be removed from the object server.
     pub async fn unregister(self) -> crate::Result<()> {
-        let proxy = AgentManagerProxy::new(&self.conn).await.map_err(|e| {
-            ConnectionError::DbusOperation {
-                context: "creating AgentManager proxy for unregistration".into(),
+        let unregistered = async {
+            let proxy = AgentManagerProxy::new(&self.conn).await.map_err(|e| {
+                ConnectionError::DbusOperation {
+                    context: "creating AgentManager proxy for unregistration".into(),
+                    source: e,
+                }
+            })?;
+            proxy.unregister().await.map_err(unregistration_error)
+        }
+        .await;
+
+        self.conn
+            .object_server()
+            .remove::<SecretAgentInterface, _>(&*self.object_path)
+            .await
+            .map_err(|e| ConnectionError::DbusOperation {
+                context: format!("removing SecretAgent interface at {}", self.object_path),
                 source: e,
-            }
-        })?;
-        proxy.unregister().await.map_err(unregistration_error)?;
+            })?;
+
+        unregistered?;
         debug!("Unregistered secret agent '{}'", self.identifier);
         Ok(())
     }
@@ -434,5 +450,140 @@ mod tests {
         assert_eq!(builder.capabilities, SecretAgentCapabilities::empty());
         assert_eq!(builder.object_path, "/org/example/nmrs/Agent");
         assert_eq!(builder.queue_depth, 7);
+    }
+
+    /// A private peer-to-peer connection pair over a socketpair, so the tests
+    /// never depend on the host's session bus. The agent serves its object on
+    /// the first connection; the second stands in for the bus and answers
+    /// anything it does not serve with a D-Bus error.
+    async fn connection_pair() -> (Connection, Connection) {
+        let (agent_socket, peer_socket) =
+            std::os::unix::net::UnixStream::pair().expect("socketpair");
+        // Serving an interface at build time makes `build()` wait until the
+        // peer's object server is listening, so a call can't arrive before it
+        // subscribes and be dropped without a reply.
+        let peer = zbus::connection::Builder::unix_stream(peer_socket)
+            .server(zbus::Guid::generate())
+            .expect("p2p server guid")
+            .p2p()
+            .serve_at("/", StandInBus)
+            .expect("serving the stand-in bus")
+            .build();
+        let agent = zbus::connection::Builder::unix_stream(agent_socket)
+            .p2p()
+            .method_timeout(std::time::Duration::from_secs(5))
+            .build();
+        let (peer, agent) = futures::join!(peer, agent);
+        let peer = peer.expect("p2p server connection");
+        let agent = agent.expect("p2p client connection");
+        (agent, peer)
+    }
+
+    struct StandInBus;
+
+    #[zbus::interface(name = "org.freedesktop.nmrs.test.StandInBus")]
+    impl StandInBus {}
+
+    async fn serve_agent(conn: &Connection, object_path: &str) -> SecretAgentHandle {
+        let (request_tx, _request_rx) = mpsc::channel(DEFAULT_QUEUE_DEPTH);
+        let (cancel_tx, cancel_rx) = mpsc::unbounded();
+        let (store_tx, store_rx) = mpsc::unbounded();
+
+        conn.object_server()
+            .at(
+                object_path,
+                SecretAgentInterface {
+                    request_tx,
+                    cancel_tx,
+                    store_tx,
+                    pending: Arc::new(Mutex::new(HashMap::new())),
+                    next_request_id: AtomicU64::new(1),
+                    response_timeout:
+                        crate::types::constants::timeouts::secret_agent_response_timeout(),
+                },
+            )
+            .await
+            .expect("serving the agent interface");
+
+        SecretAgentHandle {
+            conn: conn.clone(),
+            identifier: DEFAULT_IDENTIFIER.to_owned(),
+            capabilities: SecretAgentCapabilities::VPN_HINTS,
+            object_path: object_path.to_owned(),
+            cancel_rx,
+            store_rx,
+        }
+    }
+
+    /// Whether the agent interface is currently served at `path` on `conn`.
+    async fn agent_served_at(conn: &Connection, path: &str) -> bool {
+        conn.object_server()
+            .interface::<_, SecretAgentInterface>(path)
+            .await
+            .is_ok()
+    }
+
+    /// Introspects `path` on the agent connection from its peer. Calling
+    /// `Introspect` on the connection that serves the object hangs
+    /// intermittently on zbus 5 when several tests do it concurrently.
+    async fn introspect(peer: &Connection, path: &str) -> String {
+        zbus::fdo::IntrospectableProxy::builder(peer)
+            .destination("org.freedesktop.NetworkManager.nmrs.Agent")
+            .expect("destination")
+            .path(path.to_owned())
+            .expect("object path")
+            .build()
+            .await
+            .expect("introspectable proxy")
+            .introspect()
+            .await
+            .unwrap_or_default()
+    }
+
+    async fn exported_nodes(peer: &Connection) -> Vec<String> {
+        introspect(peer, "/")
+            .await
+            .lines()
+            .filter(|line| line.trim_start().starts_with("<node name="))
+            .map(|line| line.trim().to_owned())
+            .collect()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unregister_releases_the_agent_object_path() {
+        let (conn, _peer) = connection_pair().await;
+        let handle = serve_agent(&conn, DEFAULT_OBJECT_PATH).await;
+        assert!(agent_served_at(&conn, DEFAULT_OBJECT_PATH).await);
+
+        // The peer is not NetworkManager, so `Unregister` fails; the object
+        // path must be released regardless.
+        assert!(handle.unregister().await.is_err());
+
+        assert!(!agent_served_at(&conn, DEFAULT_OBJECT_PATH).await);
+    }
+
+    // zbus 5 removes the agent interface but leaves the auto-created ancestor
+    // nodes (`/org`, `/org/freedesktop`, ...) in the object tree. zbus 6 prunes
+    // them (z-galaxy/zbus#1916); enable this once nmrs is on zbus 6.
+    #[ignore = "needs zbus 6: ObjectServer::remove prunes empty ancestor nodes"]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unregister_leaves_no_objects_exported_on_the_agent_connection() {
+        let (conn, peer) = connection_pair().await;
+        let handle = serve_agent(&conn, DEFAULT_OBJECT_PATH).await;
+
+        assert!(handle.unregister().await.is_err());
+
+        assert_eq!(exported_nodes(&peer).await, Vec::<String>::new());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unregister_releases_a_custom_object_path() {
+        let (conn, _peer) = connection_pair().await;
+        let handle = serve_agent(&conn, "/org/example/nmrs/Agent").await;
+        assert!(agent_served_at(&conn, "/org/example/nmrs/Agent").await);
+
+        assert!(handle.unregister().await.is_err());
+
+        assert!(!agent_served_at(&conn, "/org/example/nmrs/Agent").await);
     }
 }

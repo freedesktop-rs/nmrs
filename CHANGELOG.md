@@ -5,6 +5,11 @@ All notable changes to the `nmrs` crate will be documented in this file.
 ## [Unreleased]
 ### Fixed
 
+- `SecretAgentHandle::unregister()` now removes the agent object from the
+  D-Bus object server even when NetworkManager's `Unregister` call fails or
+  the daemon is unreachable, so the object path can be reused by a later
+  registration. The `Unregister` error is still returned.
+  ([#530](https://github.com/freedesktop-rs/nmrs/pull/530))
 - `PermHwAddress` is now read from NetworkManager's `Device.Wired` and
   `Device.Wireless` interfaces instead of the base `Device` interface, where it
   does not exist. `WifiDevice::permanent_hw_address` and
