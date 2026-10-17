@@ -173,7 +173,7 @@ def update_changelog(file_path: Path, version: str, release_type: str) -> bool:
 
         new_content = re.sub(
             unreleased_pattern,
-            new_unreleased_section + new_version_section,
+            lambda _: new_unreleased_section + new_version_section,
             content,
             flags=re.DOTALL
         )
