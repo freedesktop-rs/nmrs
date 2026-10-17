@@ -15,7 +15,7 @@ include = ["src/**", "tests/**", "examples/**", "/README.md", "/LICENSE-*"]
 
 [dependencies]
 log = "0.4.34"
-zbus = "5.16.0"
+zbus = "5.19.0"
 zvariant = "5.15.0"
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.21"
@@ -79,4 +79,4 @@ path = "examples/vpn_list.rs"
 
 [dev-dependencies]
 serial_test = "4.0.1"
-zbus = { version = "5.16.0", features = ["p2p"] }
+zbus = { version = "5.19.0", features = ["p2p"] }
