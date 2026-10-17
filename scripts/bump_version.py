@@ -3,7 +3,7 @@
 Version bumping script for nmrs.
 
 This script updates version numbers:
-- nmrs/Cargo.toml
+- Cargo.toml
 - CHANGELOG.md
 - Cargo.lock
 
@@ -252,7 +252,7 @@ def main():
 
     success = True
 
-    cargo_toml_path = project_root / 'nmrs' / 'Cargo.toml'
+    cargo_toml_path = project_root / 'Cargo.toml'
     changelog_path = project_root / 'CHANGELOG.md'
 
     if release_type == 'stable' and cargo_toml_path.exists() and changelog_path.exists():

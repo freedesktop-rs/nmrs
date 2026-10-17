@@ -16,8 +16,10 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 COPY Cargo.toml Cargo.lock ./
-COPY nmrs ./nmrs
+COPY src ./src
+COPY examples ./examples
+COPY tests ./tests
 
-RUN cargo build --locked -p nmrs --release && cargo build --locked -p nmrs
+RUN cargo build --locked --release && cargo build --locked
 
 CMD ["/bin/bash"]

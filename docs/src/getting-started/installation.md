@@ -29,7 +29,7 @@ Clone and build from source:
 
 ```bash
 git clone https://github.com/freedesktop-rs/nmrs.git
-cd nmrs/nmrs
+cd nmrs
 cargo build --release
 ```
 

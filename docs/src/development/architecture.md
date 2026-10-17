@@ -5,7 +5,7 @@ This page describes the internal architecture of the nmrs library. Understanding
 ## Crate Structure
 
 ```
-nmrs/src/
+src/
 ├── lib.rs              # Crate root: re-exports, Result type alias, raw module
 ├── api/                # Public API layer
 │   ├── mod.rs

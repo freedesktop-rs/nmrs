@@ -9,7 +9,7 @@ Context for AI agents working in this repository.
 ## Architecture
 
 ```
-nmrs/src/
+src/
   lib.rs                — public API surface, re-exports from api/
   api/
     network_manager.rs  — main entry point (NetworkManager struct)
@@ -34,7 +34,7 @@ tests must use the isolated Docker harness or an explicit opt-in.
 cargo check                                               # quick compile check
 cargo fmt --all -- --check                                # formatting (default rustfmt, no config file)
 cargo clippy --all-targets --all-features -- -D warnings  # lints (warnings are errors in CI)
-cargo test -p nmrs --lib --all-features                   # unit tests only
+cargo test --lib --all-features                           # unit tests only
 cargo test --doc --all-features --workspace               # doc tests
 cargo test --all-features --workspace                     # unit/docs; environmental tests stay ignored
 docker compose run --build --rm test-integration          # isolated NM settings/agent/WireGuard/wired lifecycle
@@ -76,7 +76,7 @@ facilities, timeouts, and unexpected errors must fail rather than skip.
 - **Doc comments** on all public items with examples where practical. Doc examples use `nmrs::` paths (crate root re-exports).
 - **No `unwrap()` in library code** — return errors via `?` or `ConnectionError`.
   - `unwrap_or_else()` is allowed if the error is expected and there is a fallback value. Document this with a comment.
-- **Tests**: unit tests live in `#[cfg(test)] mod tests` within the module or in `api/models/tests.rs`. Integration tests in `nmrs/tests/`. Assert behavior, not implementation.
+- **Tests**: unit tests live in `#[cfg(test)] mod tests` within the module or in `api/models/tests.rs`. Integration tests in `tests/`. Assert behavior, not implementation.
 
 ## Commit messages
 

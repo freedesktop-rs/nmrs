@@ -30,10 +30,8 @@ the host system bus.
 docker compose run shell
 ```
 
-If you decide to run the shell, ensure you run all commands from within the nmrs directory, not root.
-```bash
-cargo test -p nmrs --lib     # run library unit tests
-cargo build -p nmrs          # build the library
+cargo test --lib             # run library unit tests
+cargo build                  # build the library
 cargo check                  # you get the point...
 ```
 

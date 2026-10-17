@@ -42,7 +42,7 @@ jobs:
       - name: Publish to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish --package nmrs
+        run: cargo publish
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3

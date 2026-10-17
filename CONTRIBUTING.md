@@ -41,15 +41,13 @@ docker compose run shell
 If you just want quick builds/tests without the full NetworkManager environment:
 
 ```bash
-docker run --rm nmrs-lib cargo test -p nmrs --lib
+docker run --rm nmrs-lib cargo test --lib
 docker run --rm -it -v $(pwd):/app nmrs-lib   # mounts local changes
 ```
 
-If you decide to run the shell, ensure you run all commands from within the nmrs directory, not root.
-
 ```bash
-cargo test -p nmrs --lib     # run library unit tests
-cargo build -p nmrs          # build the library
+cargo test --lib             # run library unit tests
+cargo build                  # build the library
 cargo check                  # you get the point...
 ```
 
