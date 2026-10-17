@@ -8,5 +8,4 @@ __pycache__/
 *.pyc
 vendor/
 /pkg/
-/src/
 *.pkg.tar.zst

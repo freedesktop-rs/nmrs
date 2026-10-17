@@ -1,34 +1,82 @@
-[workspace]
-members = [
-  "nmrs"
-]
-
-resolver = "3"
-
-[workspace.package]
+[package]
+name = "nmrs"
+version = "3.5.7"
+authors = ["Akrm Al-Hakimi <alhakimiakrmj@gmail.com>"]
 edition = "2024"
+rust-version = "1.90.0"
+description = "A Rust library for NetworkManager over D-Bus"
 license = "MIT"
 repository = "https://github.com/freedesktop-rs/nmrs"
+documentation = "https://docs.rs/nmrs"
+keywords = ["networkmanager", "dbus", "wifi", "linux", "networking"]
+categories = ["api-bindings", "asynchronous"]
+readme = "README.md"
+include = ["src/**", "tests/**", "examples/**", "/README.md", "/LICENSE-*"]
 
-[workspace.lints.rust]
-unused = { level = "warn", priority = -1 }
-
-[workspace.lints.clippy]
-# Allow some common patterns
-too_many_arguments = "allow"
-type_complexity = "allow"
-
-[workspace.dependencies]
-# Core dependencies
+[dependencies]
+log = "0.4.34"
 zbus = "5.16.0"
 zvariant = "5.15.0"
-log = "0.4.34"
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.21"
 uuid = { version = "1.28.0", features = ["v4", "v5"] }
 futures = "0.3.34"
 futures-timer = "3.0.4"
 base64 = "0.23.1"
-nmrs = { path = "nmrs", version = "3.0" }
-bitflags = "2.13.2"
 tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "sync", "time", "process"] }
+bitflags = "2.13.2"
+
+[package.metadata.docs.rs]
+all-features = true
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lints.rust]
+unused = { level = "warn", priority = -1 }
+
+[lints.clippy]
+# Allow some common patterns
+too_many_arguments = "allow"
+type_complexity = "allow"
+
+[lib]
+bench = false
+
+[[example]]
+name = "wifi_scan"
+path = "examples/wifi_scan.rs"
+
+[[example]]
+name = "vpn_connect"
+path = "examples/vpn_connect.rs"
+
+[[example]]
+name = "secret_agent"
+path = "examples/secret_agent.rs"
+
+[[example]]
+name = "airplane_mode"
+path = "examples/airplane_mode.rs"
+
+[[example]]
+name = "ap_list"
+path = "examples/ap_list.rs"
+
+[[example]]
+name = "multi_wifi"
+path = "examples/multi_wifi.rs"
+
+[[example]]
+name = "saved_list"
+path = "examples/saved_list.rs"
+
+[[example]]
+name = "connectivity"
+path = "examples/connectivity.rs"
+
+[[example]]
+name = "vpn_list"
+path = "examples/vpn_list.rs"
+
+[dev-dependencies]
+serial_test = "4.0.1"
+zbus = { version = "5.16.0", features = ["p2p"] }

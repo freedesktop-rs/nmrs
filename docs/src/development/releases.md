@@ -24,7 +24,7 @@ See [`CHANGELOG.md`](https://github.com/freedesktop-rs/nmrs/blob/master/CHANGELO
 6. Build documentation (`mdbook build` in `docs/`)
 7. Create a git tag: `git tag v2.2.0`
 8. Push the tag: `git push origin v2.2.0`
-9. Publish to crates.io: `cargo publish -p nmrs`
+9. Publish to crates.io: `cargo publish`
 
 ## Distribution Channels
 

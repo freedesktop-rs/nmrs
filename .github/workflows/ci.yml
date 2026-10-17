@@ -88,7 +88,7 @@ jobs:
             ${{ runner.os }}-test-
 
       - name: Build release artifact
-        run: cargo build --locked --release --package nmrs
+        run: cargo build --locked --release
 
       - name: Run unit tests
         run: cargo test --locked --lib --all-features --workspace
@@ -218,7 +218,7 @@ jobs:
           shared-key: semver-checks
 
       - name: Check semver compatibility
-        run: cargo semver-checks check-release -p nmrs --release-type minor
+        run: cargo semver-checks check-release --release-type minor
 
   build:
     name: Build (aarch64-unknown-linux-gnu)
@@ -251,7 +251,7 @@ jobs:
             ${{ runner.os }}-build-aarch64-unknown-linux-gnu-
 
       - name: Build nmrs
-        run: cargo build --locked --release --target aarch64-unknown-linux-gnu --package nmrs
+        run: cargo build --locked --release --target aarch64-unknown-linux-gnu
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           PKG_CONFIG_ALLOW_CROSS: 1
