@@ -30,6 +30,7 @@ the host system bus.
 docker compose run shell
 ```
 
+```bash
 cargo test --lib             # run library unit tests
 cargo build                  # build the library
 cargo check                  # you get the point...
