@@ -23,7 +23,7 @@ uuid = { version = "1.28.0", features = ["v4", "v5"] }
 futures = "0.3.34"
 futures-timer = "3.0.4"
 base64 = "0.23.1"
-tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "sync", "time", "process"] }
+tokio = { version = "1.54.0", features = ["rt-multi-thread", "macros", "sync", "time", "process"] }
 bitflags = "2.13.2"
 
 [package.metadata.docs.rs]
