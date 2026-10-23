@@ -19,7 +19,7 @@ zbus = "5.16.0"
 zvariant = "5.15.1"
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.21"
-uuid = { version = "1.28.0", features = ["v4", "v5"] }
+uuid = { version = "1.29.0", features = ["v4", "v5"] }
 futures = "0.3.34"
 futures-timer = "3.0.4"
 base64 = "0.23.1"
