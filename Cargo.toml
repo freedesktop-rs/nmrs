@@ -14,7 +14,7 @@ readme = "README.md"
 include = ["src/**", "tests/**", "examples/**", "/README.md", "/LICENSE-*"]
 
 [dependencies]
-log = "0.4.34"
+log = "0.4.35"
 zbus = "5.16.0"
 zvariant = "5.15.1"
 serde = { version = "1.0.229", features = ["derive"] }
