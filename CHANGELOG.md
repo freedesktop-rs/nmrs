@@ -3,6 +3,14 @@
 All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
+### Added
+
+- `SettingsPatch::remove` deletes individual `(section, key)` entries from a
+  saved profile after the patch is merged, or removes the whole section when
+  the key is empty. Missing sections and keys are ignored. This allows
+  reverting e.g. `ipv4.method` to `auto` without leaving stale `gateway`,
+  `address-data`, or `dns` keys behind.
+  ([#593](https://github.com/freedesktop-rs/nmrs/issues/593))
 
 ## [3.5.7] - 2026-10-17
 ### Added

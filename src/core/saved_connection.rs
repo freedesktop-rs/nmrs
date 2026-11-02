@@ -78,6 +78,21 @@ fn merge_settings_patch_delta(
     }
 }
 
+/// Applies `SettingsPatch::remove` entries after the delta merge. An empty key
+/// removes the whole section; absent sections and keys are ignored.
+fn remove_settings_patch_keys(
+    settings: &mut HashMap<String, HashMap<String, OwnedValue>>,
+    remove: &[(String, String)],
+) {
+    for (section, key) in remove {
+        if key.is_empty() {
+            settings.remove(section);
+        } else if let Some(entries) = settings.get_mut(section) {
+            entries.remove(key);
+        }
+    }
+}
+
 fn owned_to_str(v: &OwnedValue) -> Option<String> {
     String::from_setting(v)
 }
@@ -904,7 +919,7 @@ pub(crate) async fn update_saved_connection(
         })?;
 
     let delta = build_settings_patch_delta(patch);
-    if delta.is_empty() {
+    if delta.is_empty() && patch.remove.is_empty() {
         return Ok(());
     }
 
@@ -916,6 +931,7 @@ pub(crate) async fn update_saved_connection(
             source: e,
         })?;
     merge_settings_patch_delta(&mut settings, delta);
+    remove_settings_patch_keys(&mut settings, &patch.remove);
 
     let unsaved = proxy
         .unsaved()
@@ -1619,6 +1635,7 @@ mod tests {
             id: Some("Renamed".into()),
             interface_name: Some(None),
             raw_overlay: None,
+            remove: Vec::new(),
         };
         let delta = build_settings_patch_delta(&patch);
         let connection = delta.get("connection").unwrap();
@@ -1690,6 +1707,120 @@ mod tests {
             owned_to_str(settings["ipv4"].get("method").unwrap()).as_deref(),
             Some("manual")
         );
+    }
+
+    #[test]
+    fn patch_removals_run_after_merge_and_keep_unrelated_keys() {
+        let mut settings = HashMap::from([
+            (
+                "connection".into(),
+                conn_section("remove-u", "Original", "802-3-ethernet"),
+            ),
+            (
+                "ipv4".into(),
+                HashMap::from([
+                    ("method".into(), owned_str("manual")),
+                    ("gateway".into(), owned_str("192.0.2.1")),
+                    ("dns".into(), owned_str("192.0.2.53")),
+                ]),
+            ),
+        ]);
+        let overlay = HashMap::from([(
+            "ipv4".into(),
+            HashMap::from([("method".into(), owned_str("auto"))]),
+        )]);
+        let patch = SettingsPatch {
+            raw_overlay: Some(overlay),
+            remove: vec![
+                ("ipv4".into(), "gateway".into()),
+                ("ipv4".into(), "dns".into()),
+            ],
+            ..Default::default()
+        };
+
+        merge_settings_patch_delta(&mut settings, build_settings_patch_delta(&patch));
+        remove_settings_patch_keys(&mut settings, &patch.remove);
+
+        assert_eq!(
+            owned_to_str(settings["ipv4"].get("method").unwrap()).as_deref(),
+            Some("auto")
+        );
+        assert!(!settings["ipv4"].contains_key("gateway"));
+        assert!(!settings["ipv4"].contains_key("dns"));
+        assert_eq!(
+            owned_to_str(settings["connection"].get("id").unwrap()).as_deref(),
+            Some("Original")
+        );
+    }
+
+    #[test]
+    fn patch_removal_with_empty_key_removes_whole_section() {
+        let mut settings = HashMap::from([
+            (
+                "connection".into(),
+                conn_section("section-u", "Original", "802-3-ethernet"),
+            ),
+            (
+                "ipv4".into(),
+                HashMap::from([("method".into(), owned_str("manual"))]),
+            ),
+            (
+                "ipv6".into(),
+                HashMap::from([("method".into(), owned_str("auto"))]),
+            ),
+        ]);
+
+        remove_settings_patch_keys(&mut settings, &[("ipv4".to_string(), String::new())]);
+
+        assert!(!settings.contains_key("ipv4"));
+        assert!(settings.contains_key("ipv6"));
+        assert!(settings.contains_key("connection"));
+    }
+
+    #[test]
+    fn patch_removals_ignore_missing_sections_and_keys() {
+        let mut settings = HashMap::from([(
+            "ipv4".into(),
+            HashMap::from([("method".into(), owned_str("auto"))]),
+        )]);
+
+        remove_settings_patch_keys(
+            &mut settings,
+            &[
+                ("ipv4".into(), "gateway".into()),
+                ("ipv6".into(), "dns".into()),
+                ("missing".into(), String::new()),
+            ],
+        );
+
+        assert_eq!(
+            owned_to_str(settings["ipv4"].get("method").unwrap()).as_deref(),
+            Some("auto")
+        );
+        assert!(!settings.contains_key("ipv6"));
+        assert!(!settings.contains_key("missing"));
+    }
+
+    #[test]
+    fn patch_removal_takes_precedence_over_overlay() {
+        let mut settings = HashMap::from([(
+            "ipv4".into(),
+            HashMap::from([("gateway".into(), owned_str("192.0.2.1"))]),
+        )]);
+        let overlay = HashMap::from([(
+            "ipv4".into(),
+            HashMap::from([("gateway".into(), owned_str("192.0.2.254"))]),
+        )]);
+        let patch = SettingsPatch {
+            raw_overlay: Some(overlay),
+            remove: vec![("ipv4".into(), "gateway".into())],
+            ..Default::default()
+        };
+
+        merge_settings_patch_delta(&mut settings, build_settings_patch_delta(&patch));
+        remove_settings_patch_keys(&mut settings, &patch.remove);
+
+        assert!(!settings["ipv4"].contains_key("gateway"));
     }
 
     /// Builds an `a{sv}` entry as it arrives from D-Bus: string keys with

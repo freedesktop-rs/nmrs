@@ -1521,6 +1521,8 @@ impl NetworkManager {
     ///
     /// This loads the current settings, applies the patch, then writes the full
     /// settings map back with NetworkManager's `Update` / `UpdateUnsaved`.
+    /// Entries in [`SettingsPatch::remove`] are deleted after the overlay is
+    /// merged; an empty key removes the whole section.
     ///
     /// `uuid` is the profile's `connection.uuid` (see [`SavedConnection::uuid`]), **not**
     /// the Wi-Fi SSID from a scan [`Network`]. Use [`Self::get_saved_connection_uuid`] or

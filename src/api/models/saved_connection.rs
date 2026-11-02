@@ -157,6 +157,13 @@ pub struct SettingsPatch {
     pub interface_name: Option<Option<String>>,
     /// Merged after the fields above; section → key → value. Overwrites keys present.
     pub raw_overlay: Option<HashMap<String, HashMap<String, OwnedValue>>>,
+    /// Sections/keys to delete after the merge, as `(section, key)` pairs.
+    ///
+    /// An empty `key` removes the whole `section`. Missing sections and keys
+    /// are ignored, so removals are idempotent. Because removal runs last, it
+    /// also takes precedence over values set by the fields above or
+    /// [`Self::raw_overlay`].
+    pub remove: Vec<(String, String)>,
 }
 
 /// NM `password-flags` / `psk-flags` style bitmask (subset used for summaries).
