@@ -226,6 +226,42 @@ where a UUID is required, or calling `update_saved_connection(&network.ssid, …
 There is no `uuid` field on `Network` — use `get_saved_connection_uuid` or
 `SavedConnection::uuid` instead.
 
+### Removing keys and sections
+
+`remove` deletes entries after the patch is merged. Each item is
+`(section, key)`; an empty key removes the whole section:
+
+```rust
+use std::collections::HashMap;
+use nmrs::raw::zvariant::{OwnedValue, Str};
+use nmrs::{NetworkManager, SettingsPatch};
+
+let nm = NetworkManager::new().await?;
+
+let mut patch = SettingsPatch::default();
+patch.raw_overlay = Some(HashMap::from([(
+    "ipv4".to_string(),
+    HashMap::from([(
+        "method".to_string(),
+        OwnedValue::from(Str::from("auto")),
+    )]),
+)]));
+patch.remove = vec![
+    ("ipv4".to_string(), "gateway".to_string()),
+    ("ipv4".to_string(), "address-data".to_string()),
+    ("ipv4".to_string(), "dns".to_string()),
+];
+nm.update_saved_connection(&uuid, patch).await?;
+```
+
+Removing `address-data`, `route-data`, or `dns-data` also drops
+NetworkManager's legacy `addresses` / `routes` / `dns` fallback (and vice
+versa), and sections left without keys are pruned so NetworkManager does not
+reject them. The `connection` section and its `uuid`, `id`, and `type` keys are
+protected: a patch that removes them fails with
+`ConnectionError::InvalidInput` before any D-Bus call. Setting
+`interface_name = Some(None)` removes `connection.interface-name`.
+
 ## Deleting by UUID
 
 When the profile UUID is known, you can delete it directly:

@@ -153,10 +153,24 @@ pub struct SettingsPatch {
     pub autoconnect_priority: Option<i32>,
     /// When `Some`, sets `connection.id`.
     pub id: Option<String>,
-    /// `Some(Some(name))` sets `interface-name`; `Some(None)` clears it (best-effort empty string).
+    /// `Some(Some(name))` sets `interface-name`; `Some(None)` removes it.
     pub interface_name: Option<Option<String>>,
     /// Merged after the fields above; section → key → value. Overwrites keys present.
     pub raw_overlay: Option<HashMap<String, HashMap<String, OwnedValue>>>,
+    /// Sections/keys to delete after the merge, as `(section, key)` pairs.
+    ///
+    /// An empty `key` removes the whole `section`. Missing sections and keys
+    /// are ignored, so removals are idempotent. Because removal runs last, it
+    /// also takes precedence over values set by the fields above or
+    /// [`Self::raw_overlay`].
+    ///
+    /// Removing `address-data`, `route-data`, or `dns-data` also removes
+    /// NetworkManager's legacy `addresses` / `routes` / `dns` fallback (and
+    /// vice versa), and sections left without keys are pruned. The
+    /// `connection` section and its `uuid`, `id`, and `type` keys cannot be
+    /// removed; such a patch is rejected with
+    /// [`ConnectionError::InvalidInput`](crate::ConnectionError::InvalidInput).
+    pub remove: Vec<(String, String)>,
 }
 
 /// NM `password-flags` / `psk-flags` style bitmask (subset used for summaries).

@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use futures::{FutureExt, StreamExt};
 use nmrs::agent::{SecretAgent, SecretAgentFlags, SecretAgentHandle, SecretSetting};
-use nmrs::builders::WireGuardBuilder;
-use nmrs::raw::zvariant::{OwnedObjectPath, OwnedValue, Value};
+use nmrs::builders::{ConnectionBuilder, IpConfig, WireGuardBuilder};
+use nmrs::raw::zvariant::{OwnedObjectPath, OwnedValue, Str, Value};
 use nmrs::{
     ActiveConnection, ActiveConnectionState, ConnectByUuidConfig, ConnectType, ConnectionError,
     DeviceState, GlobalDnsConfiguration, MonitorHandle, NetworkEvent, NetworkEventStream,
@@ -636,6 +636,199 @@ async fn networkmanager_profile_crud_and_settings_events() {
             matches!(error, ConnectionError::SavedConnectionNotFound(ref missing) if missing == &uuid_string),
             "expected SavedConnectionNotFound for {uuid_string}, got {error:?}"
         );
+    })
+    .catch_unwind()
+    .await;
+
+    let cleanup_failures = cleanup_saved_profile(&nm, &uuid_string).await;
+    finish_after_cleanup(outcome, cleanup_failures);
+}
+
+/// Exercises `SettingsPatch::remove` against a real NetworkManager profile,
+/// including NetworkManager's legacy `addresses` fallback and
+/// `interface-name` clearing.
+#[tokio::test]
+#[serial]
+#[ignore = "requires NMRS_REQUIRE_NETWORKMANAGER=1 and an isolated NetworkManager"]
+async fn networkmanager_settings_patch_removal() {
+    let nm = network_manager().await;
+    let id = format!("nmrs-removal-{}", Uuid::new_v4());
+    let uuid = Uuid::new_v4();
+    let uuid_string = uuid.to_string();
+    let outcome = AssertUnwindSafe(async {
+        let settings = ConnectionBuilder::new("802-3-ethernet", id.clone())
+            .uuid(uuid)
+            .autoconnect(false)
+            .ipv4_manual(vec![IpConfig::new("192.0.2.10", 24)])
+            .ipv4_gateway(Ipv4Addr::new(192, 0, 2, 1))
+            .ipv4_dns(vec![Ipv4Addr::new(192, 0, 2, 53)])
+            .ipv6_auto()
+            .build();
+        bounded(
+            "add the removal test profile",
+            DBUS_TIMEOUT,
+            nm.add_connection(settings),
+        )
+        .await
+        .expect("NetworkManager rejected the removal test profile");
+
+        let before = bounded(
+            "decode the removal test profile",
+            DBUS_TIMEOUT,
+            nm.get_saved_connection(&uuid_string),
+        )
+        .await
+        .expect("failed to decode the removal test profile");
+        let before_ipv4 = before.ipv4.expect("expected an ipv4 section");
+        assert_eq!(before_ipv4.method, nmrs::models::IpMethod::Manual);
+        assert_eq!(
+            before_ipv4.addresses,
+            vec![nmrs::models::IpAddress::new(
+                Ipv4Addr::new(192, 0, 2, 10),
+                24
+            )]
+        );
+        assert_eq!(before_ipv4.dns, vec![Ipv4Addr::new(192, 0, 2, 53)]);
+        let before_raw = bounded(
+            "load the raw removal test profile",
+            DBUS_TIMEOUT,
+            nm.get_saved_connection_raw(&uuid_string),
+        )
+        .await
+        .expect("failed to load the raw removal test profile");
+        assert!(before_raw["ipv4"].contains_key("address-data"));
+        assert!(
+            before_raw["ipv4"].contains_key("addresses"),
+            "this NetworkManager did not expose the legacy addresses fallback"
+        );
+
+        let mut patch = SettingsPatch::default();
+        patch.raw_overlay = Some(HashMap::from([(
+            "ipv4".to_string(),
+            HashMap::from([("method".to_string(), OwnedValue::from(Str::from("auto")))]),
+        )]));
+        patch.remove = vec![
+            ("ipv4".to_string(), "address-data".to_string()),
+            ("ipv4".to_string(), "gateway".to_string()),
+            ("ipv4".to_string(), "dns".to_string()),
+        ];
+        bounded(
+            "remove static IPv4 settings from the saved profile",
+            DBUS_TIMEOUT,
+            nm.update_saved_connection(&uuid_string, patch),
+        )
+        .await
+        .expect("failed to remove static IPv4 settings from the saved profile");
+
+        let reverted_raw = bounded(
+            "reload the raw reverted profile",
+            DBUS_TIMEOUT,
+            nm.get_saved_connection_raw(&uuid_string),
+        )
+        .await
+        .expect("failed to reload the raw reverted profile");
+        let reverted_ipv4_raw = reverted_raw
+            .get("ipv4")
+            .expect("the reverted profile lost its ipv4 section");
+        let legacy_addresses = reverted_ipv4_raw
+            .get("addresses")
+            .map(|value| {
+                Vec::<Vec<u32>>::try_from(value.try_clone().expect("clonable addresses"))
+                    .expect("legacy addresses must be an array of arrays")
+            })
+            .unwrap_or_default();
+        assert!(
+            legacy_addresses.is_empty(),
+            "removing address-data left NetworkManager's legacy addresses fallback behind: {legacy_addresses:?}"
+        );
+        let legacy_dns = reverted_ipv4_raw
+            .get("dns")
+            .map(|value| {
+                Vec::<u32>::try_from(value.try_clone().expect("clonable dns"))
+                    .expect("legacy dns must be an array of u32")
+            })
+            .unwrap_or_default();
+        assert!(
+            legacy_dns.is_empty(),
+            "removing dns left NetworkManager's legacy dns representation behind: {legacy_dns:?}"
+        );
+        assert!(!reverted_ipv4_raw.contains_key("gateway"));
+
+        let reverted = bounded(
+            "reload the reverted profile",
+            DBUS_TIMEOUT,
+            nm.get_saved_connection(&uuid_string),
+        )
+        .await
+        .expect("failed to reload the reverted profile");
+        let reverted_ipv4 = reverted
+            .ipv4
+            .expect("expected an ipv4 section after removal");
+        assert_eq!(reverted_ipv4.method, nmrs::models::IpMethod::Auto);
+        assert!(reverted_ipv4.addresses.is_empty());
+        assert!(reverted_ipv4.dns.is_empty());
+
+        let mut patch = SettingsPatch::default();
+        patch.interface_name = Some(Some("nmrs-removal0".to_string()));
+        bounded(
+            "set the profile interface name",
+            DBUS_TIMEOUT,
+            nm.update_saved_connection(&uuid_string, patch),
+        )
+        .await
+        .expect("failed to set the profile interface name");
+        let named = bounded(
+            "reload the named profile",
+            DBUS_TIMEOUT,
+            nm.get_saved_connection(&uuid_string),
+        )
+        .await
+        .expect("failed to reload the named profile");
+        assert_eq!(named.interface_name.as_deref(), Some("nmrs-removal0"));
+
+        let mut patch = SettingsPatch::default();
+        patch.interface_name = Some(None);
+        bounded(
+            "clear the profile interface name",
+            DBUS_TIMEOUT,
+            nm.update_saved_connection(&uuid_string, patch),
+        )
+        .await
+        .expect("failed to clear the profile interface name");
+        let cleared = bounded(
+            "reload the profile after clearing its interface name",
+            DBUS_TIMEOUT,
+            nm.get_saved_connection(&uuid_string),
+        )
+        .await
+        .expect("failed to reload the profile after clearing its interface name");
+        assert!(cleared.interface_name.is_none());
+
+        let mut patch = SettingsPatch::default();
+        patch.remove = vec![("connection".to_string(), "uuid".to_string())];
+        let error = bounded(
+            "reject removing the profile UUID",
+            DBUS_TIMEOUT,
+            nm.update_saved_connection(&uuid_string, patch),
+        )
+        .await
+        .expect_err("removing connection.uuid must fail");
+        assert!(
+            matches!(
+                error,
+                ConnectionError::InvalidInput { ref field, .. }
+                    if field == "SettingsPatch::remove"
+            ),
+            "expected InvalidInput for a protected removal, got {error:?}"
+        );
+
+        bounded(
+            "delete the removal test profile",
+            DBUS_TIMEOUT,
+            nm.delete_saved_connection(&uuid_string),
+        )
+        .await
+        .expect("failed to delete the removal test profile");
     })
     .catch_unwind()
     .await;
