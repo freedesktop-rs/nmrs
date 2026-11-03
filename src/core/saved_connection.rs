@@ -44,15 +44,11 @@ pub(crate) fn build_settings_patch_delta(
             .or_default()
             .insert("id".to_string(), OwnedValue::from(Str::from(s.as_str())));
     }
-    if let Some(opt) = &patch.interface_name {
-        let v = match opt {
-            Some(name) => OwnedValue::from(Str::from(name.as_str())),
-            None => OwnedValue::from(Str::from("")),
-        };
-        delta
-            .entry("connection".to_string())
-            .or_default()
-            .insert("interface-name".to_string(), v);
+    if let Some(Some(name)) = &patch.interface_name {
+        delta.entry("connection".to_string()).or_default().insert(
+            "interface-name".to_string(),
+            OwnedValue::from(Str::from(name.as_str())),
+        );
     }
     if let Some(ref overlay) = patch.raw_overlay {
         for (sec, entries) in overlay {
@@ -78,19 +74,78 @@ fn merge_settings_patch_delta(
     }
 }
 
-/// Applies `SettingsPatch::remove` entries after the delta merge. An empty key
-/// removes the whole section; absent sections and keys are ignored.
-fn remove_settings_patch_keys(
+/// Applies `SettingsPatch::remove` entries after the delta merge.
+///
+/// An empty key removes the whole section. Removing `address-data`,
+/// `route-data`, or `dns-data` also drops NetworkManager's legacy
+/// `addresses` / `routes` / `dns` fallback (and vice versa), and sections left
+/// without keys are pruned because NetworkManager rejects empty sections.
+/// Absent sections and keys are ignored.
+fn apply_settings_patch_removals(
     settings: &mut HashMap<String, HashMap<String, OwnedValue>>,
-    remove: &[(String, String)],
+    patch: &SettingsPatch,
 ) {
-    for (section, key) in remove {
+    let clear_interface_name = matches!(patch.interface_name, Some(None));
+    if patch.remove.is_empty() && !clear_interface_name {
+        return;
+    }
+
+    if clear_interface_name && let Some(entries) = settings.get_mut("connection") {
+        entries.remove("interface-name");
+    }
+
+    for (section, key) in &patch.remove {
         if key.is_empty() {
             settings.remove(section);
         } else if let Some(entries) = settings.get_mut(section) {
             entries.remove(key);
+            if let Some(paired) = paired_ip_key_for(section, key) {
+                entries.remove(paired);
+            }
         }
     }
+
+    settings.retain(|_, entries| !entries.is_empty());
+}
+
+/// The other NetworkManager representation of the same IP setting. Removing
+/// either one makes the other stale, so both are dropped together.
+fn paired_ip_key_for(section: &str, key: &str) -> Option<&'static str> {
+    match (section, key) {
+        ("ipv4" | "ipv6", "address-data") => Some("addresses"),
+        ("ipv4" | "ipv6", "addresses") => Some("address-data"),
+        ("ipv4" | "ipv6", "route-data") => Some("routes"),
+        ("ipv4" | "ipv6", "routes") => Some("route-data"),
+        ("ipv4" | "ipv6", "dns-data") => Some("dns"),
+        ("ipv4" | "ipv6", "dns") => Some("dns-data"),
+        _ => None,
+    }
+}
+
+/// Rejects removals that would strip the profile's identity before any D-Bus
+/// work is attempted.
+fn validate_settings_patch_removals(patch: &SettingsPatch) -> Result<()> {
+    for (section, key) in &patch.remove {
+        let protected = matches!(
+            (section.as_str(), key.as_str()),
+            ("connection", "")
+                | ("connection", "uuid")
+                | ("connection", "id")
+                | ("connection", "type")
+        );
+        if protected {
+            let reason = if key.is_empty() {
+                format!("cannot remove the '{section}' section")
+            } else {
+                format!("cannot remove protected key '{section}.{key}'")
+            };
+            return Err(ConnectionError::InvalidInput {
+                field: "SettingsPatch::remove".into(),
+                reason,
+            });
+        }
+    }
+    Ok(())
 }
 
 fn owned_to_str(v: &OwnedValue) -> Option<String> {
@@ -907,6 +962,8 @@ pub(crate) async fn update_saved_connection(
     uuid: &str,
     patch: &SettingsPatch,
 ) -> Result<()> {
+    validate_settings_patch_removals(patch)?;
+
     let path = resolve_saved_path_by_uuid(conn, uuid).await?;
     let proxy = NMSettingsConnectionProxy::builder(conn)
         .path(path)
@@ -919,7 +976,7 @@ pub(crate) async fn update_saved_connection(
         })?;
 
     let delta = build_settings_patch_delta(patch);
-    if delta.is_empty() && patch.remove.is_empty() {
+    if delta.is_empty() && patch.remove.is_empty() && !matches!(patch.interface_name, Some(None)) {
         return Ok(());
     }
 
@@ -931,7 +988,7 @@ pub(crate) async fn update_saved_connection(
             source: e,
         })?;
     merge_settings_patch_delta(&mut settings, delta);
-    remove_settings_patch_keys(&mut settings, &patch.remove);
+    apply_settings_patch_removals(&mut settings, patch);
 
     let unsaved = proxy
         .unsaved()
@@ -1628,12 +1685,12 @@ mod tests {
     }
 
     #[test]
-    fn patch_delta_serializes_all_typed_fields_and_interface_clear() {
+    fn patch_delta_serializes_all_typed_fields_and_interface_name() {
         let patch = SettingsPatch {
             autoconnect: Some(false),
             autoconnect_priority: Some(-42),
             id: Some("Renamed".into()),
-            interface_name: Some(None),
+            interface_name: Some(Some("wlan9".into())),
             raw_overlay: None,
             remove: Vec::new(),
         };
@@ -1654,7 +1711,27 @@ mod tests {
         );
         assert_eq!(
             owned_to_str(connection.get("interface-name").unwrap()).as_deref(),
-            Some("")
+            Some("wlan9")
+        );
+    }
+
+    #[test]
+    fn interface_name_none_removes_saved_key() {
+        let mut connection = conn_section("iface-u", "Original", "802-3-ethernet");
+        connection.insert("interface-name".into(), owned_str("eth0"));
+        let mut settings = HashMap::from([("connection".into(), connection)]);
+        let patch = SettingsPatch {
+            interface_name: Some(None),
+            ..Default::default()
+        };
+
+        assert!(build_settings_patch_delta(&patch).is_empty());
+        apply_settings_patch_removals(&mut settings, &patch);
+
+        assert!(!settings["connection"].contains_key("interface-name"));
+        assert_eq!(
+            owned_to_str(settings["connection"].get("id").unwrap()).as_deref(),
+            Some("Original")
         );
     }
 
@@ -1739,7 +1816,7 @@ mod tests {
         };
 
         merge_settings_patch_delta(&mut settings, build_settings_patch_delta(&patch));
-        remove_settings_patch_keys(&mut settings, &patch.remove);
+        apply_settings_patch_removals(&mut settings, &patch);
 
         assert_eq!(
             owned_to_str(settings["ipv4"].get("method").unwrap()).as_deref(),
@@ -1769,8 +1846,12 @@ mod tests {
                 HashMap::from([("method".into(), owned_str("auto"))]),
             ),
         ]);
+        let patch = SettingsPatch {
+            remove: vec![("ipv4".to_string(), String::new())],
+            ..Default::default()
+        };
 
-        remove_settings_patch_keys(&mut settings, &[("ipv4".to_string(), String::new())]);
+        apply_settings_patch_removals(&mut settings, &patch);
 
         assert!(!settings.contains_key("ipv4"));
         assert!(settings.contains_key("ipv6"));
@@ -1783,15 +1864,16 @@ mod tests {
             "ipv4".into(),
             HashMap::from([("method".into(), owned_str("auto"))]),
         )]);
-
-        remove_settings_patch_keys(
-            &mut settings,
-            &[
+        let patch = SettingsPatch {
+            remove: vec![
                 ("ipv4".into(), "gateway".into()),
                 ("ipv6".into(), "dns".into()),
                 ("missing".into(), String::new()),
             ],
-        );
+            ..Default::default()
+        };
+
+        apply_settings_patch_removals(&mut settings, &patch);
 
         assert_eq!(
             owned_to_str(settings["ipv4"].get("method").unwrap()).as_deref(),
@@ -1805,7 +1887,10 @@ mod tests {
     fn patch_removal_takes_precedence_over_overlay() {
         let mut settings = HashMap::from([(
             "ipv4".into(),
-            HashMap::from([("gateway".into(), owned_str("192.0.2.1"))]),
+            HashMap::from([
+                ("method".into(), owned_str("manual")),
+                ("gateway".into(), owned_str("192.0.2.1")),
+            ]),
         )]);
         let overlay = HashMap::from([(
             "ipv4".into(),
@@ -1818,9 +1903,133 @@ mod tests {
         };
 
         merge_settings_patch_delta(&mut settings, build_settings_patch_delta(&patch));
-        remove_settings_patch_keys(&mut settings, &patch.remove);
+        apply_settings_patch_removals(&mut settings, &patch);
 
         assert!(!settings["ipv4"].contains_key("gateway"));
+    }
+
+    #[test]
+    fn removing_ip_keys_also_removes_paired_representations() {
+        let mut settings = HashMap::from([
+            (
+                "ipv4".into(),
+                HashMap::from([
+                    ("method".into(), owned_str("manual")),
+                    ("address-data".into(), owned_str("modern")),
+                    ("addresses".into(), owned_str("legacy")),
+                    ("route-data".into(), owned_str("modern")),
+                    ("routes".into(), owned_str("legacy")),
+                    ("dns-data".into(), owned_str("modern")),
+                    ("dns".into(), owned_str("legacy")),
+                ]),
+            ),
+            (
+                "ipv6".into(),
+                HashMap::from([
+                    ("method".into(), owned_str("manual")),
+                    ("address-data".into(), owned_str("modern")),
+                    ("addresses".into(), owned_str("legacy")),
+                    ("route-data".into(), owned_str("modern")),
+                    ("routes".into(), owned_str("legacy")),
+                    ("dns-data".into(), owned_str("modern")),
+                    ("dns".into(), owned_str("legacy")),
+                ]),
+            ),
+        ]);
+        let patch = SettingsPatch {
+            remove: vec![
+                ("ipv4".into(), "address-data".into()),
+                ("ipv4".into(), "dns".into()),
+                ("ipv6".into(), "route-data".into()),
+                ("ipv6".into(), "dns-data".into()),
+            ],
+            ..Default::default()
+        };
+
+        apply_settings_patch_removals(&mut settings, &patch);
+
+        assert!(!settings["ipv4"].contains_key("address-data"));
+        assert!(!settings["ipv4"].contains_key("addresses"));
+        assert!(!settings["ipv4"].contains_key("dns-data"));
+        assert!(!settings["ipv4"].contains_key("dns"));
+        assert!(settings["ipv4"].contains_key("route-data"));
+        assert!(settings["ipv4"].contains_key("routes"));
+        assert!(settings["ipv6"].contains_key("address-data"));
+        assert!(settings["ipv6"].contains_key("addresses"));
+        assert!(!settings["ipv6"].contains_key("route-data"));
+        assert!(!settings["ipv6"].contains_key("routes"));
+        assert!(!settings["ipv6"].contains_key("dns-data"));
+        assert!(!settings["ipv6"].contains_key("dns"));
+    }
+
+    #[test]
+    fn patch_removals_prune_sections_left_empty() {
+        let mut settings = HashMap::from([
+            (
+                "connection".into(),
+                conn_section("prune-u", "Original", "802-11-wireless"),
+            ),
+            (
+                "802-11-wireless-security".into(),
+                HashMap::from([("key-mgmt".into(), owned_str("wpa-psk"))]),
+            ),
+            (
+                "ipv4".into(),
+                HashMap::from([("method".into(), owned_str("manual"))]),
+            ),
+        ]);
+        let patch = SettingsPatch {
+            remove: vec![
+                ("802-11-wireless-security".into(), "key-mgmt".into()),
+                ("ipv4".into(), "method".into()),
+            ],
+            ..Default::default()
+        };
+
+        apply_settings_patch_removals(&mut settings, &patch);
+
+        assert!(settings.contains_key("connection"));
+        assert!(!settings.contains_key("802-11-wireless-security"));
+        assert!(!settings.contains_key("ipv4"));
+    }
+
+    #[test]
+    fn protected_connection_removals_are_rejected() {
+        for (section, key) in [
+            ("connection", ""),
+            ("connection", "uuid"),
+            ("connection", "id"),
+            ("connection", "type"),
+        ] {
+            let patch = SettingsPatch {
+                remove: vec![(section.to_string(), key.to_string())],
+                ..Default::default()
+            };
+            let error = validate_settings_patch_removals(&patch)
+                .expect_err("protected connection key removal must fail");
+
+            assert!(
+                matches!(
+                    error,
+                    ConnectionError::InvalidInput { ref field, ref reason }
+                        if field == "SettingsPatch::remove" && reason.contains("cannot remove")
+                ),
+                "expected InvalidInput for {section}.{key}, got {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn non_structural_connection_removals_are_allowed() {
+        let patch = SettingsPatch {
+            remove: vec![
+                ("connection".into(), "interface-name".into()),
+                ("ipv4".into(), "dns".into()),
+            ],
+            ..Default::default()
+        };
+
+        assert!(validate_settings_patch_removals(&patch).is_ok());
     }
 
     /// Builds an `a{sv}` entry as it arrives from D-Bus: string keys with

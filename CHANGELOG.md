@@ -7,10 +7,15 @@ All notable changes to the `nmrs` crate will be documented in this file.
 
 - `SettingsPatch::remove` deletes individual `(section, key)` entries from a
   saved profile after the patch is merged, or removes the whole section when
-  the key is empty. Missing sections and keys are ignored. This allows
+  the key is empty. Removing `address-data`, `route-data`, or `dns-data` also
+  removes the legacy `addresses` / `routes` / `dns` fallback (and vice versa),
+  empty sections are pruned, and `interface_name = Some(None)` now removes
+  `connection.interface-name`.
+  Removals of `connection` and its `uuid`, `id`, or `type` keys are rejected
+  with `ConnectionError::InvalidInput` before any D-Bus call. This allows
   reverting e.g. `ipv4.method` to `auto` without leaving stale `gateway`,
   `address-data`, or `dns` keys behind.
-  ([#593](https://github.com/freedesktop-rs/nmrs/issues/593))
+  ([#594](https://github.com/freedesktop-rs/nmrs/pull/594))
 
 ## [3.5.7] - 2026-10-17
 ### Added

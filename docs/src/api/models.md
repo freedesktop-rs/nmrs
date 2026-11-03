@@ -546,6 +546,25 @@ Lightweight: `uuid`, `id`, `connection_type`.
 
 Partial update for `update_saved_connection`.
 
+```rust
+pub struct SettingsPatch {
+    pub autoconnect: Option<bool>,
+    pub autoconnect_priority: Option<i32>,
+    pub id: Option<String>,
+    pub interface_name: Option<Option<String>>,
+    pub raw_overlay: Option<HashMap<String, HashMap<String, OwnedValue>>>,
+    pub remove: Vec<(String, String)>,
+}
+```
+
+`raw_overlay` is merged after the typed fields. `remove` is applied last; an
+empty key removes the whole section. Removing `ipv4` / `ipv6` `address-data`,
+`route-data`, or `dns-data` also removes the legacy `addresses` / `routes` /
+`dns` fallback (and vice versa), and sections left with no keys are pruned.
+`interface_name: Some(None)` removes `connection.interface-name`. The
+`connection` section and its `uuid`, `id`, and `type` keys are protected:
+removing them returns `ConnectionError::InvalidInput` before any D-Bus call.
+
 ## Connectivity Models
 
 ### ConnectivityState
