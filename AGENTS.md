@@ -85,8 +85,10 @@ NMRS_REQUIRE_NETWORKMANAGER=1 cargo test --test integration_test --all-features 
   `with_*` builders returning `Self` with `#[must_use]`.
 - Every public item has a doc comment. Examples use `nmrs::` paths and
   must compile under `cargo test --doc`.
-- Timeouts come from `types::constants::timeouts`. No inline `Duration`
-  literals in `core/`.
+- Timeouts are named constants: `types::constants::timeouts` for shared
+  ones, a module-level `const` for ones used in a single file
+  (`CONNECTION_TIMEOUT`, `BLUEZ_POWER_SETTLE_TIMEOUT`). No `Duration`
+  literals at call sites.
 - Unit tests live in `#[cfg(test)] mod tests` next to the code or in
   `api/models/tests.rs`. Assert observable behavior through the public
   API, not which internal function was called.
@@ -120,10 +122,13 @@ code that encodes them.
 - **Two radio bits.** Software-enabled (`WirelessEnabled`, writable) and
   hardware-enabled (rfkill, read-only). A radio is usable only when both
   are set; `HardwareRadioKilled` is the error for the second.
-- **Aggregate radio operations tolerate Bluetooth.** `set_airplane_mode`
-  toggles Wi-Fi, WWAN, and BlueZ concurrently. A BlueZ power-settle
-  failure is logged and the call returns `Ok`; failing it would leave
-  the caller believing the radios are in the old state.
+- **Aggregate radio operations tolerate Bluetooth, conditionally.**
+  `set_airplane_mode` toggles Wi-Fi, WWAN, and BlueZ concurrently.
+  `BluezUnavailable` is always swallowed. `BluetoothToggleFailed` is
+  swallowed only when a Wi-Fi or WWAN device exists, because those radios
+  have already been switched and failing would misreport their state; on
+  a Bluetooth-only host it is returned. See
+  `finalize_airplane_toggle_results` in `core/airplane.rs`.
 - **BlueZ `Powered` settles asynchronously.** Wait for the property to
   reach the target with the settle timeout before reading it back.
 - **Secret agent.** NM's own `GetSecrets` timeout is 120 s; the agent
@@ -163,10 +168,16 @@ is present.
 
 ## Releasing
 
+On a branch:
+
 ```bash
 python3 scripts/bump_version.py X.Y.Z stable
 git commit -am "chore(release): release nmrs X.Y.Z"
-git push origin master
+```
+
+Open a PR to master. After it merges:
+
+```bash
 git tag nmrs-vX.Y.Z
 git push origin nmrs-vX.Y.Z
 ```
