@@ -172,7 +172,7 @@ On a branch:
 
 ```bash
 python3 scripts/bump_version.py X.Y.Z stable
-git commit -am "chore(release): release nmrs X.Y.Z"
+git commit -am "chore(nmrs): prepare X.Y.Z release"
 ```
 
 Open a PR to master. After it merges:
