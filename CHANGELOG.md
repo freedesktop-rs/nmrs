@@ -17,6 +17,16 @@ All notable changes to the `nmrs` crate will be documented in this file.
   `address-data`, or `dns` keys behind.
   ([#594](https://github.com/freedesktop-rs/nmrs/pull/594))
 
+### Changed
+
+- Every saved-profile scan (finding a profile by name or SSID, forgetting
+  connections and VPNs, listing VPNs) now goes through one helper that skips
+  profiles the caller cannot read, such as those restricted to other users via
+  `connection.permissions`. A new scan can no longer fail on a
+  `Settings.PermissionDenied` profile by hand-rolling the loop. Behaviour for
+  readable profiles is unchanged.
+  ([#597](https://github.com/freedesktop-rs/nmrs/pull/597))
+
 ## [3.5.7] - 2026-10-17
 ### Added
 
