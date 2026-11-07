@@ -23,8 +23,6 @@ async fn find_saved_connection_by_name(
     conn: &Connection,
     name: &str,
 ) -> Result<Option<(OwnedObjectPath, String)>> {
-    let mut found = None;
-
     for_each_readable_profile(conn, async |cpath, all| {
         let Some(connection) = all.get("connection") else {
             return Ok(ControlFlow::Continue(()));
@@ -32,18 +30,17 @@ async fn find_saved_connection_by_name(
         let id = connection.get("id").and_then(String::from_setting);
         let uuid = connection.get("uuid").and_then(String::from_setting);
 
-        if id.as_deref() == Some(name)
-            && let Some(uuid) = uuid
-        {
-            found = Some((cpath, uuid));
-            return Ok(ControlFlow::Break(()));
-        }
-
-        Ok(ControlFlow::Continue(()))
+        Ok(
+            if id.as_deref() == Some(name)
+                && let Some(uuid) = uuid
+            {
+                ControlFlow::Break((cpath, uuid))
+            } else {
+                ControlFlow::Continue(())
+            },
+        )
     })
-    .await?;
-
-    Ok(found)
+    .await
 }
 
 /// Whether a saved profile's settings describe a Wi-Fi client profile for `ssid`.
@@ -81,19 +78,14 @@ pub(crate) async fn get_saved_wifi_connection_path(
         return Ok(None);
     }
 
-    let mut found = None;
-
     for_each_readable_profile(conn, async |cpath, all| {
-        if wifi_profile_matches_ssid(&all, ssid.as_bytes()) {
-            found = Some(cpath);
-            return Ok(ControlFlow::Break(()));
-        }
-
-        Ok(ControlFlow::Continue(()))
+        Ok(if wifi_profile_matches_ssid(&all, ssid.as_bytes()) {
+            ControlFlow::Break(cpath)
+        } else {
+            ControlFlow::Continue(())
+        })
     })
-    .await?;
-
-    Ok(found)
+    .await
 }
 
 /// Finds the D-Bus path of a saved connection by SSID or connection name.

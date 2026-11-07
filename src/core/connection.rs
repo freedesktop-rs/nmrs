@@ -416,7 +416,7 @@ pub(crate) async fn forget_by_name_and_type(
 
     let mut deleted_count = 0;
 
-    for_each_readable_profile(conn, async |cpath, settings_map| {
+    for_each_readable_profile::<(), _>(conn, async |cpath, settings_map| {
         let mut should_delete = false;
 
         // Match by connection ID (works for all connection types)

@@ -284,9 +284,14 @@ pub(crate) async fn read_profile_settings(
 /// hand-roll a `ListConnections` + `GetSettings` loop that forgets to skip
 /// unreadable profiles. `f` can stop the scan early with
 /// [`ControlFlow::Break`], for example after finding the first match.
-pub(crate) async fn for_each_readable_profile<F>(conn: &Connection, mut f: F) -> Result<()>
+///
+/// Returns the value `f` broke with, or `None` when every profile was visited.
+pub(crate) async fn for_each_readable_profile<T, F>(
+    conn: &Connection,
+    mut f: F,
+) -> Result<Option<T>>
 where
-    F: AsyncFnMut(OwnedObjectPath, RawSettings) -> Result<ControlFlow<()>>,
+    F: AsyncFnMut(OwnedObjectPath, RawSettings) -> Result<ControlFlow<T>>,
 {
     let settings = settings_proxy(conn).await?;
 
@@ -304,12 +309,12 @@ where
         let Some(all) = read_profile_settings(conn, &cpath).await else {
             continue;
         };
-        if let ControlFlow::Break(()) = f(cpath, all).await? {
-            break;
+        if let ControlFlow::Break(value) = f(cpath, all).await? {
+            return Ok(Some(value));
         }
     }
 
-    Ok(())
+    Ok(None)
 }
 
 /// Attempts to extract the actual state reason from an active connection.

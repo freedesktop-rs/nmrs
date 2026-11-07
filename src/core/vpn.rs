@@ -395,7 +395,7 @@ pub(crate) async fn list_vpn_connections(conn: &Connection) -> Result<Vec<VpnCon
 
     let mut vpn_conns = Vec::new();
 
-    for_each_readable_profile(conn, async |_cpath, settings_map| {
+    for_each_readable_profile::<(), _>(conn, async |_cpath, settings_map| {
         let Some(kind) = detect_vpn_kind(&settings_map) else {
             return Ok(ControlFlow::Continue(()));
         };
@@ -704,9 +704,7 @@ pub(crate) async fn forget_vpn(conn: &Connection, name: &str) -> Result<()> {
         ),
     }
 
-    let mut deleted = false;
-
-    for_each_readable_profile(conn, async |cpath, settings_map| {
+    let deleted = for_each_readable_profile(conn, async |cpath, settings_map| {
         let id_ok = extract_id(&settings_map)
             .map(|id| id == name)
             .unwrap_or(false);
@@ -742,10 +740,10 @@ pub(crate) async fn forget_vpn(conn: &Connection, name: &str) -> Result<()> {
             warn!("Failed to remove nmrs cert directory for '{}': {}", name, e);
         }
 
-        deleted = true;
         Ok(ControlFlow::Break(()))
     })
-    .await?;
+    .await?
+    .is_some();
 
     if !deleted {
         debug!("No saved VPN connection found for '{name}'");
