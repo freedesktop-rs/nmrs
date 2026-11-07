@@ -48,21 +48,12 @@ fn detect_vpn_kind(settings: &RawSettings) -> Option<VpnKind> {
 /// Extracts a string from a `Dict` (vpn.data / vpn.secrets) by key.
 fn dict_str(dict: &zvariant::Dict<'_, '_>, key: &str) -> Option<String> {
     dict.iter().find_map(|(k, v)| match (k, v) {
-        (zvariant::Value::Str(k_str), value) if k_str.as_str() == key => {
-            match unbox_variant(value) {
-                zvariant::Value::Str(v_str) => Some(v_str.to_string()),
-                _ => None,
-            }
-        }
+        (zvariant::Value::Str(k_str), value) if k_str.as_str() == key => match unbox_value(value) {
+            zvariant::Value::Str(v_str) => Some(v_str.to_string()),
+            _ => None,
+        },
         _ => None,
     })
-}
-
-fn unbox_variant<'a, 'v>(mut value: &'a zvariant::Value<'v>) -> &'a zvariant::Value<'v> {
-    while let zvariant::Value::Value(inner) = value {
-        value = inner;
-    }
-    value
 }
 
 fn dict_value<'a, 'v>(
@@ -70,14 +61,14 @@ fn dict_value<'a, 'v>(
     key: &str,
 ) -> Option<&'a zvariant::Value<'v>> {
     dict.iter().find_map(|(k, v)| {
-        matches!(k, zvariant::Value::Str(k_str) if k_str.as_str() == key).then(|| unbox_variant(v))
+        matches!(k, zvariant::Value::Str(k_str) if k_str.as_str() == key).then(|| unbox_value(v))
     })
 }
 
 /// Converts a full `Dict` to `HashMap<String, String>`.
 fn dict_to_map(dict: &zvariant::Dict<'_, '_>) -> HashMap<String, String> {
     dict.iter()
-        .filter_map(|(k, v)| match (k, unbox_variant(v)) {
+        .filter_map(|(k, v)| match (k, unbox_value(v)) {
             (zvariant::Value::Str(k_str), zvariant::Value::Str(v_str)) => {
                 Some((k_str.to_string(), v_str.to_string()))
             }
@@ -146,7 +137,7 @@ fn decode_wg_first_peer(
         }
         zvariant::Value::Array(arr) => {
             if let Some(first) = arr.first()
-                && let zvariant::Value::Dict(dict) = unbox_variant(first)
+                && let zvariant::Value::Dict(dict) = unbox_value(first)
             {
                 let pk = dict_str(dict, "public-key");
                 let ep = dict_str(dict, "endpoint");
@@ -159,7 +150,7 @@ fn decode_wg_first_peer(
                         .collect(),
                     Some(zvariant::Value::Array(values)) => values
                         .iter()
-                        .filter_map(|value| match unbox_variant(value) {
+                        .filter_map(|value| match unbox_value(value) {
                             zvariant::Value::Str(value) => Some(value.to_string()),
                             _ => None,
                         })
