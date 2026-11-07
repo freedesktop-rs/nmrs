@@ -6,12 +6,13 @@
 use log::{trace, warn};
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::ops::ControlFlow;
 use std::str;
 use zbus::Connection;
 use zvariant::OwnedObjectPath;
 
 use crate::Result;
-use crate::api::models::ConnectionStateReason;
+use crate::api::models::{ConnectionError, ConnectionStateReason, RawSettings};
 use crate::dbus::{
     NMAccessPointProxy, NMActiveConnectionProxy, NMDeviceProxy, NMProxy, NMWirelessProxy,
 };
@@ -230,6 +231,85 @@ where
         "org.freedesktop.NetworkManager.Settings.Connection",
     )
     .await
+}
+
+/// Reads the settings of one saved profile, skipping it when it is unreadable.
+///
+/// `ListConnections` includes profiles restricted to other users via
+/// `connection.permissions`; `GetSettings` on those fails with
+/// `Settings.PermissionDenied`. Returns `None` for such profiles, and for any
+/// other profile whose proxy, settings or decoding fails, so one restricted
+/// profile cannot fail a scan that looks at all of them.
+pub(crate) async fn read_profile_settings(
+    conn: &Connection,
+    path: &OwnedObjectPath,
+) -> Option<RawSettings> {
+    let cproxy = match connection_settings_proxy(conn, path.clone()).await {
+        Ok(proxy) => proxy,
+        Err(e) => {
+            trace!(
+                "skipping saved connection {}: proxy unavailable: {e}",
+                path.as_str()
+            );
+            return None;
+        }
+    };
+
+    let msg = match cproxy.call_method("GetSettings", &()).await {
+        Ok(msg) => msg,
+        Err(e) => {
+            trace!(
+                "skipping saved connection {}: GetSettings failed: {e}",
+                path.as_str()
+            );
+            return None;
+        }
+    };
+
+    match msg.body().deserialize() {
+        Ok(settings) => Some(settings),
+        Err(e) => {
+            trace!(
+                "skipping saved connection {}: settings unreadable: {e}",
+                path.as_str()
+            );
+            None
+        }
+    }
+}
+
+/// Calls `f` for every saved profile whose settings this user can read.
+///
+/// The settings are parsed with [`read_profile_settings`], so callers never
+/// hand-roll a `ListConnections` + `GetSettings` loop that forgets to skip
+/// unreadable profiles. `f` can stop the scan early with
+/// [`ControlFlow::Break`], for example after finding the first match.
+pub(crate) async fn for_each_readable_profile<F>(conn: &Connection, mut f: F) -> Result<()>
+where
+    F: AsyncFnMut(OwnedObjectPath, RawSettings) -> Result<ControlFlow<()>>,
+{
+    let settings = settings_proxy(conn).await?;
+
+    let reply = settings
+        .call_method("ListConnections", &())
+        .await
+        .map_err(|e| ConnectionError::DbusOperation {
+            context: "failed to list saved connections".to_string(),
+            source: e,
+        })?;
+
+    let conns: Vec<OwnedObjectPath> = reply.body().deserialize()?;
+
+    for cpath in conns {
+        let Some(all) = read_profile_settings(conn, &cpath).await else {
+            continue;
+        };
+        if let ControlFlow::Break(()) = f(cpath, all).await? {
+            break;
+        }
+    }
+
+    Ok(())
 }
 
 /// Attempts to extract the actual state reason from an active connection.
