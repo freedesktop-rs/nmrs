@@ -1,11 +1,13 @@
 use futures_timer::Delay;
 use log::{debug, error, info, trace, warn};
 use std::collections::HashMap;
+use std::ops::ControlFlow;
 use zbus::Connection;
 use zvariant::OwnedObjectPath;
 
 use crate::api::builders::wifi::{build_ethernet_connection, try_build_wifi_connection};
 use crate::api::models::access_point::{SecurityFeatures, decode_security};
+use crate::api::models::property::FromSetting;
 use crate::api::models::{ConnectionError, ConnectionOptions, TimeoutConfig, WifiSecurity};
 use crate::core::connection_settings::{
     delete_connection, get_saved_connection_path, get_saved_wifi_connection_path,
@@ -17,7 +19,10 @@ use crate::monitoring::transport::ActiveTransport;
 use crate::monitoring::wifi::Wifi;
 use crate::types::constants::{device_state, device_type, timeouts};
 use crate::types::device_type_registry;
-use crate::util::utils::{decode_ssid_or_empty, nm_proxy, settings_proxy};
+use crate::util::utils::{
+    connection_settings_proxy, decode_ssid_or_empty, for_each_readable_profile, nm_proxy,
+    settings_proxy,
+};
 use crate::util::validation::{validate_bssid, validate_ssid, validate_wifi_security};
 use crate::{ConnectByUuidConfig, Result};
 
@@ -312,9 +317,6 @@ pub(crate) async fn forget_by_name_and_type(
     device_filter: Option<u32>,
     timeout_config: Option<TimeoutConfig>,
 ) -> Result<()> {
-    use std::collections::HashMap;
-    use zvariant::{OwnedObjectPath, Value};
-
     // Validate SSID
     validate_ssid(name)?;
 
@@ -412,77 +414,59 @@ pub(crate) async fn forget_by_name_and_type(
     // Delete connection profiles (generic, works for all types)
     trace!("Starting connection deletion phase...");
 
-    let settings = nm_proxy(
-        conn,
-        "/org/freedesktop/NetworkManager/Settings",
-        "org.freedesktop.NetworkManager.Settings",
-    )
-    .await?;
-
-    let list_reply = settings.call_method("ListConnections", &()).await?;
-    let conns: Vec<OwnedObjectPath> = list_reply.body().deserialize()?;
-
     let mut deleted_count = 0;
 
-    for cpath in conns {
-        let cproxy = nm_proxy(
-            conn,
-            cpath.clone(),
-            "org.freedesktop.NetworkManager.Settings.Connection",
-        )
-        .await?;
+    for_each_readable_profile::<(), _>(conn, async |cpath, settings_map| {
+        let mut should_delete = false;
 
-        if let Ok(msg) = cproxy.call_method("GetSettings", &()).await {
-            let body = msg.body();
-            let settings_map: HashMap<String, HashMap<String, Value>> = body.deserialize()?;
+        // Match by connection ID (works for all connection types)
+        if let Some(id) = settings_map
+            .get("connection")
+            .and_then(|section| section.get("id"))
+            .and_then(String::from_setting)
+            && id == name
+        {
+            should_delete = true;
+            trace!("Found connection by ID: {id}");
+        }
 
-            let mut should_delete = false;
+        // Additional WiFi-specific matching by SSID
+        if let Some(ssid) = settings_map
+            .get("802-11-wireless")
+            .and_then(|section| section.get("ssid"))
+            .and_then(Vec::<u8>::from_setting)
+            && decode_ssid_or_empty(&ssid) == name
+        {
+            should_delete = true;
+            trace!("Found WiFi connection by SSID match");
+        }
 
-            // Match by connection ID (works for all connection types)
-            if let Some(conn_sec) = settings_map.get("connection")
-                && let Some(Value::Str(id)) = conn_sec.get("id")
-                && id.as_str() == name
-            {
-                should_delete = true;
-                trace!("Found connection by ID: {id}");
+        // Matching by bdaddr for Bluetooth connections
+        if let Some(bdaddr) = settings_map
+            .get("bluetooth")
+            .and_then(|section| section.get("bdaddr"))
+            .and_then(String::from_setting)
+            && bdaddr == name
+        {
+            should_delete = true;
+            trace!("Found Bluetooth connection by bdaddr match");
+        }
+
+        if let Some(wsec) = settings_map.get("802-11-wireless-security") {
+            let missing_psk = !wsec.contains_key("psk");
+            let empty_psk = wsec
+                .get("psk")
+                .and_then(String::from_setting)
+                .is_some_and(|psk| psk.is_empty());
+
+            if (missing_psk || empty_psk) && should_delete {
+                trace!("Connection has missing/empty PSK, will delete");
             }
+        }
 
-            // Additional WiFi-specific matching by SSID
-            if let Some(wifi_sec) = settings_map.get("802-11-wireless")
-                && let Some(Value::Array(arr)) = wifi_sec.get("ssid")
-            {
-                let mut raw = Vec::new();
-                for v in arr.iter() {
-                    if let Ok(b) = u8::try_from(v.clone()) {
-                        raw.push(b);
-                    }
-                }
-                if decode_ssid_or_empty(&raw) == name {
-                    should_delete = true;
-                    trace!("Found WiFi connection by SSID match");
-                }
-            }
-
-            // Matching by bdaddr for Bluetooth connections
-            if let Some(bt_sec) = settings_map.get("bluetooth")
-                && let Some(Value::Str(bdaddr)) = bt_sec.get("bdaddr")
-                && bdaddr.as_str() == name
-            {
-                should_delete = true;
-                trace!("Found Bluetooth connection by bdaddr match");
-            }
-
-            if let Some(wsec) = settings_map.get("802-11-wireless-security") {
-                let missing_psk = !wsec.contains_key("psk");
-                let empty_psk = matches!(wsec.get("psk"), Some(Value::Str(s)) if s.is_empty());
-
-                if (missing_psk || empty_psk) && should_delete {
-                    trace!("Connection has missing/empty PSK, will delete");
-                }
-            }
-
-            if should_delete {
-                match cproxy.call_method("Delete", &()).await {
+        if should_delete {
+            match connection_settings_proxy(conn, cpath.clone()).await {
+                Ok(cproxy) => match cproxy.call_method("Delete", &()).await {
                     Ok(_) => {
                         deleted_count += 1;
                         trace!("Deleted connection: {}", cpath.as_str());
@@ -490,10 +474,20 @@ pub(crate) async fn forget_by_name_and_type(
                     Err(e) => {
                         warn!("Failed to delete connection {}: {}", cpath.as_str(), e);
                     }
+                },
+                Err(e) => {
+                    warn!(
+                        "Failed to open connection {} for deletion: {}",
+                        cpath.as_str(),
+                        e
+                    );
                 }
             }
         }
-    }
+
+        Ok(ControlFlow::Continue(()))
+    })
+    .await?;
 
     if deleted_count > 0 {
         info!("Successfully deleted {deleted_count} connection(s) for '{name}'");

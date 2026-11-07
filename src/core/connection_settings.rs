@@ -5,14 +5,15 @@
 //! store credentials for automatic reconnection.
 
 use log::trace;
-use std::collections::HashMap;
+use std::ops::ControlFlow;
 use zbus::Connection;
-use zvariant::{OwnedObjectPath, OwnedValue, Value};
+use zvariant::OwnedObjectPath;
 
 use crate::Result;
 use crate::api::models::ConnectionError;
+use crate::api::models::RawSettings;
 use crate::api::models::property::FromSetting;
-use crate::util::utils::{connection_settings_proxy, settings_proxy};
+use crate::util::utils::{connection_settings_proxy, for_each_readable_profile};
 use crate::util::validation::validate_connection_name;
 
 /// Finds a saved profile whose `connection.id` matches `name` (SSID for typical Wi-Fi).
@@ -22,49 +23,24 @@ async fn find_saved_connection_by_name(
     conn: &Connection,
     name: &str,
 ) -> Result<Option<(OwnedObjectPath, String)>> {
-    let settings = settings_proxy(conn).await?;
-
-    let reply = settings
-        .call_method("ListConnections", &())
-        .await
-        .map_err(|e| ConnectionError::DbusOperation {
-            context: "failed to list saved connections".to_string(),
-            source: e,
-        })?;
-
-    let conns: Vec<OwnedObjectPath> = reply.body().deserialize()?;
-
-    for cpath in conns {
-        let cproxy = connection_settings_proxy(conn, cpath.clone()).await?;
-
-        // `ListConnections` includes profiles restricted to other users via
-        // `connection.permissions`; `GetSettings` on those fails with
-        // `Settings.PermissionDenied`. Skip them instead of failing the
-        // whole lookup, matching the other profile scans in this crate.
-        let msg = match cproxy.call_method("GetSettings", &()).await {
-            Ok(msg) => msg,
-            Err(e) => {
-                trace!(
-                    "skipping saved connection {}: GetSettings failed: {e}",
-                    cpath.as_str()
-                );
-                continue;
-            }
+    for_each_readable_profile(conn, async |cpath, all| {
+        let Some(connection) = all.get("connection") else {
+            return Ok(ControlFlow::Continue(()));
         };
+        let id = connection.get("id").and_then(String::from_setting);
+        let uuid = connection.get("uuid").and_then(String::from_setting);
 
-        let body = msg.body();
-        let all: HashMap<String, HashMap<String, Value>> = body.deserialize()?;
-
-        if let Some(conn_section) = all.get("connection")
-            && let Some(Value::Str(id)) = conn_section.get("id")
-            && id == name
-            && let Some(Value::Str(uuid)) = conn_section.get("uuid")
-        {
-            return Ok(Some((cpath, uuid.to_string())));
-        }
-    }
-
-    Ok(None)
+        Ok(
+            if id.as_deref() == Some(name)
+                && let Some(uuid) = uuid
+            {
+                ControlFlow::Break((cpath, uuid))
+            } else {
+                ControlFlow::Continue(())
+            },
+        )
+    })
+    .await
 }
 
 /// Whether a saved profile's settings describe a Wi-Fi client profile for `ssid`.
@@ -72,10 +48,7 @@ async fn find_saved_connection_by_name(
 /// Matches on `802-11-wireless.ssid` bytes, not `connection.id`, so profiles
 /// created by other tools or renamed by the user are still found. Hotspot
 /// (`mode = ap`) profiles are skipped.
-fn wifi_profile_matches_ssid(
-    settings: &HashMap<String, HashMap<String, OwnedValue>>,
-    ssid: &[u8],
-) -> bool {
+fn wifi_profile_matches_ssid(settings: &RawSettings, ssid: &[u8]) -> bool {
     let is_wifi = settings
         .get("connection")
         .and_then(|c| c.get("type"))
@@ -105,42 +78,14 @@ pub(crate) async fn get_saved_wifi_connection_path(
         return Ok(None);
     }
 
-    let settings = settings_proxy(conn).await?;
-
-    let reply = settings
-        .call_method("ListConnections", &())
-        .await
-        .map_err(|e| ConnectionError::DbusOperation {
-            context: "failed to list saved connections".to_string(),
-            source: e,
-        })?;
-
-    let conns: Vec<OwnedObjectPath> = reply.body().deserialize()?;
-
-    for cpath in conns {
-        let cproxy = connection_settings_proxy(conn, cpath.clone()).await?;
-
-        // Skip profiles restricted to other users, as in
-        // `find_saved_connection_by_name`.
-        let msg = match cproxy.call_method("GetSettings", &()).await {
-            Ok(msg) => msg,
-            Err(e) => {
-                trace!(
-                    "skipping saved connection {}: GetSettings failed: {e}",
-                    cpath.as_str()
-                );
-                continue;
-            }
-        };
-
-        let all: HashMap<String, HashMap<String, OwnedValue>> = msg.body().deserialize()?;
-
-        if wifi_profile_matches_ssid(&all, ssid.as_bytes()) {
-            return Ok(Some(cpath));
-        }
-    }
-
-    Ok(None)
+    for_each_readable_profile(conn, async |cpath, all| {
+        Ok(if wifi_profile_matches_ssid(&all, ssid.as_bytes()) {
+            ControlFlow::Break(cpath)
+        } else {
+            ControlFlow::Continue(())
+        })
+    })
+    .await
 }
 
 /// Finds the D-Bus path of a saved connection by SSID or connection name.
@@ -221,6 +166,8 @@ pub(crate) async fn delete_connection(conn: &Connection, conn_path: OwnedObjectP
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+    use zvariant::OwnedValue;
 
     #[test]
     fn saved_connection_lookup_allows_vpn_names_longer_than_ssids() {
