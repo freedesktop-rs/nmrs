@@ -77,6 +77,22 @@ path = "examples/connectivity.rs"
 name = "vpn_list"
 path = "examples/vpn_list.rs"
 
+[[example]]
+name = "settings_inspect_wifi_settings"
+path = "examples/settings_inspect_wifi_settings.rs"
+
+[[example]]
+name = "settings_inspect_ethernet_settings"
+path = "examples/settings_inspect_ethernet_settings.rs"
+
+[[example]]
+name = "settings_edit_wifi_settings"
+path = "examples/settings_edit_wifi_settings.rs"
+
+[[example]]
+name = "settings_edit_ethernet_settings"
+path = "examples/settings_edit_ethernet_settings.rs"
+
 [dev-dependencies]
 serial_test = "4.0.1"
 zbus = { version = "5.16.0", features = ["p2p"] }
