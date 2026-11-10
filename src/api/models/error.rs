@@ -280,4 +280,17 @@ pub enum ConnectionError {
     /// No interface was found with the given name
     #[error("no interface named '{0}'")]
     InterfaceNotFound(String),
+
+    /// A saved-connection settings field could not be parsed or was invalid.
+    ///
+    /// Produced by the typed settings layer
+    /// ([`crate::settings`]) when a section/key is missing or a stored value
+    /// does not match the expected type.
+    #[error("settings field '{field}' invalid: {reason}")]
+    SettingsParse {
+        /// The NetworkManager settings key that failed.
+        field: &'static str,
+        /// What went wrong.
+        reason: String,
+    },
 }
