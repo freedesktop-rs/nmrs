@@ -1085,7 +1085,9 @@ impl NetworkManager {
 
     /// Enables or disables the Wi-Fi radio (software toggle).
     ///
-    /// This replaces the deprecated [`set_wifi_enabled`](Self::set_wifi_enabled).
+    /// This is the global killswitch and affects every Wi-Fi radio. Use
+    /// [set_wifi_enabled](Self::set_wifi_enabled) to toggle a single interface.
+    ///
     /// If the radio is hardware-killed, NM accepts the write but the radio
     /// remains off until hardware is unkilled.
     ///
