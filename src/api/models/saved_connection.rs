@@ -16,6 +16,7 @@ use std::{
 
 use zvariant::{OwnedObjectPath, OwnedValue};
 
+use crate::api::settings::TypedSettings;
 use crate::models::{FromSetting, IpAddress, IpRoute, Property};
 
 /// Raw `GetSettings` output: section name to key to value.
@@ -102,6 +103,22 @@ impl SavedConnection {
     #[must_use]
     pub fn has_section(&self, section: &str) -> bool {
         self.settings.contains_key(section)
+    }
+
+    /// Parse the cached raw settings into a typed [`crate::settings::TypedSettings`].
+    ///
+    /// Unlike [`crate::NetworkManager::settings`], this does **not** perform any
+    /// D-Bus round trip: the profile was already fetched when this
+    /// [`SavedConnection`] was built, and its raw `a{sa{sv}}` dictionary is
+    /// reused. This is the zero-cost way to obtain, say, a
+    /// [`crate::settings::WiFiSettings`] from a profile you already listed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::ConnectionError::SettingsParse`] if the profile is missing a
+    /// section the requested type requires.
+    pub fn parse_settings<T: TypedSettings>(&self) -> crate::Result<T> {
+        Ok(T::from_raw_dict(self.settings.as_ref().clone())?)
     }
 }
 

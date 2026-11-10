@@ -10,6 +10,7 @@ use futures::{FutureExt, StreamExt};
 use nmrs::agent::{SecretAgent, SecretAgentFlags, SecretAgentHandle, SecretSetting};
 use nmrs::builders::{ConnectionBuilder, IpConfig, WireGuardBuilder};
 use nmrs::raw::zvariant::{OwnedObjectPath, OwnedValue, Str, Value};
+use nmrs::settings::WireGuardSettings;
 use nmrs::{
     ActiveConnection, ActiveConnectionState, ConnectByUuidConfig, ConnectType, ConnectionError,
     DeviceState, GlobalDnsConfiguration, MonitorHandle, NetworkEvent, NetworkEventStream,
@@ -337,7 +338,7 @@ async fn active_connections(nm: &NetworkManager) -> Vec<ActiveConnection> {
     .expect("failed to list typed active connections")
 }
 
-/// Exercises NetworkManager's settings API against the isolated D-Bus harness.
+/// Exercises NetworkManager's raw, typed, and update settings APIs against the isolated D-Bus harness.
 ///
 /// This is ignored intentionally: a normal `cargo test` must never discover or
 /// mutate the developer's host NetworkManager. The CI/Docker harness opts in.
@@ -504,6 +505,27 @@ async fn networkmanager_profile_crud_and_settings_events() {
         assert_eq!(profile.path, path);
         assert_eq!(profile.id, id);
         assert_eq!(profile.connection_type, "wireguard");
+
+        let cached_typed: WireGuardSettings = profile
+            .parse_settings()
+            .expect("cached settings should parse as WireGuard");
+        assert_eq!(cached_typed.connection.id, uuid);
+        assert_eq!(cached_typed.connection.name, id);
+        assert_eq!(cached_typed.wireguard.mtu, 1380);
+        assert_eq!(cached_typed.wireguard.peers.len(), 1);
+
+        let fetched_typed: WireGuardSettings = bounded(
+            "fetch typed WireGuard settings by UUID",
+            DBUS_TIMEOUT,
+            nm.settings(&uuid_string),
+        )
+        .await
+        .expect("failed to fetch typed WireGuard settings by UUID");
+        assert_eq!(fetched_typed.connection.id, uuid);
+        assert_eq!(fetched_typed.connection.name, id);
+        assert_eq!(fetched_typed.wireguard.mtu, 1380);
+        assert_eq!(fetched_typed.wireguard.peers.len(), 1);
+
         assert!(!profile.autoconnect);
         let ipv4 = profile.ipv4.expect("expected an ipv4 section");
         assert_eq!(ipv4.method, nmrs::models::IpMethod::Manual);

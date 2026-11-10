@@ -15,6 +15,7 @@ use crate::api::models::{
     MonitorHandle, Network, NetworkInfo, NetworkSnapshot, RadioState, SavedConnection,
     SavedConnectionBrief, SettingsPatch, WifiDevice, WifiSecurity, WiredDevice,
 };
+use crate::api::settings::TypedSettings;
 use crate::api::wifi_scope::WifiScope;
 use crate::core::active_connection as active_connections;
 use crate::core::airplane;
@@ -1512,6 +1513,85 @@ impl NetworkManager {
         uuid: &str,
     ) -> Result<HashMap<String, HashMap<String, OwnedValue>>> {
         saved_profiles::get_saved_connection_raw(&self.conn, uuid).await
+    }
+
+    /// Fetch and parse a saved profile into a typed [`crate::settings::TypedSettings`].
+    ///
+    /// This is the typed counterpart of [`Self::get_saved_connection_raw`]: it
+    /// downloads the raw `a{sa{sv}}` dictionary and parses it into the requested
+    /// type (for example [`crate::settings::WiFiSettings`]). To parse a profile you have
+    /// already loaded, prefer [`SavedConnection::parse_settings`], which reuses
+    /// the cached raw map and skips the extra D-Bus call.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConnectionError::SavedConnectionNotFound`] if the UUID is absent,
+    /// or [`ConnectionError::SettingsParse`] if the profile is missing a section
+    /// the requested type requires.
+    pub async fn settings<T: TypedSettings>(&self, uuid: &str) -> Result<T> {
+        let raw = self.get_saved_connection_raw(uuid).await?;
+        Ok(T::from_raw_dict(raw)?)
+    }
+
+    /// Fetch and parse a saved Wi-Fi profile.
+    pub async fn wifi_settings(&self, uuid: &str) -> Result<crate::settings::WiFiSettings> {
+        self.settings(uuid).await
+    }
+
+    /// Fetch and parse a saved Ethernet profile.
+    pub async fn ethernet_settings(&self, uuid: &str) -> Result<crate::settings::EthernetSettings> {
+        self.settings(uuid).await
+    }
+
+    /// Fetch and parse a saved WireGuard profile.
+    pub async fn wireguard_settings(
+        &self,
+        uuid: &str,
+    ) -> Result<crate::settings::WireGuardSettings> {
+        self.settings(uuid).await
+    }
+
+    /// Fetch and parse a saved VPN profile (including OpenVPN).
+    pub async fn vpn_settings(&self, uuid: &str) -> Result<crate::settings::VpnSettings> {
+        self.settings(uuid).await
+    }
+
+    /// Fetch and parse a saved OpenVPN profile.
+    pub async fn openvpn_settings(&self, uuid: &str) -> Result<crate::settings::OpenVpnSettings> {
+        self.settings(uuid).await
+    }
+
+    /// Fetch and parse a saved Bluetooth profile.
+    pub async fn bluetooth_settings(
+        &self,
+        uuid: &str,
+    ) -> Result<crate::settings::BluetoothSettings> {
+        self.settings(uuid).await
+    }
+
+    /// Fetch and parse a saved bond profile.
+    pub async fn bond_settings(&self, uuid: &str) -> Result<crate::settings::BondSettings> {
+        self.settings(uuid).await
+    }
+
+    /// Fetch and parse a saved bridge profile.
+    pub async fn bridge_settings(&self, uuid: &str) -> Result<crate::settings::BridgeSettings> {
+        self.settings(uuid).await
+    }
+
+    /// Fetch and parse a saved VLAN profile.
+    pub async fn vlan_settings(&self, uuid: &str) -> Result<crate::settings::VlanSettings> {
+        self.settings(uuid).await
+    }
+
+    /// Fetch and parse a saved GSM (mobile broadband) profile.
+    pub async fn gsm_settings(&self, uuid: &str) -> Result<crate::settings::GsmSettings> {
+        self.settings(uuid).await
+    }
+
+    /// Fetch and parse a saved CDMA (mobile broadband) profile.
+    pub async fn cdma_settings(&self, uuid: &str) -> Result<crate::settings::CdmaSettings> {
+        self.settings(uuid).await
     }
 
     /// Deletes a saved profile by UUID (`Settings.Connection.Delete`).
