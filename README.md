@@ -297,6 +297,13 @@ Thank you to everyone who has helped build, test, document, and review `nmrs`.
     <td align="center"><a href="https://github.com/VrtxOmega"><img src="https://avatars.githubusercontent.com/u/272921586?v=4" width="100px;" alt="VrtxOmega"/><br /><sub><b>VrtxOmega</b></sub></a></td>
     <td align="center"><a href="https://github.com/neriGabriel"><img src="https://avatars.githubusercontent.com/u/16361235?v=4" width="100px;" alt="neriGabriel"/><br /><sub><b>neriGabriel</b></sub></a></td>
     <td align="center"><a href="https://github.com/Nuga-agun"><img src="https://avatars.githubusercontent.com/u/235713354?v=4" width="100px;" alt="Nuga-agun"/><br /><sub><b>Nuga-agun</b></sub></a></td>
+    <td align="center"><a href="https://github.com/DipanshuAmbilkar03"><img src="https://avatars.githubusercontent.com/u/136912387?v=4" width="100px;" alt="DipanshuAmbilkar03"/><br /><sub><b>DipanshuAmbilkar03</b></sub></a></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="https://github.com/clark-ja"><img src="https://avatars.githubusercontent.com/u/37738506?v=4" width="100px;" alt="clark-ja"/><br /><sub><b>clark-ja</b></sub></a></td>
+    <td align="center"><a href="https://github.com/sage-s11"><img src="https://avatars.githubusercontent.com/u/181658133?v=4" width="100px;" alt="sage-s11"/><br /><sub><b>sage-s11</b></sub></a></td>
+    <td align="center"><a href="https://github.com/ryux1"><img src="https://avatars.githubusercontent.com/u/177669517?v=4" width="100px;" alt="ryux1"/><br /><sub><b>ryux1</b></sub></a></td>
+    <td align="center"><a href="https://github.com/agustux"><img src="https://avatars.githubusercontent.com/u/150302935?v=4" width="100px;" alt="agustux"/><br /><sub><b>agustux</b></sub></a></td>
   </tr>
 </table>
 <!-- readme: contributors -end -->
