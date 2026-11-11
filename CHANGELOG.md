@@ -5,6 +5,12 @@ All notable changes to the `nmrs` crate will be documented in this file.
 ## [Unreleased]
 ### Added
 
+- `WifiDevice::bitrate_kbps` reports the negotiated bitrate of the current
+  Wi-Fi link from `Device.Wireless.Bitrate`. Until now the only rate exposed
+  was `AccessPoint::max_bitrate_kbps`, which NetworkManager reports as `0` for
+  6 GHz access points.
+  ([#606](https://github.com/freedesktop-rs/nmrs/pull/606))
+
 - `SettingsPatch::remove` deletes individual `(section, key)` entries from a
   saved profile after the patch is merged, or removes the whole section when
   the key is empty. Removing `address-data`, `route-data`, or `dns-data` also
