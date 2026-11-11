@@ -21,32 +21,20 @@ pub(crate) struct WireGuardConf {
 }
 
 impl WireGuardConf {
-    /// The one interface address a NetworkManager WireGuard profile built by
-    /// [`WireGuardBuilder`](crate::builders::WireGuardBuilder) can carry.
+    /// Every interface address, each with a prefix.
     ///
-    /// wg-quick accepts several addresses. The first IPv4 address wins, and
-    /// the first address of any family is used when there is none. An address
-    /// without a prefix gets the host prefix, as wg-quick assigns it.
-    pub(crate) fn primary_address(&self) -> Option<String> {
-        let ip_of = |address: &str| {
-            address
-                .split_once('/')
-                .map_or(address, |(ip, _)| ip)
-                .trim()
-                .parse::<IpAddr>()
-                .ok()
-        };
-        let address = self
-            .addresses
+    /// An address without a prefix gets the host prefix (`/32`, or `/128` for
+    /// IPv6), as wg-quick assigns it. An entry that is not an IP address is
+    /// passed through unchanged so the builder reports it.
+    pub(crate) fn interface_addresses(&self) -> Vec<String> {
+        self.addresses
             .iter()
-            .find(|address| matches!(ip_of(address), Some(IpAddr::V4(_))))
-            .or_else(|| self.addresses.first())?;
-
-        Some(match (address.contains('/'), ip_of(address)) {
-            (false, Some(IpAddr::V4(_))) => format!("{address}/32"),
-            (false, Some(IpAddr::V6(_))) => format!("{address}/128"),
-            _ => address.clone(),
-        })
+            .map(|address| match address.parse::<IpAddr>() {
+                Ok(IpAddr::V4(_)) => format!("{address}/32"),
+                Ok(IpAddr::V6(_)) => format!("{address}/128"),
+                Err(_) => address.clone(),
+            })
+            .collect()
     }
 
     /// The `DNS` entries that are server addresses.
@@ -327,43 +315,33 @@ mod tests {
     }
 
     #[test]
-    fn primary_address_prefers_ipv4() {
+    fn interface_addresses_keep_both_families_in_order() {
         let conf = WireGuardConf {
             addresses: vec!["fd00::2/64".into(), "10.0.0.2/24".into()],
             ..WireGuardConf::default()
         };
 
-        assert_eq!(conf.primary_address().as_deref(), Some("10.0.0.2/24"));
-    }
-
-    #[test]
-    fn primary_address_falls_back_to_ipv6() {
-        let conf = WireGuardConf {
-            addresses: vec!["fd00::2/64".into()],
-            ..WireGuardConf::default()
-        };
-
-        assert_eq!(conf.primary_address().as_deref(), Some("fd00::2/64"));
+        assert_eq!(conf.interface_addresses(), ["fd00::2/64", "10.0.0.2/24"]);
     }
 
     #[test]
     fn address_without_a_prefix_gets_the_host_prefix() {
-        let v4 = WireGuardConf {
-            addresses: vec!["10.0.0.2".into()],
-            ..WireGuardConf::default()
-        };
-        let v6 = WireGuardConf {
-            addresses: vec!["fd00::2".into()],
+        let conf = WireGuardConf {
+            addresses: vec!["10.0.0.2".into(), "fd00::2".into()],
             ..WireGuardConf::default()
         };
 
-        assert_eq!(v4.primary_address().as_deref(), Some("10.0.0.2/32"));
-        assert_eq!(v6.primary_address().as_deref(), Some("fd00::2/128"));
+        assert_eq!(conf.interface_addresses(), ["10.0.0.2/32", "fd00::2/128"]);
     }
 
     #[test]
-    fn no_address_means_no_primary_address() {
-        assert_eq!(WireGuardConf::default().primary_address(), None);
+    fn address_that_is_not_an_ip_is_left_for_the_builder() {
+        let conf = WireGuardConf {
+            addresses: vec!["not-an-address".into()],
+            ..WireGuardConf::default()
+        };
+
+        assert_eq!(conf.interface_addresses(), ["not-an-address"]);
     }
 
     #[test]
