@@ -3,6 +3,17 @@
 All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
+### Added
+
+- `WireGuardBuilder::from_conf_file` and `WireGuardBuilder::from_conf_str`
+  pre-populate the builder from a WireGuard `.conf` file in the wg-quick
+  format: `PrivateKey`, `Address`, `DNS`, and `MTU` from `[Interface]`, and
+  `PublicKey`, `Endpoint`, `AllowedIPs`, `PresharedKey`, and
+  `PersistentKeepalive` from each `[Peer]`. Other wg-quick keys are skipped.
+  One `Address` is used (the first IPv4 address, else the first), and search
+  domains in `DNS` are dropped. A malformed line returns
+  `ConnectionError::InvalidInput` with its line number.
+  ([#611](https://github.com/freedesktop-rs/nmrs/pull/611))
 
 ## [3.5.10] - 2026-11-11
 ### Added
