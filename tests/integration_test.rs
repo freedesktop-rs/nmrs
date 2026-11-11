@@ -644,6 +644,125 @@ async fn networkmanager_profile_crud_and_settings_events() {
     finish_after_cleanup(outcome, cleanup_failures);
 }
 
+/// Imports a dual-stack wg-quick file and reads the profile back from
+/// NetworkManager.
+///
+/// The unit tests only see the settings map the builder produces. This is
+/// the check that NetworkManager accepts a WireGuard profile with a manual
+/// address in both families and stores what the file described.
+#[tokio::test]
+#[serial]
+#[ignore = "requires NMRS_REQUIRE_NETWORKMANAGER=1 and an isolated NetworkManager"]
+async fn networkmanager_wireguard_conf_import_round_trip() {
+    let nm = network_manager().await;
+
+    let id = format!("nmrs-conf-{}", Uuid::new_v4());
+    let uuid = Uuid::new_v4();
+    let uuid_string = uuid.to_string();
+    let dir = std::env::temp_dir().join(format!("nmrs-integration-{id}"));
+    let conf_path = dir.join(format!("{id}.conf"));
+    std::fs::create_dir_all(&dir).expect("failed to create the .conf directory");
+    std::fs::write(
+        &conf_path,
+        "# full tunnel, as a provider exports it\n\
+         [Interface]\n\
+         PrivateKey = YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=\n\
+         Address = 10.205.0.2/32, fd00:205::2/128\n\
+         DNS = 10.205.0.53, corp.example.com\n\
+         MTU = 1380\n\
+         PostUp = true\n\
+         \n\
+         [Peer]\n\
+         PublicKey = HIgo9xNzJMWLKAShlKl6/bUT1VI9Q0SDBXGtLXkPFXc=\n\
+         PresharedKey = PSKABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklm=\n\
+         Endpoint = 192.0.2.1:51820\n\
+         AllowedIPs = 0.0.0.0/0, ::/0\n\
+         PersistentKeepalive = 25\n",
+    )
+    .expect("failed to write the .conf file");
+
+    let outcome = AssertUnwindSafe(async {
+        let settings = WireGuardBuilder::from_conf_file(&conf_path)
+            .expect("the integration .conf must parse")
+            .uuid(uuid)
+            .autoconnect(false)
+            .build()
+            .expect("the imported WireGuard profile must be valid");
+
+        let path = bounded(
+            "add the imported WireGuard profile",
+            DBUS_TIMEOUT,
+            nm.add_connection(settings),
+        )
+        .await
+        .expect("NetworkManager rejected the imported WireGuard profile");
+
+        let profile = bounded(
+            "decode the imported WireGuard profile",
+            DBUS_TIMEOUT,
+            nm.get_saved_connection(&uuid_string),
+        )
+        .await
+        .expect("failed to load the imported WireGuard profile");
+        assert_eq!(profile.path, path);
+        assert_eq!(profile.id, id, "the profile is named after the file");
+        assert_eq!(profile.connection_type, "wireguard");
+
+        let ipv4 = profile.ipv4.expect("expected an ipv4 section");
+        assert_eq!(ipv4.method, nmrs::models::IpMethod::Manual);
+        assert_eq!(
+            ipv4.addresses,
+            vec![nmrs::models::IpAddress::new(
+                Ipv4Addr::new(10, 205, 0, 2),
+                32
+            )]
+        );
+        assert_eq!(
+            ipv4.dns,
+            vec![Ipv4Addr::new(10, 205, 0, 53)],
+            "the search domain in DNS must not reach the profile"
+        );
+
+        let ipv6 = profile.ipv6.expect("expected an ipv6 section");
+        assert_eq!(
+            ipv6.method,
+            nmrs::models::IpMethod::Manual,
+            "a dual-stack file must not import as IPv4-only"
+        );
+        assert_eq!(
+            ipv6.addresses,
+            vec![nmrs::models::IpAddress::new(
+                "fd00:205::2"
+                    .parse::<std::net::Ipv6Addr>()
+                    .expect("valid IPv6 literal"),
+                128
+            )]
+        );
+
+        match profile.summary {
+            SettingsSummary::WireGuard {
+                mtu,
+                peer_count,
+                first_peer_endpoint,
+                ..
+            } => {
+                assert_eq!(mtu, Some(1380));
+                assert_eq!(peer_count, 1);
+                assert_eq!(first_peer_endpoint.as_deref(), Some("192.0.2.1:51820"));
+            }
+            other => panic!("expected a WireGuard settings summary, got {other:?}"),
+        }
+    })
+    .catch_unwind()
+    .await;
+
+    let mut cleanup_failures = cleanup_saved_profile(&nm, &uuid_string).await;
+    if let Err(error) = std::fs::remove_dir_all(&dir) {
+        cleanup_failures.push(format!("remove {}: {error}", dir.display()));
+    }
+    finish_after_cleanup(outcome, cleanup_failures);
+}
+
 /// Exercises `SettingsPatch::remove` against a real NetworkManager profile,
 /// including NetworkManager's legacy `addresses` fallback and
 /// `interface-name` clearing.
