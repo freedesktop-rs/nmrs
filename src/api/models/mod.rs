@@ -54,10 +54,7 @@ pub use network_event::*;
 pub use openvpn::*;
 pub use property::*;
 pub use radio::*;
-pub use saved_connection::{
-    IpMethod, IpSettings, SavedConnection, SavedConnectionBrief, SettingsPatch, SettingsSummary,
-    VpnSecretFlags, WifiKeyMgmt, WifiSecuritySummary,
-};
+pub use saved_connection::*;
 pub use snapshot::{AppletNetworkSummary, NetworkSnapshot};
 pub use state_reason::*;
 pub use vlan::*;
