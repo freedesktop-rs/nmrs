@@ -3,6 +3,8 @@
 All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
+
+## [3.5.12] - 2026-11-11
 ### Fixed
 
 - Futures from `list_vpn_connections`, `forget`, `forget_vpn`,
@@ -763,7 +765,8 @@ present)` constructor; `RadioState::new` keeps existing behavior and defaults
 
 - EAP connections default to no certificates (advanced certificate management coming in future releases)
 
-[Unreleased]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.11...HEAD
+[Unreleased]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.12...HEAD
+[3.5.12]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.11...nmrs-v3.5.12
 [3.5.11]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.10...nmrs-v3.5.11
 [3.5.10]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.7...nmrs-v3.5.10
 [3.5.7]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.6...nmrs-v3.5.7
