@@ -1,7 +1,6 @@
 use futures_timer::Delay;
 use log::{debug, error, info, trace, warn};
 use std::collections::HashMap;
-use std::ops::ControlFlow;
 use zbus::Connection;
 use zvariant::OwnedObjectPath;
 
@@ -20,8 +19,7 @@ use crate::monitoring::wifi::Wifi;
 use crate::types::constants::{device_state, device_type, timeouts};
 use crate::types::device_type_registry;
 use crate::util::utils::{
-    connection_settings_proxy, decode_ssid_or_empty, for_each_readable_profile, nm_proxy,
-    settings_proxy,
+    ReadableProfiles, connection_settings_proxy, decode_ssid_or_empty, nm_proxy, settings_proxy,
 };
 use crate::util::validation::{validate_bssid, validate_ssid, validate_wifi_security};
 use crate::{ConnectByUuidConfig, Result};
@@ -416,7 +414,8 @@ pub(crate) async fn forget_by_name_and_type(
 
     let mut deleted_count = 0;
 
-    for_each_readable_profile::<(), _>(conn, async |cpath, settings_map| {
+    let mut profiles = ReadableProfiles::list(conn).await?;
+    while let Some((cpath, settings_map)) = profiles.next().await {
         let mut should_delete = false;
 
         // Match by connection ID (works for all connection types)
@@ -484,10 +483,7 @@ pub(crate) async fn forget_by_name_and_type(
                 }
             }
         }
-
-        Ok(ControlFlow::Continue(()))
-    })
-    .await?;
+    }
 
     if deleted_count > 0 {
         info!("Successfully deleted {deleted_count} connection(s) for '{name}'");

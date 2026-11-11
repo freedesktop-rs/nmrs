@@ -1783,3 +1783,35 @@ impl NetworkManager {
         Ok(MonitorHandle::new(tx, task))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::future::Future;
+
+    use super::NetworkManager;
+    use crate::WifiSecurity;
+
+    /// The bound `tokio::spawn` puts on a future.
+    fn spawnable<F: Future + Send + 'static>(_future: F) {}
+
+    /// Consumers spawn these methods with borrowed arguments. In 3.5.10 and
+    /// 3.5.11 that stopped compiling ("implementation of `Send` is not
+    /// general enough") because the saved-profile scan awaited an async
+    /// closure. The futures are only built here, never polled, so no
+    /// NetworkManager is needed: the test is that this compiles.
+    #[test]
+    fn saved_profile_methods_can_be_spawned() {
+        spawnable(async {
+            let nm = NetworkManager::new().await?;
+            let name = String::from("profile");
+
+            nm.list_vpn_connections().await?;
+            nm.has_saved_connection(&name).await?;
+            nm.get_saved_connection_path(&name).await?;
+            nm.connect(&name, None, WifiSecurity::Open).await?;
+            nm.forget(&name).await?;
+            nm.forget_vpn(&name).await?;
+            crate::Result::Ok(())
+        });
+    }
+}

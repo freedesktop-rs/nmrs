@@ -3,6 +3,15 @@
 All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
+### Fixed
+
+- Futures from `list_vpn_connections`, `forget`, `forget_vpn`,
+  `has_saved_connection`, `get_saved_connection_path` and the Wi-Fi `connect`
+  methods are `Send` for every lifetime again, so they can be passed to
+  `tokio::spawn`. In 3.5.10 and 3.5.11 spawning them failed to compile with
+  "implementation of `Send` is not general enough", because the saved-profile
+  scan awaited an async closure.
+  ([#612](https://github.com/freedesktop-rs/nmrs/pull/612))
 
 ## [3.5.11] - 2026-11-11
 ### Added
