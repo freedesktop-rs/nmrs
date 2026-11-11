@@ -32,6 +32,27 @@ All notable changes to the `nmrs` crate will be documented in this file.
   `Settings.PermissionDenied` profile by hand-rolling the loop. Behaviour for
   readable profiles is unchanged.
   ([#597](https://github.com/freedesktop-rs/nmrs/pull/597))
+- Minimum dependency versions raised: `zvariant` 5.15.1
+  ([#580](https://github.com/freedesktop-rs/nmrs/pull/580)), `tokio` 1.54.0
+  ([#590](https://github.com/freedesktop-rs/nmrs/pull/590)), `log` 0.4.35
+  ([#592](https://github.com/freedesktop-rs/nmrs/pull/592)) and `uuid` 1.29.2
+  ([#591](https://github.com/freedesktop-rs/nmrs/pull/591),
+  [#596](https://github.com/freedesktop-rs/nmrs/pull/596),
+  [#599](https://github.com/freedesktop-rs/nmrs/pull/599)).
+- The repository is no longer a workspace: the crate moved from `nmrs/` to the
+  repository root. ([#587](https://github.com/freedesktop-rs/nmrs/pull/587))
+- CI checks the library on the declared MSRV and builds rustdoc with warnings
+  denied. The aarch64 build job and the system package installs are gone; the
+  dependency tree is pure Rust.
+  ([#607](https://github.com/freedesktop-rs/nmrs/pull/607))
+
+### Fixed
+
+- The docs for `NetworkManager::set_wireless_enabled` no longer call
+  `set_wifi_enabled` deprecated. They now describe `set_wireless_enabled` as
+  the global switch for every Wi-Fi radio and point to `set_wifi_enabled` for
+  a single interface.
+  ([#600](https://github.com/freedesktop-rs/nmrs/pull/600))
 
 ## [3.5.7] - 2026-10-17
 ### Added
