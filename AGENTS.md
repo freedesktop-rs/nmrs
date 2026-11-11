@@ -42,7 +42,7 @@ cargo fmt --all -- --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --lib --all-features --workspace
 cargo test --locked --doc --all-features --workspace
-cargo semver-checks check-release --release-type minor
+cargo semver-checks check-release --release-type minor --baseline-rev "$(git describe --tags --abbrev=0 --match 'nmrs-v*')"
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --all-features
 cargo +<rust-version> check --locked
 ```
