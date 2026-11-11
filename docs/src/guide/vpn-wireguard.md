@@ -157,9 +157,8 @@ Use `WireGuardBuilder::from_conf_str(content, name)` when the configuration does
 | `[Interface]` | `PrivateKey`, `Address`, `DNS`, `MTU` |
 | `[Peer]` (repeatable) | `PublicKey`, `Endpoint`, `AllowedIPs`, `PresharedKey`, `PersistentKeepalive` |
 
-Other wg-quick keys, such as `PostUp`, `Table`, or `ListenPort`, are skipped. Three things differ from wg-quick:
+Other wg-quick keys, such as `PostUp`, `Table`, or `ListenPort`, are skipped. Every `Address` is kept, so a file with an IPv4 and an IPv6 address produces a dual-stack profile; an address without a prefix gets `/32` (`/128` for IPv6). Two things differ from wg-quick:
 
-- Only one `Address` is used: the first IPv4 address, or the first address if there is none. An address without a prefix gets `/32` (`/128` for IPv6).
 - Search domains in `DNS` are dropped; only server addresses are kept.
 - Every peer needs an `Endpoint`.
 
