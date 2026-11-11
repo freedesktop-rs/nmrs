@@ -3,6 +3,8 @@
 All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
+
+## [3.5.10] - 2026-11-11
 ### Added
 
 - `WifiDevice::bitrate_kbps` reports the negotiated bitrate of the current
@@ -737,7 +739,8 @@ present)` constructor; `RadioState::new` keeps existing behavior and defaults
 
 - EAP connections default to no certificates (advanced certificate management coming in future releases)
 
-[Unreleased]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.7...HEAD
+[Unreleased]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.10...HEAD
+[3.5.10]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.7...nmrs-v3.5.10
 [3.5.7]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.6...nmrs-v3.5.7
 [3.5.6]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.5...nmrs-v3.5.6
 [3.5.5]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.4...nmrs-v3.5.5
