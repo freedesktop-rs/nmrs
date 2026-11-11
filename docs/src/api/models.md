@@ -126,6 +126,7 @@ pub struct WifiDevice {
     pub is_active: bool,
     pub active_ssid: Option<String>,
     pub active_frequency_mhz: Option<u32>,
+    pub bitrate_kbps: Option<u32>,          // negotiated link rate, None when disconnected
 }
 ```
 
