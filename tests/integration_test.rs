@@ -674,7 +674,7 @@ async fn networkmanager_wireguard_conf_import_round_trip() {
          \n\
          [Peer]\n\
          PublicKey = HIgo9xNzJMWLKAShlKl6/bUT1VI9Q0SDBXGtLXkPFXc=\n\
-         PresharedKey = PSKABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklm=\n\
+         PresharedKey = AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=\n\
          Endpoint = 192.0.2.1:51820\n\
          AllowedIPs = 0.0.0.0/0, ::/0\n\
          PersistentKeepalive = 25\n",
