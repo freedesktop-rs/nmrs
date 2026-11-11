@@ -6,7 +6,6 @@
 use log::{trace, warn};
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::ops::ControlFlow;
 use std::str;
 use zbus::Connection;
 use zvariant::OwnedObjectPath;
@@ -278,43 +277,52 @@ pub(crate) async fn read_profile_settings(
     }
 }
 
-/// Calls `f` for every saved profile whose settings this user can read.
+/// Cursor over every saved profile whose settings this user can read.
 ///
 /// The settings are parsed with [`read_profile_settings`], so callers never
 /// hand-roll a `ListConnections` + `GetSettings` loop that forgets to skip
-/// unreadable profiles. `f` can stop the scan early with
-/// [`ControlFlow::Break`], for example after finding the first match.
+/// unreadable profiles. Profiles are read one at a time, so a caller that
+/// stops at the first match does not fetch the rest.
 ///
-/// Returns the value `f` broke with, or `None` when every profile was visited.
-pub(crate) async fn for_each_readable_profile<T, F>(
-    conn: &Connection,
-    mut f: F,
-) -> Result<Option<T>>
-where
-    F: AsyncFnMut(OwnedObjectPath, RawSettings) -> Result<ControlFlow<T>>,
-{
-    let settings = settings_proxy(conn).await?;
+/// This is a cursor rather than a function taking an async closure: a future
+/// that awaits an async closure borrowing its environment is not `Send` for
+/// every lifetime, which broke `tokio::spawn` on the public methods built on
+/// it (3.5.10 and 3.5.11).
+pub(crate) struct ReadableProfiles<'a> {
+    conn: &'a Connection,
+    paths: std::vec::IntoIter<OwnedObjectPath>,
+}
 
-    let reply = settings
-        .call_method("ListConnections", &())
-        .await
-        .map_err(|e| ConnectionError::DbusOperation {
-            context: "failed to list saved connections".to_string(),
-            source: e,
-        })?;
+impl<'a> ReadableProfiles<'a> {
+    /// Lists the saved profiles. Their settings are read by [`next`](Self::next).
+    pub(crate) async fn list(conn: &'a Connection) -> Result<Self> {
+        let settings = settings_proxy(conn).await?;
 
-    let conns: Vec<OwnedObjectPath> = reply.body().deserialize()?;
+        let reply = settings
+            .call_method("ListConnections", &())
+            .await
+            .map_err(|e| ConnectionError::DbusOperation {
+                context: "failed to list saved connections".to_string(),
+                source: e,
+            })?;
 
-    for cpath in conns {
-        let Some(all) = read_profile_settings(conn, &cpath).await else {
-            continue;
-        };
-        if let ControlFlow::Break(value) = f(cpath, all).await? {
-            return Ok(Some(value));
-        }
+        let paths: Vec<OwnedObjectPath> = reply.body().deserialize()?;
+
+        Ok(Self {
+            conn,
+            paths: paths.into_iter(),
+        })
     }
 
-    Ok(None)
+    /// The next readable profile, or `None` when every profile was visited.
+    pub(crate) async fn next(&mut self) -> Option<(OwnedObjectPath, RawSettings)> {
+        for path in self.paths.by_ref() {
+            if let Some(settings) = read_profile_settings(self.conn, &path).await {
+                return Some((path, settings));
+            }
+        }
+        None
+    }
 }
 
 /// Attempts to extract the actual state reason from an active connection.

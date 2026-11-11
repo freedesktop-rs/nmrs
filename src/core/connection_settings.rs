@@ -5,7 +5,6 @@
 //! store credentials for automatic reconnection.
 
 use log::trace;
-use std::ops::ControlFlow;
 use zbus::Connection;
 use zvariant::OwnedObjectPath;
 
@@ -13,7 +12,7 @@ use crate::Result;
 use crate::api::models::ConnectionError;
 use crate::api::models::RawSettings;
 use crate::api::models::property::FromSetting;
-use crate::util::utils::{connection_settings_proxy, for_each_readable_profile};
+use crate::util::utils::{ReadableProfiles, connection_settings_proxy};
 use crate::util::validation::validate_connection_name;
 
 /// Finds a saved profile whose `connection.id` matches `name` (SSID for typical Wi-Fi).
@@ -23,24 +22,22 @@ async fn find_saved_connection_by_name(
     conn: &Connection,
     name: &str,
 ) -> Result<Option<(OwnedObjectPath, String)>> {
-    for_each_readable_profile(conn, async |cpath, all| {
+    let mut profiles = ReadableProfiles::list(conn).await?;
+    while let Some((cpath, all)) = profiles.next().await {
         let Some(connection) = all.get("connection") else {
-            return Ok(ControlFlow::Continue(()));
+            continue;
         };
         let id = connection.get("id").and_then(String::from_setting);
         let uuid = connection.get("uuid").and_then(String::from_setting);
 
-        Ok(
-            if id.as_deref() == Some(name)
-                && let Some(uuid) = uuid
-            {
-                ControlFlow::Break((cpath, uuid))
-            } else {
-                ControlFlow::Continue(())
-            },
-        )
-    })
-    .await
+        if id.as_deref() == Some(name)
+            && let Some(uuid) = uuid
+        {
+            return Ok(Some((cpath, uuid)));
+        }
+    }
+
+    Ok(None)
 }
 
 /// Whether a saved profile's settings describe a Wi-Fi client profile for `ssid`.
@@ -78,14 +75,14 @@ pub(crate) async fn get_saved_wifi_connection_path(
         return Ok(None);
     }
 
-    for_each_readable_profile(conn, async |cpath, all| {
-        Ok(if wifi_profile_matches_ssid(&all, ssid.as_bytes()) {
-            ControlFlow::Break(cpath)
-        } else {
-            ControlFlow::Continue(())
-        })
-    })
-    .await
+    let mut profiles = ReadableProfiles::list(conn).await?;
+    while let Some((cpath, all)) = profiles.next().await {
+        if wifi_profile_matches_ssid(&all, ssid.as_bytes()) {
+            return Ok(Some(cpath));
+        }
+    }
+
+    Ok(None)
 }
 
 /// Finds the D-Bus path of a saved connection by SSID or connection name.
