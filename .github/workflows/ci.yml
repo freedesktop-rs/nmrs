@@ -200,8 +200,14 @@ jobs:
         with:
           shared-key: semver-checks
 
+      # The baseline is the latest release tag, not the latest crates.io
+      # version: a yanked release cannot be downloaded as a baseline, and the
+      # job failed on every run after 3.5.11 was yanked.
       - name: Check semver compatibility
-        run: cargo semver-checks check-release --release-type minor
+        run: |
+          baseline="$(git describe --tags --abbrev=0 --match 'nmrs-v*')"
+          echo "Baseline: ${baseline}"
+          cargo semver-checks check-release --release-type minor --baseline-rev "${baseline}"
 
   msrv:
     name: Minimum Supported Rust Version
