@@ -37,6 +37,7 @@ Each device provides the following information:
 | `ip6_address` | `Option<String>` | IPv6 address with CIDR (when connected) |
 | `frequency` | `Option<u32>` | Active Wi-Fi frequency in MHz (Wi-Fi only) |
 | `speed_mbps` | `Option<u32>` | Raw Ethernet link speed in Mb/s (Ethernet only) |
+| `tun_mode` | `Option<TunMode>` | `Tun` or `Tap` (TUN devices only; `None` if unknown) |
 
 `speed_mbps` preserves NetworkManager's raw value. Some Ethernet drivers
 report `0` when no carrier is present.
@@ -55,6 +56,8 @@ use nmrs::DeviceType;
 | `DeviceType::WifiP2P` | Wi-Fi Direct (peer-to-peer) |
 | `DeviceType::Loopback` | Loopback interface (localhost) |
 | `DeviceType::Vlan` | 802.1Q virtual VLAN |
+| `DeviceType::Tun` | TUN/TAP device (see `Device::tun_mode`) |
+| `DeviceType::WireGuard` | WireGuard tunnel |
 | `DeviceType::Other(u32)` | Unknown type with raw code |
 
 Devices that NetworkManager reports as `veth` are normalized to
@@ -84,6 +87,14 @@ if device.is_loopback() {
 
 if device.is_vlan() {
     println!("{} is a VLAN", device.interface);
+}
+
+if device.is_tun() {
+    println!("{} is a TUN/TAP device ({:?})", device.interface, device.tun_mode);
+}
+
+if device.is_wireguard() {
+    println!("{} is a WireGuard tunnel", device.interface);
 }
 ```
 

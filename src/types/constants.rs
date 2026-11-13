@@ -10,6 +10,8 @@ pub mod device_type {
     pub const BLUETOOTH: u32 = 5;
     /// Mobile broadband / WWAN modem device.
     pub const MODEM: u32 = 8;
+    /// TUN/TAP virtual device.
+    pub const TUN: u32 = 16;
     /// Virtual Ethernet pair device.
     pub const VETH: u32 = 20;
     // pub const WIFI_P2P: u32 = 30;

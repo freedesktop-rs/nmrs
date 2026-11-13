@@ -4,6 +4,15 @@ All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
 
+- `DeviceType::Tun` and `DeviceType::WireGuard` replace raw codes 16/29,
+  adding `is_tun()` / `is_wireguard()` and `Device::tun_mode` reading
+  ([#624](https://github.com/freedesktop-rs/nmrs/pull/624))
+- `WifiDevice::bitrate_kbps` reports the negotiated bitrate of the current
+  Wi-Fi link from `Device.Wireless.Bitrate`. Until now the only rate exposed
+  was `AccessPoint::max_bitrate_kbps`, which NetworkManager reports as `0` for
+  6 GHz access points.
+  ([#606](https://github.com/freedesktop-rs/nmrs/pull/606))
+
 ## [3.5.12] - 2026-11-11
 ### Fixed
 
@@ -32,12 +41,6 @@ All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [3.5.10] - 2026-11-11
 ### Added
-
-- `WifiDevice::bitrate_kbps` reports the negotiated bitrate of the current
-  Wi-Fi link from `Device.Wireless.Bitrate`. Until now the only rate exposed
-  was `AccessPoint::max_bitrate_kbps`, which NetworkManager reports as `0` for
-  6 GHz access points.
-  ([#606](https://github.com/freedesktop-rs/nmrs/pull/606))
 
 - `SettingsPatch::remove` deletes individual `(section, key)` entries from a
   saved profile after the patch is merged, or removes the whole section when
