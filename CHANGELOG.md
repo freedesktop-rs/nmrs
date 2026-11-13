@@ -4,12 +4,9 @@ All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
 
-- `DeviceType::Tun` (type 16) and `DeviceType::WireGuard` (type 29), with
-  `Device::is_tun()` / `Device::is_wireguard()`. TUN devices expose
-  `Device::tun_mode: Option<TunMode>`, read from
-  `org.freedesktop.NetworkManager.Device.Tun`; `None` for non-TUN devices,
-  unknown modes, or a failed read.
-  ([#TBD](https://github.com/freedesktop-rs/nmrs/pull/TBD))
+- `DeviceType::Tun` and `DeviceType::WireGuard` replace raw codes 16/29,
+  adding `is_tun()` / `is_wireguard()` and `Device::tun_mode` reading
+  ([#624](https://github.com/freedesktop-rs/nmrs/pull/624))
 - `WifiDevice::bitrate_kbps` reports the negotiated bitrate of the current
   Wi-Fi link from `Device.Wireless.Bitrate`. Until now the only rate exposed
   was `AccessPoint::max_bitrate_kbps`, which NetworkManager reports as `0` for
@@ -59,9 +56,6 @@ All notable changes to the `nmrs` crate will be documented in this file.
 
 ### Changed
 
-- Devices of type 16 and 29 are no longer reported as `DeviceType::Other(16)` /
-  `DeviceType::Other(29)`, they're `DeviceType::Tun` / `DeviceType::WireGuard`.
-  ([#TBD](https://github.com/freedesktop-rs/nmrs/pull/TBD))
 - Every saved-profile scan (finding a profile by name or SSID, forgetting
   connections and VPNs, listing VPNs) now goes through one helper that skips
   profiles the caller cannot read, such as those restricted to other users via
