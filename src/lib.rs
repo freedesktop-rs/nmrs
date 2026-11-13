@@ -434,6 +434,15 @@ pub mod models {
     pub use crate::api::models::*;
 }
 
+/// Typed, round-trippable NetworkManager saved-connection settings.
+///
+/// Parse a saved profile into strongly typed structs, mutate fields, and write
+/// a merge patch back via [`NetworkManager::update_saved_connection`]. See the
+/// module docs and [`settings::TypedSettings`].
+pub mod settings {
+    pub use crate::api::settings::*;
+}
+
 // Re-export commonly used types at crate root for convenience
 #[allow(deprecated)]
 pub use api::models::{
@@ -442,15 +451,15 @@ pub use api::models::{
     AppletNetworkSummary, BluetoothDevice, BluetoothIdentity, BluetoothNetworkRole,
     ConnectByUuidConfig, ConnectType, ConnectionError, ConnectionOptions, ConnectionStateReason,
     ConnectivityReport, ConnectivityState, Device, DeviceState, DeviceType, EapMethod, EapOptions,
-    GlobalDnsConfiguration, GlobalDnsDomain, MonitorHandle, Network, NetworkEvent,
-    NetworkEventStream, NetworkInfo, NetworkSnapshot, OpenVpnAuthType, OpenVpnCompression,
-    OpenVpnConfig, OpenVpnConnectionType, OpenVpnProxy, Phase2, RadioState, SavedConnection,
-    SavedConnectionBrief, SavedVpnSummary, SecurityFeatures, SettingsChange, SettingsEventStream,
-    SettingsPatch, SettingsSummary, StateReason, TimeoutConfig, VlanConfig, VpnConfig,
-    VpnConfiguration, VpnConnection, VpnConnectionInfo, VpnCredentials, VpnDetails, VpnKind,
-    VpnRoute, VpnSecretFlags, VpnType, WifiDevice, WifiKeyMgmt, WifiNetworkGroup, WifiSecurity,
-    WifiSecuritySummary, WireGuardConfig, WireGuardPeer, WiredDevice,
-    connection_state_reason_to_error, reason_to_error,
+    GlobalDnsConfiguration, GlobalDnsDomain, IpAddress, IpMethod, IpRoute, IpSettings,
+    MonitorHandle, Network, NetworkEvent, NetworkEventStream, NetworkInfo, NetworkSnapshot,
+    OpenVpnAuthType, OpenVpnCompression, OpenVpnConfig, OpenVpnConnectionType, OpenVpnProxy,
+    Phase2, RadioState, SavedConnection, SavedConnectionBrief, SavedVpnSummary, SecurityFeatures,
+    SettingsChange, SettingsEventStream, SettingsPatch, SettingsSummary, StateReason,
+    TimeoutConfig, VlanConfig, VpnConfig, VpnConfiguration, VpnConnection, VpnConnectionInfo,
+    VpnCredentials, VpnDetails, VpnKind, VpnRoute, VpnSecretFlags, VpnType, WifiDevice,
+    WifiKeyMgmt, WifiNetworkGroup, WifiSecurity, WifiSecuritySummary, WireGuardConfig,
+    WireGuardPeer, WiredDevice, connection_state_reason_to_error, reason_to_error,
 };
 pub use api::network_manager::NetworkManager;
 pub use api::wifi_scope::WifiScope;
