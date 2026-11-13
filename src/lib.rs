@@ -156,6 +156,18 @@
 //! tokens, 802.1X passwords) over D-Bus. See the module docs for the
 //! three-stream model and a full example.
 //!
+//! ## Typed, Editable Settings
+//!
+//! The [`settings`] module mirrors NetworkManager's `a{sa{sv}}` settings
+//! dictionary with strongly typed, **editable** structs. Unlike the read-only
+//! decode in [`SavedConnection`], these structs can be loaded, mutated, and
+//! written back as a merge patch via
+//! [`NetworkManager::update_saved_connection`]. Use the typed accessors
+//! ([`NetworkManager::wifi_settings`], [`NetworkManager::ethernet_settings`], …)
+//! or the generic [`NetworkManager::settings`], and convert back with
+//! [`settings::TypedSettings::to_patch`]. See the [module docs](settings) for
+//! the full guide.
+//!
 //! # Examples
 //!
 //! ## Connecting to Different Network Types
