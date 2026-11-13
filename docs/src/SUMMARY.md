@@ -25,6 +25,7 @@
 - [Bluetooth](./guide/bluetooth.md)
 - [Device Management](./guide/devices.md)
 - [Connection Profiles](./guide/profiles.md)
+- [Typed, Editable Settings](./guide/settings.md)
 - [Real-Time Monitoring](./guide/monitoring.md)
 - [Error Handling](./guide/error-handling.md)
 

@@ -198,6 +198,7 @@ If something is missing that you'd like to see, please file a PR or issue, addin
 - [x] Wi-Fi, WWAN, Bluetooth, and aggregate airplane-mode radio state
 - [x] Connectivity state, forced connectivity checks, and captive-portal URL detection
 - [x] IPv4 and IPv6 method, addresses, DNS, gateway, and routes
+- [x] Typed, editable saved-connection settings with `nmrs::settings` and merge-patch write-back
 - [ ] DHCP client options and lease details (DHCP4Config / DHCP6Config)
 
 ### Device And D-Bus Surface

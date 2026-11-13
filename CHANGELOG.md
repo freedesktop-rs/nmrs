@@ -82,6 +82,19 @@ All notable changes to the `nmrs` crate will be documented in this file.
   a single interface.
   ([#600](https://github.com/freedesktop-rs/nmrs/pull/600))
 
+### Added
+
+- `nmrs::settings` module: typed, round-trippable NetworkManager saved-connection
+  settings. Load a saved profile into strongly typed structs via
+  `NetworkManager::settings::<T>()`, `NetworkManager::wifi_settings()`,
+  `NetworkManager::ethernet_settings()`, and the other per-type accessors; mutate
+  fields; then write a merge patch back with `to_patch()` +
+  `NetworkManager::update_saved_connection`. `SavedConnection::parse_settings::<T>()`
+  reuses the cached raw dictionary to avoid an extra D-Bus round trip. The editable
+  `IpV4Section`/`IpV6Section` share the canonical `nmrs::IpMethod` enum and convert
+  to/from `nmrs::IpSettings` through `From`. (Merged from the `energija` crate;
+  both original authors consented to the GPL → MIT/Apache-2.0 relicense.)
+
 ## [3.5.7] - 2026-10-17
 ### Added
 
