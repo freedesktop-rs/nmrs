@@ -68,6 +68,31 @@ pub struct Device {
     /// This is the raw value reported by NetworkManager. Some drivers report
     /// `0` when no carrier is present.
     pub speed_mbps: Option<u32>,
+    /// TUN/TAP mode for [`DeviceType::Tun`] devices.
+    ///
+    /// `None` for other device types, an unknown mode, or a read failure.
+    pub tun_mode: Option<TunMode>,
+}
+
+/// Mode of a TUN/TAP device.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TunMode {
+    /// Layer 3 tunnel (VPNs such as Tailscale or OpenVPN).
+    Tun,
+    /// Layer 2 tap device (libvirt/QEMU `vnet*`).
+    Tap,
+}
+
+impl TunMode {
+    /// Parses the NetworkManager `Device.Tun` `Mode` property.
+    pub(crate) fn from_nm_str(s: &str) -> Option<Self> {
+        match s {
+            "tun" => Some(Self::Tun),
+            "tap" => Some(Self::Tap),
+            _ => None,
+        }
+    }
 }
 
 /// A Wi-Fi device summary returned by
@@ -187,6 +212,10 @@ pub enum DeviceType {
     Bluetooth,
     /// VLAN (802.1Q) virtual device.
     Vlan,
+    /// TUN/TAP virtual device. See [`Device::tun_mode`] for the mode.
+    Tun,
+    /// WireGuard tunnel device.
+    WireGuard,
     /// Unknown or unsupported device type with raw code.
     ///
     /// Use the methods on `DeviceType` to query capabilities of unknown device types,
@@ -252,6 +281,8 @@ impl DeviceType {
             Self::Loopback => "loopback",
             Self::Bluetooth => "bluetooth",
             Self::Vlan => "vlan",
+            Self::Tun => "tun",
+            Self::WireGuard => "wireguard",
             Self::Other(code) => {
                 crate::types::device_type_registry::connection_type_for_code(*code)
                     .unwrap_or("generic")
@@ -269,6 +300,8 @@ impl DeviceType {
             Self::Loopback => 32,
             Self::Bluetooth => 5,
             Self::Vlan => 11,
+            Self::Tun => 16,
+            Self::WireGuard => 29,
             Self::Other(code) => *code,
         }
     }
@@ -380,6 +413,18 @@ impl Device {
     pub fn is_vlan(&self) -> bool {
         matches!(self.device_type, DeviceType::Vlan)
     }
+
+    /// Returns `true` if this is a TUN/TAP device.
+    #[must_use]
+    pub fn is_tun(&self) -> bool {
+        matches!(self.device_type, DeviceType::Tun)
+    }
+
+    /// Returns `true` if this is a WireGuard device.
+    #[must_use]
+    pub fn is_wireguard(&self) -> bool {
+        matches!(self.device_type, DeviceType::WireGuard)
+    }
 }
 
 impl Display for Device {
@@ -399,6 +444,8 @@ impl From<u32> for DeviceType {
             2 => DeviceType::Wifi,
             5 => DeviceType::Bluetooth,
             11 => DeviceType::Vlan,
+            16 => DeviceType::Tun,
+            29 => DeviceType::WireGuard,
             30 => DeviceType::WifiP2P,
             32 => DeviceType::Loopback,
             v => DeviceType::Other(v),
@@ -435,6 +482,8 @@ impl Display for DeviceType {
             DeviceType::Loopback => write!(f, "Loopback"),
             DeviceType::Bluetooth => write!(f, "Bluetooth"),
             DeviceType::Vlan => write!(f, "VLAN"),
+            DeviceType::Tun => write!(f, "TUN"),
+            DeviceType::WireGuard => write!(f, "WireGuard"),
             DeviceType::Other(v) => write!(
                 f,
                 "{}",

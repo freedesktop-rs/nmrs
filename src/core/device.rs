@@ -10,14 +10,14 @@ use zvariant::OwnedObjectPath;
 
 use crate::Result;
 use crate::api::models::{
-    BluetoothDevice, ConnectionError, Device, DeviceIdentity, DeviceState, WiredDevice,
+    BluetoothDevice, ConnectionError, Device, DeviceIdentity, DeviceState, TunMode, WiredDevice,
 };
 use crate::core::bluetooth::populate_bluez_info;
 use crate::core::connection::get_device_by_interface;
 use crate::core::state_wait::wait_for_wifi_device_ready;
 use crate::dbus::{
     NMAccessPointProxy, NMActiveConnectionProxy, NMBluetoothProxy, NMDeviceProxy, NMProxy,
-    NMWiredProxy, NMWirelessProxy,
+    NMTunProxy, NMWiredProxy, NMWirelessProxy,
 };
 use crate::types::constants::device_type;
 use crate::types::device_type_registry;
@@ -230,6 +230,18 @@ pub(crate) async fn list_devices(conn: &Connection) -> Result<Vec<Device>> {
             None
         };
 
+        let tun_mode = if raw_type == device_type::TUN {
+            async {
+                let tun = NMTunProxy::builder(conn).path(p.clone())?.build().await?;
+                tun.mode().await
+            }
+            .await
+            .ok()
+            .and_then(|m| TunMode::from_nm_str(&m))
+        } else {
+            None
+        };
+
         devices.push(Device {
             path: p.to_string(),
             interface,
@@ -243,6 +255,7 @@ pub(crate) async fn list_devices(conn: &Connection) -> Result<Vec<Device>> {
             ip6_address,
             frequency,
             speed_mbps,
+            tun_mode,
         });
     }
     Ok(devices)
