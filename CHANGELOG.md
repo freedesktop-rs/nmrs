@@ -5,6 +5,12 @@ All notable changes to the `nmrs` crate will be documented in this file.
 ## [Unreleased]
 ### Added
 
+- `DeviceType::Tun` (type 16) and `DeviceType::WireGuard` (type 29), with
+  `Device::is_tun()` / `Device::is_wireguard()`. TUN devices expose
+  `Device::tun_mode: Option<TunMode>`, read from
+  `org.freedesktop.NetworkManager.Device.Tun`; `None` for non-TUN devices,
+  unknown modes, or a failed read
+  ([#TBD](https://github.com/freedesktop-rs/nmrs/pull/TBD))
 - `SettingsPatch::remove` deletes individual `(section, key)` entries from a
   saved profile after the patch is merged, or removes the whole section when
   the key is empty. Removing `address-data`, `route-data`, or `dns-data` also
@@ -19,6 +25,9 @@ All notable changes to the `nmrs` crate will be documented in this file.
 
 ### Changed
 
+- Devices of type 16 and 29 are no longer reported as `DeviceType::Other(16)` /
+  `DeviceType::Other(29)`, they're `DeviceType::Tun` / `DeviceType::WireGuard`.
+  ([#TBD](https://github.com/freedesktop-rs/nmrs/pull/TBD))
 - Every saved-profile scan (finding a profile by name or SSID, forgetting
   connections and VPNs, listing VPNs) now goes through one helper that skips
   profiles the caller cannot read, such as those restricted to other users via
