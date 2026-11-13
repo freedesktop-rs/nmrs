@@ -128,6 +128,19 @@ pub struct WifiDevice {
     pub active_ssid: Option<String>,
     /// Operating frequency in MHz of the currently active AP, if any.
     pub active_frequency_mhz: Option<u32>,
+    /// Negotiated bitrate of the current link in Kbit/s, if connected.
+    ///
+    /// This is NetworkManager's `Device.Wireless.Bitrate`: the rate the
+    /// radio is using right now, which changes with signal conditions. It
+    /// is `None` when the device has no active access point or the driver
+    /// reports `0`.
+    ///
+    /// Prefer this over
+    /// [`AccessPoint::max_bitrate_kbps`](crate::AccessPoint::max_bitrate_kbps)
+    /// for a "link speed" readout. `max_bitrate_kbps` is the access point's
+    /// advertised ceiling, and NetworkManager reports it as `0` for 6 GHz
+    /// access points.
+    pub bitrate_kbps: Option<u32>,
 }
 
 /// A wired Ethernet device summary returned by

@@ -141,7 +141,7 @@
 //! before calling a D-Bus method directly via
 //! [`add_connection`](crate::NetworkManager::add_connection),
 //! [`add_and_activate_connection`](crate::NetworkManager::add_and_activate_connection),
-//! [`dbus_connection`](crate::NetworkManager::dbus_connection), or [`raw`](crate::raw).
+//! [`dbus_connection`](crate::NetworkManager::dbus_connection), or [`raw`].
 //!
 //! ## Raw D-Bus Access
 //!
@@ -319,7 +319,7 @@ mod util;
 /// lifecycle, and a full example.
 pub mod agent;
 
-/// Low-level D-Bus dependencies used by [`builders`](crate::builders).
+/// Low-level D-Bus dependencies used by [`builders`].
 ///
 /// Re-exports [`zbus`] and [`zvariant`] so advanced callers can construct
 /// proxies against [`NetworkManager::dbus_connection`](crate::NetworkManager::dbus_connection)
@@ -348,13 +348,13 @@ pub mod raw {
 ///   `build_bluetooth_connection`, and `build_vlan_connection`, which are
 ///   handy for one-shot construction.
 ///
-/// Most callers should prefer [`NetworkManager`](crate::NetworkManager)'s
+/// Most callers should prefer [`NetworkManager`]'s
 /// high-level methods such as [`connect`](crate::NetworkManager::connect)
 /// and [`connect_vpn`](crate::NetworkManager::connect_vpn). Use these
 /// builders only when you need to feed a raw settings dictionary to
 /// NetworkManager via [`add_connection`](crate::NetworkManager::add_connection),
 /// [`add_and_activate_connection`](crate::NetworkManager::add_and_activate_connection),
-/// [`dbus_connection`](crate::NetworkManager::dbus_connection), or [`raw`](crate::raw).
+/// [`dbus_connection`](crate::NetworkManager::dbus_connection), or [`raw`].
 ///
 /// # Example
 ///
@@ -376,8 +376,8 @@ pub mod builders {
 /// This module re-exports every public data type used by the crate.
 /// The same types are also re-exported at the crate root for convenience
 /// (so `nmrs::Device` and `nmrs::models::Device` refer to the same type),
-/// with the exceptions of [`NetworkManager`](crate::NetworkManager) and
-/// [`WifiScope`](crate::WifiScope), which live only at the crate root.
+/// with the exceptions of [`NetworkManager`] and
+/// [`WifiScope`], which live only at the crate root.
 ///
 /// # Core Data Types
 /// - [`Device`] — Network device representation

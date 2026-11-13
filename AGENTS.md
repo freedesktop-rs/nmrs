@@ -42,7 +42,9 @@ cargo fmt --all -- --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --lib --all-features --workspace
 cargo test --locked --doc --all-features --workspace
-cargo semver-checks check-release --release-type minor
+cargo semver-checks check-release --release-type minor --baseline-rev "$(git describe --tags --abbrev=0 --match 'nmrs-v*')"
+RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --all-features
+cargo +<rust-version> check --locked
 ```
 
 Unit and doc tests never touch NetworkManager. Integration tests are
@@ -146,11 +148,12 @@ code that encodes them.
 
 ## CI
 
-`ci.yml`: format, clippy, lib + doc tests, aarch64 cross build, and
-`cargo-semver-checks` on every push and PR. The `integration` job runs the
-two Docker harnesses on a self-hosted runner; for pull requests it waits
-on the `self-hosted-pr-integration` environment approval, so a pending
-integration job on a fork PR is not a failure.
+`ci.yml`: format, clippy, lib + doc tests, a library check on the MSRV,
+rustdoc with warnings denied, and `cargo-semver-checks` on every push and
+PR. No job installs system packages: the dependency tree is pure Rust. The
+`integration` job runs the two Docker harnesses on a self-hosted runner; for
+pull requests it waits on the `self-hosted-pr-integration` environment
+approval, so a pending integration job on a fork PR is not a failure.
 
 `review.yml` is the review bot. It runs when the `mel` label is added or
 when the maintainer mentions `@mel-the-caddie` on a PR. Do not try to

@@ -69,6 +69,8 @@ pub(crate) async fn list_wifi_devices(conn: &Connection) -> Result<Vec<WifiDevic
             _ => (false, None, None),
         };
 
+        let bitrate_kbps = link_bitrate(is_active, wifi.bitrate().await.ok());
+
         out.push(WifiDevice {
             path: p,
             interface,
@@ -81,10 +83,19 @@ pub(crate) async fn list_wifi_devices(conn: &Connection) -> Result<Vec<WifiDevic
             is_active,
             active_ssid,
             active_frequency_mhz,
+            bitrate_kbps,
         });
     }
 
     Ok(out)
+}
+
+/// Maps the raw `Device.Wireless.Bitrate` reading to a link bitrate.
+///
+/// NetworkManager keeps the property at `0` while disconnected, and a failed
+/// read must not be mistaken for a real rate, so both become `None`.
+fn link_bitrate(is_active: bool, raw_kbps: Option<u32>) -> Option<u32> {
+    raw_kbps.filter(|&kbps| is_active && kbps > 0)
 }
 
 /// Disable or re-enable a single Wi-Fi device.
@@ -134,4 +145,29 @@ pub(crate) async fn set_wifi_enabled_for_interface(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::link_bitrate;
+
+    #[test]
+    fn active_link_reports_its_bitrate() {
+        assert_eq!(link_bitrate(true, Some(2_401_900)), Some(2_401_900));
+    }
+
+    #[test]
+    fn zero_bitrate_is_not_a_rate() {
+        assert_eq!(link_bitrate(true, Some(0)), None);
+    }
+
+    #[test]
+    fn inactive_device_has_no_bitrate() {
+        assert_eq!(link_bitrate(false, Some(54_000)), None);
+    }
+
+    #[test]
+    fn failed_read_has_no_bitrate() {
+        assert_eq!(link_bitrate(true, None), None);
+    }
 }

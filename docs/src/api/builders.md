@@ -114,6 +114,16 @@ let settings = WireGuardBuilder::new("MyVPN")
 
 The `build()` method validates all fields and returns `Result<Settings, ConnectionError>`.
 
+### Importing a `.conf` file
+
+```rust
+let settings = WireGuardBuilder::from_conf_file("home.conf")?
+    .autoconnect(false)
+    .build()?;
+```
+
+`from_conf_file(path)` and `from_conf_str(content, name)` return a builder pre-populated from a wg-quick configuration. See the [WireGuard guide](../guide/vpn-wireguard.md#importing-a-conf-file) for the keys that are read.
+
 ### Validation
 
 | Check | Error |

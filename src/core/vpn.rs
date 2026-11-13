@@ -8,7 +8,6 @@
 
 use log::{debug, info, trace, warn};
 use std::collections::HashMap;
-use std::ops::ControlFlow;
 use zbus::Connection;
 use zvariant::OwnedObjectPath;
 
@@ -25,8 +24,8 @@ use crate::core::state_wait::wait_for_connection_activation;
 use crate::dbus::{NMActiveConnectionProxy, NMProxy};
 use crate::models::VpnConfiguration;
 use crate::util::utils::{
-    connection_settings_proxy, extract_connection_state_reason, for_each_readable_profile,
-    nm_proxy, read_profile_settings, settings_proxy,
+    ReadableProfiles, connection_settings_proxy, extract_connection_state_reason, nm_proxy,
+    read_profile_settings, settings_proxy,
 };
 use crate::util::validation::{
     validate_connection_name, validate_openvpn_config, validate_vpn_credentials,
@@ -395,13 +394,14 @@ pub(crate) async fn list_vpn_connections(conn: &Connection) -> Result<Vec<VpnCon
 
     let mut vpn_conns = Vec::new();
 
-    for_each_readable_profile::<(), _>(conn, async |_cpath, settings_map| {
+    let mut profiles = ReadableProfiles::list(conn).await?;
+    while let Some((_cpath, settings_map)) = profiles.next().await {
         let Some(kind) = detect_vpn_kind(&settings_map) else {
-            return Ok(ControlFlow::Continue(()));
+            continue;
         };
 
         let Some(uuid) = extract_uuid(&settings_map) else {
-            return Ok(ControlFlow::Continue(()));
+            continue;
         };
         let id = extract_id(&settings_map).unwrap_or_default();
 
@@ -429,10 +429,7 @@ pub(crate) async fn list_vpn_connections(conn: &Connection) -> Result<Vec<VpnCon
             service_type,
             kind,
         });
-
-        Ok(ControlFlow::Continue(()))
-    })
-    .await?;
+    }
 
     Ok(vpn_conns)
 }
@@ -704,16 +701,18 @@ pub(crate) async fn forget_vpn(conn: &Connection, name: &str) -> Result<()> {
         ),
     }
 
-    let deleted = for_each_readable_profile(conn, async |cpath, settings_map| {
+    let mut deleted = false;
+    let mut profiles = ReadableProfiles::list(conn).await?;
+    while let Some((cpath, settings_map)) = profiles.next().await {
         let id_ok = extract_id(&settings_map)
             .map(|id| id == name)
             .unwrap_or(false);
         let Some(vpn_kind) = detect_vpn_kind(&settings_map) else {
-            return Ok(ControlFlow::Continue(()));
+            continue;
         };
 
         if !id_ok {
-            return Ok(ControlFlow::Continue(()));
+            continue;
         }
 
         trace!("Found VPN connection, deleting: {name}");
@@ -721,7 +720,7 @@ pub(crate) async fn forget_vpn(conn: &Connection, name: &str) -> Result<()> {
             Ok(proxy) => proxy,
             Err(e) => {
                 trace!("skipping connection {} during delete: {e}", cpath.as_str());
-                return Ok(ControlFlow::Continue(()));
+                continue;
             }
         };
 
@@ -740,10 +739,9 @@ pub(crate) async fn forget_vpn(conn: &Connection, name: &str) -> Result<()> {
             warn!("Failed to remove nmrs cert directory for '{}': {}", name, e);
         }
 
-        Ok(ControlFlow::Break(()))
-    })
-    .await?
-    .is_some();
+        deleted = true;
+        break;
+    }
 
     if !deleted {
         debug!("No saved VPN connection found for '{name}'");

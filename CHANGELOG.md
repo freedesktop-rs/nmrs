@@ -3,14 +3,48 @@
 All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
-### Added
 
 - `DeviceType::Tun` (type 16) and `DeviceType::WireGuard` (type 29), with
   `Device::is_tun()` / `Device::is_wireguard()`. TUN devices expose
   `Device::tun_mode: Option<TunMode>`, read from
   `org.freedesktop.NetworkManager.Device.Tun`; `None` for non-TUN devices,
-  unknown modes, or a failed read
+  unknown modes, or a failed read.
   ([#TBD](https://github.com/freedesktop-rs/nmrs/pull/TBD))
+- `WifiDevice::bitrate_kbps` reports the negotiated bitrate of the current
+  Wi-Fi link from `Device.Wireless.Bitrate`. Until now the only rate exposed
+  was `AccessPoint::max_bitrate_kbps`, which NetworkManager reports as `0` for
+  6 GHz access points.
+  ([#606](https://github.com/freedesktop-rs/nmrs/pull/606))
+
+## [3.5.12] - 2026-11-11
+### Fixed
+
+- Futures from `list_vpn_connections`, `forget`, `forget_vpn`,
+  `has_saved_connection`, `get_saved_connection_path` and the Wi-Fi `connect`
+  methods are `Send` for every lifetime again, so they can be passed to
+  `tokio::spawn`. In 3.5.10 and 3.5.11 spawning them failed to compile with
+  "implementation of `Send` is not general enough", because the saved-profile
+  scan awaited an async closure.
+  ([#612](https://github.com/freedesktop-rs/nmrs/pull/612))
+
+## [3.5.11] - 2026-11-11
+### Added
+
+- `WireGuardBuilder::from_conf_file` and `WireGuardBuilder::from_conf_str`
+  pre-populate the builder from a WireGuard `.conf` file in the wg-quick
+  format: `PrivateKey`, `Address`, `DNS`, and `MTU` from `[Interface]`, and
+  `PublicKey`, `Endpoint`, `AllowedIPs`, `PresharedKey`, and
+  `PersistentKeepalive` from each `[Peer]`. Other wg-quick keys are skipped,
+  and search domains in `DNS` are dropped. A malformed line returns
+  `ConnectionError::InvalidInput` with its line number.
+  ([#611](https://github.com/freedesktop-rs/nmrs/pull/611))
+- `WireGuardBuilder::add_address` gives the interface more than one address,
+  so a profile can carry an IPv4 and an IPv6 address. `address` still sets a
+  single one. ([#611](https://github.com/freedesktop-rs/nmrs/pull/611))
+
+## [3.5.10] - 2026-11-11
+### Added
+
 - `SettingsPatch::remove` deletes individual `(section, key)` entries from a
   saved profile after the patch is merged, or removes the whole section when
   the key is empty. Removing `address-data`, `route-data`, or `dns-data` also
@@ -35,6 +69,27 @@ All notable changes to the `nmrs` crate will be documented in this file.
   `Settings.PermissionDenied` profile by hand-rolling the loop. Behaviour for
   readable profiles is unchanged.
   ([#597](https://github.com/freedesktop-rs/nmrs/pull/597))
+- Minimum dependency versions raised: `zvariant` 5.15.1
+  ([#580](https://github.com/freedesktop-rs/nmrs/pull/580)), `tokio` 1.54.0
+  ([#590](https://github.com/freedesktop-rs/nmrs/pull/590)), `log` 0.4.35
+  ([#592](https://github.com/freedesktop-rs/nmrs/pull/592)) and `uuid` 1.29.2
+  ([#591](https://github.com/freedesktop-rs/nmrs/pull/591),
+  [#596](https://github.com/freedesktop-rs/nmrs/pull/596),
+  [#599](https://github.com/freedesktop-rs/nmrs/pull/599)).
+- The repository is no longer a workspace: the crate moved from `nmrs/` to the
+  repository root. ([#587](https://github.com/freedesktop-rs/nmrs/pull/587))
+- CI checks the library on the declared MSRV and builds rustdoc with warnings
+  denied. The aarch64 build job and the system package installs are gone; the
+  dependency tree is pure Rust.
+  ([#607](https://github.com/freedesktop-rs/nmrs/pull/607))
+
+### Fixed
+
+- The docs for `NetworkManager::set_wireless_enabled` no longer call
+  `set_wifi_enabled` deprecated. They now describe `set_wireless_enabled` as
+  the global switch for every Wi-Fi radio and point to `set_wifi_enabled` for
+  a single interface.
+  ([#600](https://github.com/freedesktop-rs/nmrs/pull/600))
 
 ## [3.5.7] - 2026-10-17
 ### Added
@@ -719,7 +774,10 @@ present)` constructor; `RadioState::new` keeps existing behavior and defaults
 
 - EAP connections default to no certificates (advanced certificate management coming in future releases)
 
-[Unreleased]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.7...HEAD
+[Unreleased]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.12...HEAD
+[3.5.12]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.11...nmrs-v3.5.12
+[3.5.11]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.10...nmrs-v3.5.11
+[3.5.10]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.7...nmrs-v3.5.10
 [3.5.7]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.6...nmrs-v3.5.7
 [3.5.6]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.5...nmrs-v3.5.6
 [3.5.5]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.4...nmrs-v3.5.5

@@ -5,11 +5,13 @@
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::path::Path;
 use uuid::Uuid;
 use zvariant::Value;
 
 use super::connection_builder::{ConnectionBuilder, IpConfig};
 use crate::api::models::{ConnectionError, ConnectionOptions, WireGuardPeer};
+use crate::core::wireguard_conf;
 use crate::types::constants::secret_flags;
 
 /// Builder for WireGuard VPN connections.
@@ -42,7 +44,7 @@ pub struct WireGuardBuilder {
     inner: ConnectionBuilder,
     name: String,
     private_key: Option<String>,
-    address: Option<String>,
+    addresses: Vec<String>,
     peers: Vec<WireGuardPeer>,
     dns: Option<Vec<String>>,
     mtu: Option<u32>,
@@ -64,12 +66,109 @@ impl WireGuardBuilder {
             inner,
             name,
             private_key: None,
-            address: None,
+            addresses: Vec::new(),
             peers: Vec::new(),
             dns: None,
             mtu: None,
             uuid: None,
         }
+    }
+
+    /// Creates a builder pre-populated from a WireGuard `.conf` file on disk.
+    ///
+    /// Reads a file in the wg-quick format and pre-populates the builder. The
+    /// connection name defaults to the file stem (e.g. `"home"` for
+    /// `home.conf`). See [`from_conf_str`](Self::from_conf_str) for what is
+    /// read from the file.
+    ///
+    /// The caller can override any field before calling [`build()`](Self::build).
+    ///
+    /// # Errors
+    ///
+    /// - `ConnectionError::VpnFailed` if the file cannot be read
+    /// - Any error [`from_conf_str`](Self::from_conf_str) returns
+    pub fn from_conf_file(path: impl AsRef<Path>) -> Result<Self, ConnectionError> {
+        let path = path.as_ref();
+        let content = std::fs::read_to_string(path).map_err(|e| {
+            ConnectionError::VpnFailed(format!("failed to read {}: {e}", path.display()))
+        })?;
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("wireguard")
+            .to_string();
+        Self::from_conf_str(&content, name)
+    }
+
+    /// Creates a builder pre-populated from WireGuard `.conf` content.
+    ///
+    /// Reads `PrivateKey`, `Address`, `DNS`, and `MTU` from `[Interface]`, and
+    /// `PublicKey`, `Endpoint`, `AllowedIPs`, `PresharedKey`, and
+    /// `PersistentKeepalive` from every `[Peer]`. Section names and keys are
+    /// case-insensitive. Keys NetworkManager has no setting for, such as
+    /// `PostUp` or `Table`, are skipped.
+    ///
+    /// Every `Address` is kept, so a dual-stack file produces a dual-stack
+    /// profile. An address without a prefix gets `/32` (`/128` for IPv6), as
+    /// wg-quick assigns it.
+    ///
+    /// Two things differ from wg-quick, because of what a profile built here
+    /// can hold:
+    ///
+    /// - Search domains in `DNS` are dropped; only server addresses are kept.
+    /// - Every peer needs an `Endpoint`.
+    ///
+    /// A file with no `PrivateKey`, `Address`, or `[Peer]` still parses, so
+    /// the caller can supply the missing piece; [`build()`](Self::build)
+    /// reports whatever is still missing.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use nmrs::builders::WireGuardBuilder;
+    ///
+    /// let conf = "\
+    /// [Interface]
+    /// PrivateKey = YBk6X3pP8KjKz7+HFWzVHNqL3qTZq8hX9VxFQJ4zVmM=
+    /// Address = 10.0.0.2/24
+    /// DNS = 1.1.1.1
+    ///
+    /// [Peer]
+    /// PublicKey = HIgo9xNzJMWLKAShlKl6/bUT1VI9Q0SDBXGtLXkPFXc=
+    /// Endpoint = vpn.example.com:51820
+    /// AllowedIPs = 0.0.0.0/0
+    /// ";
+    ///
+    /// let settings = WireGuardBuilder::from_conf_str(conf, "home")?
+    ///     .autoconnect(false)
+    ///     .build()?;
+    /// # Ok::<(), nmrs::ConnectionError>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// - `ConnectionError::InvalidInput` if a line is malformed, naming the line
+    /// - `ConnectionError::InvalidPeers` if a `[Peer]` is missing `PublicKey`,
+    ///   `Endpoint`, or `AllowedIPs`
+    pub fn from_conf_str(content: &str, name: impl Into<String>) -> Result<Self, ConnectionError> {
+        let conf = wireguard_conf::parse(content)?;
+        let addresses = conf.interface_addresses();
+        let dns = conf.dns_servers();
+
+        let mut builder = Self::new(name).add_peers(conf.peers);
+        if let Some(key) = conf.private_key {
+            builder = builder.private_key(key);
+        }
+        for address in addresses {
+            builder = builder.add_address(address);
+        }
+        if !dns.is_empty() {
+            builder = builder.dns(dns);
+        }
+        if let Some(mtu) = conf.mtu {
+            builder = builder.mtu(mtu);
+        }
+        Ok(builder)
     }
 
     /// Sets the WireGuard private key.
@@ -83,6 +182,10 @@ impl WireGuardBuilder {
 
     /// Sets the VPN interface IP address with CIDR notation.
     ///
+    /// Replaces any address already set. Use
+    /// [`add_address`](Self::add_address) to give the interface more than
+    /// one, such as an IPv4 and an IPv6 address.
+    ///
     /// # Example
     ///
     /// ```rust
@@ -92,7 +195,26 @@ impl WireGuardBuilder {
     /// ```
     #[must_use]
     pub fn address(mut self, address: impl Into<String>) -> Self {
-        self.address = Some(address.into());
+        self.addresses = vec![address.into()];
+        self
+    }
+
+    /// Adds another interface IP address with CIDR notation.
+    ///
+    /// IPv4 and IPv6 addresses can be mixed. With both families present the
+    /// profile is dual-stack; a family with no address stays off.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use nmrs::builders::WireGuardBuilder;
+    /// let builder = WireGuardBuilder::new("MyVPN")
+    ///     .add_address("10.0.0.2/32")
+    ///     .add_address("fd00::2/128");
+    /// ```
+    #[must_use]
+    pub fn add_address(mut self, address: impl Into<String>) -> Self {
+        self.addresses.push(address.into());
         self
     }
 
@@ -196,9 +318,9 @@ impl WireGuardBuilder {
             .private_key
             .ok_or_else(|| ConnectionError::InvalidPrivateKey("Private key not set".into()))?;
 
-        let address = self
-            .address
-            .ok_or_else(|| ConnectionError::InvalidAddress("Address not set".into()))?;
+        if self.addresses.is_empty() {
+            return Err(ConnectionError::InvalidAddress("Address not set".into()));
+        }
 
         if self.peers.is_empty() {
             return Err(ConnectionError::InvalidPeers("No peers configured".into()));
@@ -207,8 +329,17 @@ impl WireGuardBuilder {
         // Validate private key
         validate_wireguard_key(&private_key, "Private key")?;
 
-        // Validate address
-        let (ip, prefix) = validate_address(&address)?;
+        // Validate addresses, split by family
+        let mut ipv4_addresses = Vec::new();
+        let mut ipv6_addresses = Vec::new();
+        for address in &self.addresses {
+            let (ip, prefix) = validate_address(address)?;
+            let config = IpConfig::new(ip.to_string(), prefix);
+            match ip {
+                IpAddr::V4(_) => ipv4_addresses.push(config),
+                IpAddr::V6(_) => ipv6_addresses.push(config),
+            }
+        }
 
         // Validate each peer
         for (i, peer) in self.peers.iter().enumerate() {
@@ -282,20 +413,18 @@ impl WireGuardBuilder {
 
         self.inner = self.inner.with_section("wireguard", wireguard);
 
-        match ip {
-            IpAddr::V4(ip) => {
-                self.inner = self
-                    .inner
-                    .ipv4_manual(vec![IpConfig::new(ip.to_string(), prefix)])
-                    .ipv6_ignore();
-            }
-            IpAddr::V6(ip) => {
-                self.inner = self
-                    .inner
-                    .ipv4_disabled()
-                    .ipv6_manual(vec![IpConfig::new(ip.to_string(), prefix)]);
-            }
-        }
+        // A family with no address stays off, as it did when the builder
+        // held a single address.
+        self.inner = if ipv4_addresses.is_empty() {
+            self.inner.ipv4_disabled()
+        } else {
+            self.inner.ipv4_manual(ipv4_addresses)
+        };
+        self.inner = if ipv6_addresses.is_empty() {
+            self.inner.ipv6_ignore()
+        } else {
+            self.inner.ipv6_manual(ipv6_addresses)
+        };
 
         if let Some(dns) = self.dns {
             let mut ipv4_dns = Vec::<Ipv4Addr>::new();
@@ -859,6 +988,217 @@ mod tests {
         assert_eq!(
             settings["ipv6"].get("address-data"),
             Some(&address_data("fd00::2", 64))
+        );
+    }
+
+    fn conf(interface: &str) -> String {
+        format!(
+            "[Interface]\n{interface}\n\
+             [Peer]\nPublicKey = {PUBLIC_KEY}\nEndpoint = vpn.example.com:51820\n\
+             AllowedIPs = 0.0.0.0/0, ::/0\nPersistentKeepalive = 25\n"
+        )
+    }
+
+    fn ipv4_dns(
+        settings: &HashMap<&'static str, HashMap<&'static str, Value<'static>>>,
+    ) -> Vec<Ipv4Addr> {
+        <Vec<u32>>::try_from(settings["ipv4"]["dns"].try_clone().unwrap())
+            .unwrap()
+            .into_iter()
+            .map(|raw| Ipv4Addr::from(raw.to_ne_bytes()))
+            .collect()
+    }
+
+    #[test]
+    fn from_conf_str_builds_the_profile_the_file_describes() {
+        let content = conf(&format!(
+            "PrivateKey = {PRIVATE_KEY}\nAddress = 10.0.0.2/24\nDNS = 10.2.0.1\nMTU = 1380"
+        ));
+
+        let settings = WireGuardBuilder::from_conf_str(&content, "home")
+            .unwrap()
+            .build()
+            .unwrap();
+
+        assert_eq!(settings["connection"].get("id"), Some(&Value::from("home")));
+        let wireguard = &settings["wireguard"];
+        assert_eq!(
+            wireguard.get("private-key"),
+            Some(&Value::from(PRIVATE_KEY))
+        );
+        assert_eq!(wireguard.get("mtu"), Some(&Value::from(1380u32)));
+        let Value::Array(peers) = &wireguard["peers"] else {
+            panic!("wireguard.peers must be an array");
+        };
+        let Value::Dict(peer) = peers.iter().next().unwrap() else {
+            panic!("each wireguard peer must be a dictionary");
+        };
+        assert_eq!(peers.iter().count(), 1);
+        assert_eq!(
+            peer.get::<Value, String>(&Value::from("endpoint"))
+                .unwrap()
+                .as_deref(),
+            Some("vpn.example.com:51820")
+        );
+        assert_eq!(
+            peer_string_array(peer, "allowed-ips"),
+            vec!["0.0.0.0/0".to_string(), "::/0".to_string()]
+        );
+        assert_eq!(
+            settings["ipv4"].get("address-data"),
+            Some(&address_data("10.0.0.2", 24))
+        );
+        assert_eq!(ipv4_dns(&settings), [Ipv4Addr::new(10, 2, 0, 1)]);
+    }
+
+    /// A provider's full-tunnel file lists an address per family and routes
+    /// `::/0` through the peer. Dropping the IPv6 address would leave IPv6
+    /// traffic outside the tunnel.
+    #[test]
+    fn from_conf_str_keeps_a_dual_stack_file_dual_stack() {
+        let content = conf(&format!(
+            "PrivateKey = {PRIVATE_KEY}\nAddress = 10.64.0.2/32, fc00:bbbb::2/128"
+        ));
+
+        let settings = WireGuardBuilder::from_conf_str(&content, "home")
+            .unwrap()
+            .build()
+            .unwrap();
+
+        assert_eq!(settings["ipv4"].get("method"), Some(&Value::from("manual")));
+        assert_eq!(
+            settings["ipv4"].get("address-data"),
+            Some(&address_data("10.64.0.2", 32))
+        );
+        assert_eq!(settings["ipv6"].get("method"), Some(&Value::from("manual")));
+        assert_eq!(
+            settings["ipv6"].get("address-data"),
+            Some(&address_data("fc00:bbbb::2", 128))
+        );
+    }
+
+    #[test]
+    fn from_conf_str_gives_a_bare_address_the_host_prefix_and_drops_search_domains() {
+        let content = conf(&format!(
+            "PrivateKey = {PRIVATE_KEY}\nAddress = 10.0.0.2\n\
+             DNS = corp.example.com, 10.2.0.1"
+        ));
+
+        let settings = WireGuardBuilder::from_conf_str(&content, "home")
+            .unwrap()
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            settings["ipv4"].get("address-data"),
+            Some(&address_data("10.0.0.2", 32))
+        );
+        assert_eq!(ipv4_dns(&settings), [Ipv4Addr::new(10, 2, 0, 1)]);
+    }
+
+    #[test]
+    fn add_address_builds_a_dual_stack_profile() {
+        let settings = WireGuardBuilder::new("TestVPN")
+            .private_key(PRIVATE_KEY)
+            .add_address("10.0.0.2/24")
+            .add_address("fd00::2/64")
+            .add_peer(create_test_peer())
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            settings["ipv4"].get("address-data"),
+            Some(&address_data("10.0.0.2", 24))
+        );
+        assert_eq!(settings["ipv6"].get("method"), Some(&Value::from("manual")));
+        assert_eq!(
+            settings["ipv6"].get("address-data"),
+            Some(&address_data("fd00::2", 64))
+        );
+    }
+
+    #[test]
+    fn address_replaces_addresses_already_set() {
+        let settings = WireGuardBuilder::new("TestVPN")
+            .private_key(PRIVATE_KEY)
+            .add_address("10.0.0.2/24")
+            .add_address("fd00::2/64")
+            .address("10.9.9.9/32")
+            .add_peer(create_test_peer())
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            settings["ipv4"].get("address-data"),
+            Some(&address_data("10.9.9.9", 32))
+        );
+        assert_eq!(settings["ipv6"].get("method"), Some(&Value::from("ignore")));
+    }
+
+    #[test]
+    fn from_conf_str_leaves_a_missing_private_key_to_the_caller() {
+        let content = conf("Address = 10.0.0.2/24");
+
+        let missing = WireGuardBuilder::from_conf_str(&content, "home")
+            .unwrap()
+            .build();
+        let supplied = WireGuardBuilder::from_conf_str(&content, "home")
+            .unwrap()
+            .private_key(PRIVATE_KEY)
+            .build();
+
+        assert!(matches!(
+            missing,
+            Err(ConnectionError::InvalidPrivateKey(_))
+        ));
+        assert!(supplied.is_ok());
+    }
+
+    #[test]
+    fn from_conf_str_reports_the_malformed_line() {
+        let content = conf(&format!("PrivateKey = {PRIVATE_KEY}\nAddress 10.0.0.2/24"));
+
+        let error = WireGuardBuilder::from_conf_str(&content, "home").err();
+
+        assert!(matches!(
+            error,
+            Some(ConnectionError::InvalidInput { reason, .. }) if reason.starts_with("line 3:")
+        ));
+    }
+
+    #[test]
+    fn from_conf_file_names_the_connection_after_the_file() {
+        let dir = std::env::temp_dir().join(format!("nmrs-wg-conf-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("office.conf");
+        std::fs::write(
+            &path,
+            conf(&format!(
+                "PrivateKey = {PRIVATE_KEY}\nAddress = 10.0.0.2/24"
+            )),
+        )
+        .unwrap();
+
+        let settings = WireGuardBuilder::from_conf_file(&path)
+            .unwrap()
+            .build()
+            .unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        assert_eq!(
+            settings["connection"].get("id"),
+            Some(&Value::from("office"))
+        );
+    }
+
+    #[test]
+    fn from_conf_file_reports_an_unreadable_file() {
+        let path = std::env::temp_dir().join(format!("nmrs-wg-missing-{}.conf", Uuid::new_v4()));
+
+        let error = WireGuardBuilder::from_conf_file(&path).err();
+
+        assert!(
+            matches!(error, Some(ConnectionError::VpnFailed(message)) if message.contains("failed to read"))
         );
     }
 }

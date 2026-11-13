@@ -128,6 +128,42 @@ let split_tunnel = WireGuardPeer::new(
 | `["10.0.0.0/8"]` | Split tunnel — only 10.x.x.x traffic |
 | `["192.168.1.0/24"]` | Split tunnel — only one subnet |
 
+## Importing a `.conf` File
+
+`WireGuardBuilder::from_conf_file` reads a WireGuard configuration in the wg-quick format, the kind a VPN provider gives you to download. The connection is named after the file, so `home.conf` becomes `home`.
+
+```rust
+use nmrs::builders::WireGuardBuilder;
+use nmrs::NetworkManager;
+
+#[tokio::main]
+async fn main() -> nmrs::Result<()> {
+    let nm = NetworkManager::new().await?;
+
+    let settings = WireGuardBuilder::from_conf_file("home.conf")?
+        .autoconnect(false)
+        .build()?;
+
+    nm.add_connection(settings).await?;
+
+    Ok(())
+}
+```
+
+Use `WireGuardBuilder::from_conf_str(content, name)` when the configuration does not come from a file. Either way you get a builder back, so any field can be overridden before `build()`.
+
+| Section | Keys read |
+|---------|-----------|
+| `[Interface]` | `PrivateKey`, `Address`, `DNS`, `MTU` |
+| `[Peer]` (repeatable) | `PublicKey`, `Endpoint`, `AllowedIPs`, `PresharedKey`, `PersistentKeepalive` |
+
+Other wg-quick keys, such as `PostUp`, `Table`, or `ListenPort`, are skipped. Every `Address` is kept, so a file with an IPv4 and an IPv6 address produces a dual-stack profile; an address without a prefix gets `/32` (`/128` for IPv6). Two things differ from wg-quick:
+
+- Search domains in `DNS` are dropped; only server addresses are kept.
+- Every peer needs an `Endpoint`.
+
+A malformed line returns `InvalidInput` with the line number. A `[Peer]` without `PublicKey`, `Endpoint`, or `AllowedIPs` returns `InvalidPeers`.
+
 ## Validation
 
 nmrs validates all WireGuard parameters before sending them to NetworkManager:

@@ -39,13 +39,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            pkg-config \
-            libdbus-1-dev
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -68,13 +61,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            pkg-config \
-            libdbus-1-dev
-
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: actions/cache@v6
@@ -86,9 +72,6 @@ jobs:
           key: ${{ runner.os }}-test-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-test-
-
-      - name: Build release artifact
-        run: cargo build --locked --release
 
       - name: Run unit tests
         run: cargo test --locked --lib --all-features --workspace
@@ -217,41 +200,57 @@ jobs:
         with:
           shared-key: semver-checks
 
+      # The baseline is the latest release tag, not the latest crates.io
+      # version: a yanked release cannot be downloaded as a baseline, and the
+      # job failed on every run after 3.5.11 was yanked.
       - name: Check semver compatibility
-        run: cargo semver-checks check-release --release-type minor
+        run: |
+          baseline="$(git describe --tags --abbrev=0 --match 'nmrs-v*')"
+          echo "Baseline: ${baseline}"
+          cargo semver-checks check-release --release-type minor --baseline-rev "${baseline}"
 
-  build:
-    name: Build (aarch64-unknown-linux-gnu)
+  msrv:
+    name: Minimum Supported Rust Version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install dependencies
+      - name: Read rust-version from Cargo.toml
+        id: msrv
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            pkg-config \
-            libdbus-1-dev
+          version="$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)"
+          if [[ -z "${version}" ]]; then
+            echo "Cargo.toml has no rust-version" >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
-      - name: Install cross-compilation tools
-        run: sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: msrv
+
+      # rust-toolchain.toml pins stable, so the toolchain is named explicitly.
+      # Only the library is checked: dev-dependencies are free to need a newer compiler.
+      - name: Check the library on the MSRV
+        run: cargo +${{ steps.msrv.outputs.version }} check --locked
+
+  rustdoc:
+    name: Rustdoc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-unknown-linux-gnu
 
-      - uses: actions/cache@v6
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-build-aarch64-unknown-linux-gnu-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-build-aarch64-unknown-linux-gnu-
+          shared-key: rustdoc
 
-      - name: Build nmrs
-        run: cargo build --locked --release --target aarch64-unknown-linux-gnu
+      - name: Build API docs with warnings denied
+        run: cargo doc --locked --no-deps --all-features
         env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          PKG_CONFIG_ALLOW_CROSS: 1
+          RUSTDOCFLAGS: -D warnings
