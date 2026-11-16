@@ -16,6 +16,14 @@ All notable changes to the `nmrs` crate will be documented in this file.
   not `Other(16)` and `Other(29)`. Code that matches on those `Other` values
   needs updating. ([#624](https://github.com/freedesktop-rs/nmrs/pull/624))
 
+### Fixed
+
+- `connect` and `connect_to_bssid` no longer fail with `NotFound` when
+  switching from another network whose connection pruned the target from the
+  access point list. The target is looked up first, and when it is missing the
+  scan now waits for `LastScan` to change instead of a fixed 2 seconds.
+  ([#625](https://github.com/freedesktop-rs/nmrs/pull/625))
+
 ## [3.5.12] - 2026-11-11
 ### Fixed
 
