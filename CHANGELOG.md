@@ -4,14 +4,17 @@ All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
 
-- `DeviceType::Tun` and `DeviceType::WireGuard` replace raw codes 16/29,
-  adding `is_tun()` / `is_wireguard()` and `Device::tun_mode` reading
+### Added
+
+- `DeviceType::Tun` and `DeviceType::WireGuard`, with `Device::is_tun()` and
+  `Device::is_wireguard()`. `Device::tun_mode` tells TUN from TAP.
   ([#624](https://github.com/freedesktop-rs/nmrs/pull/624))
-- `WifiDevice::bitrate_kbps` reports the negotiated bitrate of the current
-  Wi-Fi link from `Device.Wireless.Bitrate`. Until now the only rate exposed
-  was `AccessPoint::max_bitrate_kbps`, which NetworkManager reports as `0` for
-  6 GHz access points.
-  ([#606](https://github.com/freedesktop-rs/nmrs/pull/606))
+
+### Changed
+
+- Device types 16 and 29 are now `DeviceType::Tun` and `DeviceType::WireGuard`,
+  not `Other(16)` and `Other(29)`. Code that matches on those `Other` values
+  needs updating. ([#624](https://github.com/freedesktop-rs/nmrs/pull/624))
 
 ## [3.5.12] - 2026-11-11
 ### Fixed
