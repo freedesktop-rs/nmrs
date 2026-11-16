@@ -22,10 +22,11 @@ pub struct Device {
     pub ip6_address: Option<String>,
     pub frequency: Option<u32>,       // active Wi-Fi frequency in MHz
     pub speed_mbps: Option<u32>,      // Ethernet link speed in Mb/s
+    pub tun_mode: Option<TunMode>,    // TUN devices only
 }
 ```
 
-Methods: `is_wireless()`, `is_wired()`, `is_bluetooth()`, `is_loopback()`, `is_vlan()`
+Methods: `is_wireless()`, `is_wired()`, `is_bluetooth()`, `is_loopback()`, `is_vlan()`, `is_tun()`, `is_wireguard()`
 
 ### DeviceIdentity
 
@@ -46,11 +47,23 @@ pub enum DeviceType {
     Loopback,
     Bluetooth,
     Vlan,
+    Tun,
+    WireGuard,
     Other(u32),
 }
 ```
 
 Methods: `supports_scanning()`, `requires_specific_object()`, `has_global_enabled_state()`, `connection_type_str()`, `to_code()`
+
+### TunMode
+
+```rust
+#[non_exhaustive]
+pub enum TunMode {
+    Tun,
+    Tap,
+}
+```
 
 ### DeviceState
 

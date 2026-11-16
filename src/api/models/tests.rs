@@ -57,9 +57,7 @@ fn device_type_from_u32_registry_types() {
     // These still fall through to Other since they're only in the registry
     assert_eq!(DeviceType::from(12), DeviceType::Other(12));
     assert_eq!(DeviceType::from(13), DeviceType::Other(13));
-    assert_eq!(DeviceType::from(16), DeviceType::Other(16));
     assert_eq!(DeviceType::from(20), DeviceType::Other(20));
-    assert_eq!(DeviceType::from(29), DeviceType::Other(29));
 }
 
 #[test]
@@ -78,9 +76,9 @@ fn device_type_display_registry() {
     assert_eq!(format!("{}", DeviceType::Other(13)), "Bridge");
     assert_eq!(format!("{}", DeviceType::Other(12)), "Bond");
     assert_eq!(format!("{}", DeviceType::Other(11)), "VLAN");
-    assert_eq!(format!("{}", DeviceType::Other(16)), "TUN");
+    assert_eq!(format!("{}", DeviceType::Tun), "TUN");
     assert_eq!(format!("{}", DeviceType::Other(20)), "Veth");
-    assert_eq!(format!("{}", DeviceType::Other(29)), "WireGuard");
+    assert_eq!(format!("{}", DeviceType::WireGuard), "WireGuard");
 }
 
 #[test]
@@ -95,7 +93,7 @@ fn device_type_supports_scanning() {
 fn device_type_supports_scanning_registry() {
     assert!(DeviceType::Other(30).supports_scanning());
     assert!(!DeviceType::Other(13).supports_scanning());
-    assert!(!DeviceType::Other(29).supports_scanning());
+    assert!(!DeviceType::WireGuard.supports_scanning());
 }
 
 #[test]
@@ -110,7 +108,7 @@ fn device_type_requires_specific_object() {
 fn device_type_requires_specific_object_registry() {
     assert!(DeviceType::Other(2).requires_specific_object());
     assert!(!DeviceType::Other(1).requires_specific_object());
-    assert!(!DeviceType::Other(29).requires_specific_object());
+    assert!(!DeviceType::WireGuard.requires_specific_object());
 }
 
 #[test]
@@ -145,7 +143,7 @@ fn device_type_connection_type_str_registry() {
         DeviceType::Other(20).connection_type_str(),
         "802-3-ethernet"
     );
-    assert_eq!(DeviceType::Other(29).connection_type_str(), "wireguard");
+    assert_eq!(DeviceType::WireGuard.connection_type_str(), "wireguard");
 }
 
 #[test]
@@ -153,9 +151,9 @@ fn device_type_to_code_registry() {
     assert_eq!(DeviceType::Other(11).to_code(), 11);
     assert_eq!(DeviceType::Other(12).to_code(), 12);
     assert_eq!(DeviceType::Other(13).to_code(), 13);
-    assert_eq!(DeviceType::Other(16).to_code(), 16);
+    assert_eq!(DeviceType::Tun.to_code(), 16);
     assert_eq!(DeviceType::Other(20).to_code(), 20);
-    assert_eq!(DeviceType::Other(29).to_code(), 29);
+    assert_eq!(DeviceType::WireGuard.to_code(), 29);
 }
 
 #[test]
@@ -687,6 +685,7 @@ fn device_with_type(device_type: DeviceType) -> Device {
         ip6_address: None,
         frequency: None,
         speed_mbps: None,
+        tun_mode: None,
     }
 }
 
@@ -1551,4 +1550,36 @@ fn credential_models_redact_debug_output() {
         password_flags: VpnSecretFlags::default(),
     };
     assert_debug_redacts(&vpn_type, &["data-secret", "vpn-secret"]);
+}
+
+#[test]
+fn device_type_connection_type_str_tun() {
+    assert_eq!(DeviceType::Tun.connection_type_str(), "tun");
+}
+
+#[test]
+fn device_type_tun_wireguard_code_round_trip() {
+    assert_eq!(DeviceType::from(16), DeviceType::Tun);
+    assert_eq!(DeviceType::from(29), DeviceType::WireGuard);
+    for code in [16, 29] {
+        assert_eq!(DeviceType::from(code).to_code(), code);
+    }
+}
+
+#[test]
+fn device_is_tun_and_is_wireguard() {
+    let tun = device_with_type(DeviceType::Tun);
+    let wg = device_with_type(DeviceType::WireGuard);
+    assert!(tun.is_tun() && !tun.is_wireguard());
+    assert!(wg.is_wireguard() && !wg.is_tun());
+    assert!(!device_with_type(DeviceType::Ethernet).is_tun());
+}
+
+#[test]
+fn tun_mode_from_nm_str() {
+    assert_eq!(TunMode::from_nm_str("tun"), Some(TunMode::Tun));
+    assert_eq!(TunMode::from_nm_str("tap"), Some(TunMode::Tap));
+    assert_eq!(TunMode::from_nm_str(""), None);
+    assert_eq!(TunMode::from_nm_str("TUN"), None);
+    assert_ne!(TunMode::Tun, TunMode::Tap);
 }

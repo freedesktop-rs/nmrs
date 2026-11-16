@@ -12,6 +12,7 @@ mod device;
 mod main_nm;
 mod settings;
 mod settings_connection;
+mod tun;
 mod wired;
 mod wireless;
 
@@ -24,5 +25,6 @@ pub(crate) use device::NMDeviceProxy;
 pub(crate) use main_nm::NMProxy;
 pub(crate) use settings::NMSettingsProxy;
 pub(crate) use settings_connection::NMSettingsConnectionProxy;
+pub(crate) use tun::NMTunProxy;
 pub(crate) use wired::NMWiredProxy;
 pub(crate) use wireless::NMWirelessProxy;

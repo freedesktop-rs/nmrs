@@ -446,7 +446,7 @@ pub use api::models::{
     NetworkEventStream, NetworkInfo, NetworkSnapshot, OpenVpnAuthType, OpenVpnCompression,
     OpenVpnConfig, OpenVpnConnectionType, OpenVpnProxy, Phase2, RadioState, SavedConnection,
     SavedConnectionBrief, SavedVpnSummary, SecurityFeatures, SettingsChange, SettingsEventStream,
-    SettingsPatch, SettingsSummary, StateReason, TimeoutConfig, VlanConfig, VpnConfig,
+    SettingsPatch, SettingsSummary, StateReason, TimeoutConfig, TunMode, VlanConfig, VpnConfig,
     VpnConfiguration, VpnConnection, VpnConnectionInfo, VpnCredentials, VpnDetails, VpnKind,
     VpnRoute, VpnSecretFlags, VpnType, WifiDevice, WifiKeyMgmt, WifiNetworkGroup, WifiSecurity,
     WifiSecuritySummary, WireGuardConfig, WireGuardPeer, WiredDevice,
