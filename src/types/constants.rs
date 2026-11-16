@@ -72,11 +72,7 @@ pub mod timeouts {
     /// Used after enabling Wi-Fi to wait for the hardware to initialize.
     const WIFI_READY_TIMEOUT_SECS: u64 = 60;
 
-    /// Time to wait after requesting a scan before checking results (2 seconds).
-    ///
-    /// While we could use signals for scan completion, a short delay is
-    /// sufficient for now, and simpler for most use cases.
-    const SCAN_WAIT_SECS: u64 = 2;
+    const SCAN_TIMEOUT_SECS: u64 = 10;
 
     /// Brief delay after state transitions to allow NetworkManager to stabilize.
     const STABILIZATION_DELAY_MS: u64 = 100;
@@ -86,9 +82,8 @@ pub mod timeouts {
         Duration::from_secs(WIFI_READY_TIMEOUT_SECS)
     }
 
-    /// Returns the scan wait duration.
-    pub fn scan_wait() -> Duration {
-        Duration::from_secs(SCAN_WAIT_SECS)
+    pub fn scan_timeout() -> Duration {
+        Duration::from_secs(SCAN_TIMEOUT_SECS)
     }
 
     /// Returns a brief stabilization delay.

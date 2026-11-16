@@ -1,6 +1,9 @@
+use futures::{FutureExt, Stream, StreamExt, select, stream};
 use futures_timer::Delay;
 use log::{debug, error, info, trace, warn};
 use std::collections::HashMap;
+use std::future::ready;
+use std::time::Duration;
 use zbus::Connection;
 use zvariant::OwnedObjectPath;
 
@@ -93,7 +96,7 @@ pub(crate) async fn connect(
         trace!("Not currently connected to any network");
     }
 
-    let specific_object = scan_and_resolve_ap(conn, &wifi, ssid).await?;
+    let specific_object = find_or_scan(|| find_ap(conn, &wifi, ssid), scan_and_wait(&wifi)).await?;
     let creds = upgrade_security_for_ap(conn, &specific_object, creds).await;
 
     match decision {
@@ -752,13 +755,11 @@ pub(crate) async fn connect_to_bssid(
                 .build()
                 .await?;
 
-            match wifi.request_scan(HashMap::new()).await {
-                Ok(_) => trace!("Scan requested successfully"),
-                Err(e) => warn!("Scan request failed: {e}"),
-            }
-            futures_timer::Delay::new(timeouts::scan_wait()).await;
-
-            let specific_object = find_ap_by_bssid(conn, &wifi, ssid, target_bssid).await?;
+            let specific_object = find_or_scan(
+                || find_ap_by_bssid(conn, &wifi, ssid, target_bssid),
+                scan_and_wait(&wifi),
+            )
+            .await?;
             let creds = upgrade_security_for_ap(conn, &specific_object, creds).await;
 
             match decision {
@@ -1026,29 +1027,46 @@ async fn build_and_activate_new(
     Ok(())
 }
 
-/// Triggers a Wi-Fi scan and finds the target access point.
-///
-/// Requests a scan, waits briefly for results, then searches for an
-/// access point matching the target SSID. The wait time is shorter than
-/// polling-based approaches since we just need the scan to populate
-/// initial results.
-async fn scan_and_resolve_ap(
-    conn: &Connection,
-    wifi: &NMWirelessProxy<'_>,
-    ssid: &str,
-) -> Result<OwnedObjectPath> {
-    match wifi.request_scan(HashMap::new()).await {
-        Ok(_) => trace!("Scan requested successfully"),
-        Err(e) => warn!("Scan request failed: {e}"),
+async fn find_or_scan<Found>(
+    find: impl Fn() -> Found,
+    scan: impl Future<Output = ()>,
+) -> Result<OwnedObjectPath>
+where
+    Found: Future<Output = Result<OwnedObjectPath>>,
+{
+    if let Ok(access_point) = find().await {
+        return Ok(access_point);
     }
+    scan.await;
+    find().await
+}
 
-    // Brief wait for scan results to populate
-    Delay::new(timeouts::scan_wait()).await;
-    trace!("Scan wait complete");
+async fn scan_and_wait(wifi: &NMWirelessProxy<'_>) {
+    let changes = wifi.receive_last_scan_changed().await;
+    let last_scans = stream::unfold(changes, |mut changes| async move {
+        let change = changes.next().await?;
+        Some((change.get().await.ok(), changes))
+    })
+    .filter_map(ready)
+    .boxed();
+    let previous = wifi.last_scan().await.unwrap_or_default();
 
-    let ap = find_ap(conn, wifi, ssid).await?;
-    trace!("Matched target SSID '{ssid}'");
-    Ok(ap)
+    if let Err(e) = wifi.request_scan(HashMap::new()).await {
+        warn!("Scan request failed: {e}");
+    } else if !wait_for_new_scan(last_scans, previous, timeouts::scan_timeout()).await {
+        warn!("Scan did not complete in time");
+    }
+}
+
+async fn wait_for_new_scan(
+    last_scans: impl Stream<Item = i64>,
+    previous: i64,
+    timeout: Duration,
+) -> bool {
+    select! {
+        completed = last_scans.any(|scan| ready(scan != previous)).fuse() => completed,
+        _ = Delay::new(timeout).fuse() => false,
+    }
 }
 
 /// Decides whether to use a saved connection or create a fresh one.
@@ -1495,5 +1513,60 @@ mod tests {
                 "only a non-empty WpaPsk should be rewritten: {creds:?}"
             );
         }
+    }
+
+    #[test]
+    fn scan_wait_ends_when_last_scan_changes() {
+        let last_scans = futures::stream::iter([100, 250]);
+
+        let completed =
+            futures::executor::block_on(wait_for_new_scan(last_scans, 100, Duration::from_secs(5)));
+
+        assert!(completed);
+    }
+
+    #[test]
+    fn scan_wait_ignores_the_previous_scan_until_timeout() {
+        let last_scans = futures::stream::iter([100]).chain(futures::stream::pending());
+
+        let completed = futures::executor::block_on(wait_for_new_scan(
+            last_scans,
+            100,
+            Duration::from_millis(10),
+        ));
+
+        assert!(!completed);
+    }
+
+    fn access_point() -> OwnedObjectPath {
+        OwnedObjectPath::try_from("/org/freedesktop/NetworkManager/AccessPoint/1")
+            .expect("valid object path")
+    }
+
+    #[test]
+    fn visible_access_point_skips_the_scan() {
+        let found =
+            futures::executor::block_on(find_or_scan(|| async { Ok(access_point()) }, async {
+                panic!("scanned although the access point was visible");
+            }));
+
+        assert_eq!(found.ok(), Some(access_point()));
+    }
+
+    #[test]
+    fn missing_access_point_is_found_after_a_scan() {
+        let scanned = &std::cell::Cell::new(false);
+
+        let found = futures::executor::block_on(find_or_scan(
+            move || async move {
+                scanned
+                    .get()
+                    .then(access_point)
+                    .ok_or(ConnectionError::NotFound)
+            },
+            async { scanned.set(true) },
+        ));
+
+        assert_eq!(found.ok(), Some(access_point()));
     }
 }
