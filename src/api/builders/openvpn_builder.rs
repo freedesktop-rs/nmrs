@@ -561,6 +561,7 @@ impl OpenVpnBuilder {
     }
 
     /// When true, the profile may become the default IPv4 route.
+    /// When false, `ipv4.never-default = true` is written (split tunnel).
     #[must_use]
     pub fn redirect_gateway(mut self, redirect: bool) -> Self {
         self.redirect_gateway = redirect;

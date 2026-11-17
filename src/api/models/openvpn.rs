@@ -150,7 +150,9 @@ pub struct OpenVpnConfig {
     pub crl_verify_dir: Option<String>,
     /// When true, this profile may become the default route (full tunnel / `redirect-gateway`).
     ///
-    /// Maps to `ipv4.never-default = false` in NetworkManager when set.
+    /// Maps to `ipv4.never-default = false` when true. When false, writes
+    /// `ipv4.never-default = true`, so only pushed or configured routes use the
+    /// tunnel, even if the server pushes `redirect-gateway`.
     pub redirect_gateway: bool,
     /// Static IPv4 routes for split tunneling (`ipv4.route-data`).
     pub routes: Vec<VpnRoute>,
@@ -453,6 +455,7 @@ impl OpenVpnConfig {
     }
 
     /// When true, the connection may become the default IPv4 route (full tunnel).
+    /// When false, `ipv4.never-default = true` is written (split tunnel).
     #[must_use]
     pub fn with_redirect_gateway(mut self, redirect: bool) -> Self {
         self.redirect_gateway = redirect;
