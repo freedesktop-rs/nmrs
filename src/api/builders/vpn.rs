@@ -350,9 +350,7 @@ pub fn build_openvpn_connection(
 
     let mut ipv4: HashMap<&'static str, Value<'static>> = HashMap::new();
     ipv4.insert("method", Value::from("auto"));
-    if config.redirect_gateway {
-        ipv4.insert("never-default", Value::from(false));
-    }
+    ipv4.insert("never-default", Value::from(!config.redirect_gateway));
     if !config.routes.is_empty() {
         let route_data: Vec<HashMap<String, Value<'static>>> = config
             .routes
@@ -1407,5 +1405,18 @@ mod tests {
         let settings = build_openvpn_connection(&config, &opts).unwrap();
         let ipv4 = settings.get("ipv4").unwrap();
         assert_eq!(ipv4.get("never-default"), Some(&Value::from(false)));
+    }
+
+    #[test]
+    fn openvpn_without_redirect_gateway_is_never_default() {
+        let opts = create_test_options();
+        for config in [
+            create_openvpn_config(),
+            create_openvpn_config().with_redirect_gateway(false),
+        ] {
+            let settings = build_openvpn_connection(&config, &opts).unwrap();
+            let ipv4 = settings.get("ipv4").unwrap();
+            assert_eq!(ipv4.get("never-default"), Some(&Value::from(true)));
+        }
     }
 }

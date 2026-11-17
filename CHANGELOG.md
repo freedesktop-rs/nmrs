@@ -3,7 +3,6 @@
 All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
-
 ### Added
 
 - `DeviceType::Tun` and `DeviceType::WireGuard`, with `Device::is_tun()` and
@@ -15,6 +14,12 @@ All notable changes to the `nmrs` crate will be documented in this file.
 - Device types 16 and 29 are now `DeviceType::Tun` and `DeviceType::WireGuard`,
   not `Other(16)` and `Other(29)`. Code that matches on those `Other` values
   needs updating. ([#624](https://github.com/freedesktop-rs/nmrs/pull/624))
+
+### Fixed
+
+- OpenVPN profiles without the `redirect_gateway` setting (including imported `.ovpn`
+  files missing that directive) now automatically configure `ipv4.never-default = true`
+  ([#PR](https://github.com/freedesktop-rs/nmrs/pull/PR))
 
 ## [3.5.12] - 2026-11-11
 ### Fixed
