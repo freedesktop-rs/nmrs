@@ -485,7 +485,7 @@ dependencies = [
 
 [[package]]
 name = "nmrs"
-version = "3.5.12"
+version = "3.5.13"
 dependencies = [
  "base64",
  "bitflags",

@@ -3,6 +3,8 @@
 All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
+
+## [3.5.13] - 2026-11-18
 ### Added
 
 - `DeviceType::Tun` and `DeviceType::WireGuard`, with `Device::is_tun()` and
@@ -19,7 +21,7 @@ All notable changes to the `nmrs` crate will be documented in this file.
 
 - OpenVPN profiles without the `redirect_gateway` setting (including imported `.ovpn`
   files missing that directive) now automatically configure `ipv4.never-default = true`
-  ([#PR](https://github.com/freedesktop-rs/nmrs/pull/PR))
+  ([#627](https://github.com/freedesktop-rs/nmrs/pull/627))
 
 ## [3.5.12] - 2026-11-11
 ### Fixed
@@ -776,7 +778,8 @@ present)` constructor; `RadioState::new` keeps existing behavior and defaults
 
 - EAP connections default to no certificates (advanced certificate management coming in future releases)
 
-[Unreleased]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.12...HEAD
+[Unreleased]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.13...HEAD
+[3.5.13]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.12...nmrs-v3.5.13
 [3.5.12]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.11...nmrs-v3.5.12
 [3.5.11]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.10...nmrs-v3.5.11
 [3.5.10]: https://github.com/freedesktop-rs/nmrs/compare/nmrs-v3.5.7...nmrs-v3.5.10
