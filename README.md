@@ -1,4 +1,4 @@
-# <p align="center"> nmrs 🦀
+<h1 align="center">nmrs <img src="https://raw.githubusercontent.com/freedesktop-rs/nmrs/master/assets/nmrs.svg" alt="" height="36" align="center"></h1>
 
 [![Crates.io](https://img.shields.io/crates/v/nmrs)](https://crates.io/crates/nmrs)
 [![Crates.io Downloads](https://img.shields.io/crates/d/nmrs)](https://crates.io/crates/nmrs)
