@@ -15,11 +15,4 @@ RUN apt-get update && apt-get install -y \
     wpasupplicant \
     && rm -rf /var/lib/apt/lists/*
 
-COPY Cargo.toml Cargo.lock ./
-COPY src ./src
-COPY examples ./examples
-COPY tests ./tests
-
-RUN cargo build --locked --release && cargo build --locked
-
 CMD ["/bin/bash"]
