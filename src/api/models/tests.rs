@@ -37,6 +37,7 @@ fn device_type_code_round_trips_all_variants() {
         (2, DeviceType::Wifi),
         (5, DeviceType::Bluetooth),
         (11, DeviceType::Vlan),
+        (13, DeviceType::Bridge),
         (30, DeviceType::WifiP2P),
         (32, DeviceType::Loopback),
         (999, DeviceType::Other(999)),
@@ -52,11 +53,11 @@ fn device_type_code_round_trips_all_variants() {
 
 #[test]
 fn device_type_from_u32_registry_types() {
-    // VLAN is now a first-class variant
+    // VLAN and bridge are first-class variants
     assert_eq!(DeviceType::from(11), DeviceType::Vlan);
+    assert_eq!(DeviceType::from(13), DeviceType::Bridge);
     // These still fall through to Other since they're only in the registry
     assert_eq!(DeviceType::from(12), DeviceType::Other(12));
-    assert_eq!(DeviceType::from(13), DeviceType::Other(13));
     assert_eq!(DeviceType::from(20), DeviceType::Other(20));
 }
 
@@ -68,6 +69,7 @@ fn device_type_display() {
     assert_eq!(format!("{}", DeviceType::Loopback), "Loopback");
     assert_eq!(format!("{}", DeviceType::Bluetooth), "Bluetooth");
     assert_eq!(format!("{}", DeviceType::Vlan), "VLAN");
+    assert_eq!(format!("{}", DeviceType::Bridge), "Bridge");
     assert_eq!(format!("{}", DeviceType::Other(42)), "Other(42)");
 }
 
@@ -132,6 +134,7 @@ fn device_type_connection_type_str() {
     assert_eq!(DeviceType::Loopback.connection_type_str(), "loopback");
     assert_eq!(DeviceType::Bluetooth.connection_type_str(), "bluetooth");
     assert_eq!(DeviceType::Vlan.connection_type_str(), "vlan");
+    assert_eq!(DeviceType::Bridge.connection_type_str(), "bridge");
 }
 
 #[test]
@@ -1573,6 +1576,13 @@ fn device_is_tun_and_is_wireguard() {
     assert!(tun.is_tun() && !tun.is_wireguard());
     assert!(wg.is_wireguard() && !wg.is_tun());
     assert!(!device_with_type(DeviceType::Ethernet).is_tun());
+}
+
+#[test]
+fn device_is_bridge() {
+    assert!(device_with_type(DeviceType::Bridge).is_bridge());
+    assert!(!device_with_type(DeviceType::Other(13)).is_bridge());
+    assert!(!device_with_type(DeviceType::Ethernet).is_bridge());
 }
 
 #[test]
