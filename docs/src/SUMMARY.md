@@ -22,6 +22,7 @@
   - [OpenVPN Setup](./guide/vpn-openvpn.md)
   - [VPN Management](./guide/vpn-management.md)
 - [Ethernet Management](./guide/ethernet.md)
+- [Bridges](./guide/bridge.md)
 - [Bluetooth](./guide/bluetooth.md)
 - [Device Management](./guide/devices.md)
 - [Connection Profiles](./guide/profiles.md)

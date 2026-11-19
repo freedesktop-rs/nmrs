@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use futures::{FutureExt, StreamExt};
 use nmrs::agent::{SecretAgent, SecretAgentFlags, SecretAgentHandle, SecretSetting};
-use nmrs::builders::{ConnectionBuilder, IpConfig, WireGuardBuilder};
+use nmrs::builders::{
+    BridgeBuilder, BridgePortBuilder, ConnectionBuilder, IpConfig, WireGuardBuilder,
+};
 use nmrs::raw::zvariant::{OwnedObjectPath, OwnedValue, Str, Value};
 use nmrs::{
     ActiveConnection, ActiveConnectionState, ConnectByUuidConfig, ConnectType, ConnectionError,
@@ -953,6 +955,84 @@ async fn networkmanager_settings_patch_removal() {
     .await;
 
     let cleanup_failures = cleanup_saved_profile(&nm, &uuid_string).await;
+    finish_after_cleanup(outcome, cleanup_failures);
+}
+
+/// A bridge and a separate port profile save through `add_connection`
+/// without activating anything, and NetworkManager keeps the port's bridge
+/// membership with no IP configuration. No bridge device is required.
+#[tokio::test]
+#[serial]
+#[ignore = "requires NMRS_REQUIRE_NETWORKMANAGER=1 and an isolated NetworkManager"]
+async fn networkmanager_bridge_and_port_profiles() {
+    let nm = network_manager().await;
+    let bridge_settings = BridgeBuilder::new("nmrs-br0")
+        .autoconnect(false)
+        .build()
+        .expect("valid bridge");
+    let port_settings = BridgePortBuilder::new("nmrs-br0", "nmrs-port0")
+        .autoconnect(false)
+        .build()
+        .expect("valid bridge port");
+    let uuid_of = |settings: &HashMap<&str, HashMap<&str, Value<'static>>>| {
+        String::try_from(settings["connection"]["uuid"].clone()).expect("builder uuid is a string")
+    };
+    let bridge_uuid = uuid_of(&bridge_settings);
+    let port_uuid = uuid_of(&port_settings);
+
+    let outcome = AssertUnwindSafe(async {
+        bounded(
+            "save the bridge profile",
+            DBUS_TIMEOUT,
+            nm.add_connection(bridge_settings),
+        )
+        .await
+        .expect("NetworkManager rejected the bridge profile");
+        bounded(
+            "save the bridge port profile",
+            DBUS_TIMEOUT,
+            nm.add_connection(port_settings),
+        )
+        .await
+        .expect("NetworkManager rejected the bridge port profile");
+
+        let port = bounded(
+            "reload the bridge port profile",
+            DBUS_TIMEOUT,
+            nm.get_saved_connection_raw(&port_uuid),
+        )
+        .await
+        .expect("failed to reload the bridge port profile");
+        let connection = &port["connection"];
+        let string_at = |key: &str| {
+            connection
+                .get(key)
+                .and_then(|value| String::try_from(value.clone()).ok())
+        };
+        assert_eq!(
+            string_at("master")
+                .or_else(|| string_at("controller"))
+                .as_deref(),
+            Some("nmrs-br0"),
+            "port lost its bridge controller: {port:?}"
+        );
+        assert_eq!(
+            string_at("slave-type")
+                .or_else(|| string_at("port-type"))
+                .as_deref(),
+            Some("bridge"),
+            "port lost its port type: {port:?}"
+        );
+        assert!(
+            !port.contains_key("ipv4") && !port.contains_key("ipv6"),
+            "port profile carries IP configuration: {port:?}"
+        );
+    })
+    .catch_unwind()
+    .await;
+
+    let mut cleanup_failures = cleanup_saved_profile(&nm, &port_uuid).await;
+    cleanup_failures.extend(cleanup_saved_profile(&nm, &bridge_uuid).await);
     finish_after_cleanup(outcome, cleanup_failures);
 }
 

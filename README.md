@@ -163,15 +163,16 @@ If something is missing that you'd like to see, please file a PR or issue, addin
 - [ ] Hidden networks in `connect()` (directed scan for a non-broadcast SSID)
 - [ ] Wi-Fi P2P connection management
 
-### Wired, Bluetooth, And VLAN
+### Wired, Bluetooth, VLAN, And Bridge
 
 - [x] Ethernet DHCP connections
 - [x] Wired device details with MAC, link speed, and assigned addresses
 - [x] Bluetooth PAN/DUN device discovery and connection
 - [x] VLAN profile builder and validation
+- [x] Bridge and bridge port profile builders
+- [ ] Fluent `VlanBuilder`, matching `BridgeBuilder` (VLAN still uses `VlanConfig` + `build_vlan_connection`)
 - [x] Loopback device detection
 - [ ] Bond profile builder
-- [ ] Bridge profile builder
 - [ ] TUN/TAP profile builder
 - [ ] MACVLAN / MACsec / VRF / VXLAN profile builders
 
@@ -204,8 +205,8 @@ If something is missing that you'd like to see, please file a PR or issue, addin
 
 - [x] NetworkManager facade
 - [x] Generic `ConnectionBuilder`, `add_connection` / `add_and_activate_connection`, and raw `zbus` access
-- [x] Device enumeration and typed device models for Ethernet, Wi-Fi, Bluetooth, VLAN, Loopback, and Wi-Fi P2P
-- [x] Device metadata registry for Bond, Bridge, TUN, Veth, WireGuard, and other known NetworkManager type codes
+- [x] Device enumeration and typed device models for Ethernet, Wi-Fi, Bluetooth, VLAN, Bridge, Loopback, and Wi-Fi P2P
+- [x] Device metadata registry for Bond, TUN, Veth, WireGuard, and other known NetworkManager type codes
 - [x] Access Point
 - [x] Active Connection
 - [x] Settings
