@@ -153,8 +153,9 @@ impl BridgeBuilder {
     ///
     /// # Errors
     ///
-    /// Returns `ConnectionError::InvalidInput` if the interface name is empty
-    /// or longer than 15 bytes, or an STP timer or ageing time is out of range.
+    /// Returns `ConnectionError::InvalidInput` if the interface name is not a
+    /// valid kernel interface name (1–15 bytes, no `/`, `:`, or whitespace,
+    /// not `.` or `..`), or an STP timer or ageing time is out of range.
     #[must_use = "the connection settings must be passed to NetworkManager"]
     pub fn build(
         self,
@@ -295,7 +296,8 @@ impl BridgePortBuilder {
     /// # Errors
     ///
     /// Returns `ConnectionError::InvalidInput` if `bridge` is empty or the
-    /// interface name is empty or longer than 15 bytes.
+    /// interface name is not a valid kernel interface name (1–15 bytes, no
+    /// `/`, `:`, or whitespace, not `.` or `..`).
     #[must_use = "the connection settings must be passed to NetworkManager"]
     pub fn build(
         self,
@@ -327,9 +329,18 @@ fn set_id(inner: ConnectionBuilder, id: String) -> ConnectionBuilder {
 
 fn check_interface_name(name: &str) -> Result<(), ConnectionError> {
     if name.is_empty() || name.len() > MAX_INTERFACE_NAME_LEN {
+        return Err(invalid("interface_name", "must be between 1 and 15 bytes"));
+    }
+    if name == "." || name == ".." {
+        return Err(invalid("interface_name", "must not be \".\" or \"..\""));
+    }
+    if name
+        .bytes()
+        .any(|b| b == b'/' || b == b':' || b.is_ascii_whitespace() || b == b'\x0b')
+    {
         return Err(invalid(
             "interface_name",
-            "must be between 1 and 15 characters",
+            "must not contain '/', ':', or whitespace",
         ));
     }
     Ok(())
@@ -475,7 +486,16 @@ mod tests {
 
     #[test]
     fn rejects_bad_interface_name() {
-        for name in ["", "0123456789abcdef"] {
+        for name in [
+            "",
+            "0123456789abcdef",
+            ".",
+            "..",
+            "br 0",
+            "br\t0",
+            "br/0",
+            "br:0",
+        ] {
             assert_eq!(
                 invalid_field(BridgeBuilder::new(name).build()),
                 "interface_name"
@@ -545,6 +565,7 @@ mod tests {
                 "interface_name",
                 BridgePortBuilder::new("br0", "0123456789abcdef"),
             ),
+            ("interface_name", BridgePortBuilder::new("br0", "eth 0")),
         ] {
             assert_eq!(invalid_field(builder.build()), field);
         }
