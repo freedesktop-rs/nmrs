@@ -170,7 +170,6 @@ If something is missing that you'd like to see, please file a PR or issue, addin
 - [x] Bluetooth PAN/DUN device discovery and connection
 - [x] VLAN profile builder and validation
 - [x] Bridge and bridge port profile builders
-- [ ] Fluent `VlanBuilder`, matching `BridgeBuilder` (VLAN still uses `VlanConfig` + `build_vlan_connection`)
 - [x] Loopback device detection
 - [ ] Bond profile builder
 - [ ] TUN/TAP profile builder
