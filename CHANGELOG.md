@@ -10,12 +10,19 @@ All notable changes to the `nmrs` crate will be documented in this file.
 - `DeviceType::Tun` and `DeviceType::WireGuard`, with `Device::is_tun()` and
   `Device::is_wireguard()`. `Device::tun_mode` tells TUN from TAP.
   ([#624](https://github.com/freedesktop-rs/nmrs/pull/624))
+- Bridges: `BridgeBuilder` and `BridgePortBuilder`, saved with `add_connection`.
+  ([#630](https://github.com/freedesktop-rs/nmrs/pull/630))
+- `DeviceType::Bridge` and `Device::is_bridge()`.
+  ([#630](https://github.com/freedesktop-rs/nmrs/pull/630))
 
 ### Changed
 
 - Device types 16 and 29 are now `DeviceType::Tun` and `DeviceType::WireGuard`,
   not `Other(16)` and `Other(29)`. Code that matches on those `Other` values
   needs updating. ([#624](https://github.com/freedesktop-rs/nmrs/pull/624))
+- Device type 13 is now `DeviceType::Bridge`, not `Other(13)`. Code that matches
+  on that `Other` value needs updating.
+  ([#630](https://github.com/freedesktop-rs/nmrs/pull/630))
 
 ### Fixed
 

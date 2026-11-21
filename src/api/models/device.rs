@@ -229,6 +229,8 @@ pub enum DeviceType {
     Tun,
     /// WireGuard tunnel device.
     WireGuard,
+    /// Bridge (virtual switch) device.
+    Bridge,
     /// Unknown or unsupported device type with raw code.
     ///
     /// Use the methods on `DeviceType` to query capabilities of unknown device types,
@@ -296,6 +298,7 @@ impl DeviceType {
             Self::Vlan => "vlan",
             Self::Tun => "tun",
             Self::WireGuard => "wireguard",
+            Self::Bridge => "bridge",
             Self::Other(code) => {
                 crate::types::device_type_registry::connection_type_for_code(*code)
                     .unwrap_or("generic")
@@ -313,6 +316,7 @@ impl DeviceType {
             Self::Loopback => 32,
             Self::Bluetooth => 5,
             Self::Vlan => 11,
+            Self::Bridge => 13,
             Self::Tun => 16,
             Self::WireGuard => 29,
             Self::Other(code) => *code,
@@ -438,6 +442,12 @@ impl Device {
     pub fn is_wireguard(&self) -> bool {
         matches!(self.device_type, DeviceType::WireGuard)
     }
+
+    /// Returns `true` if this is a bridge device.
+    #[must_use]
+    pub fn is_bridge(&self) -> bool {
+        matches!(self.device_type, DeviceType::Bridge)
+    }
 }
 
 impl Display for Device {
@@ -457,6 +467,7 @@ impl From<u32> for DeviceType {
             2 => DeviceType::Wifi,
             5 => DeviceType::Bluetooth,
             11 => DeviceType::Vlan,
+            13 => DeviceType::Bridge,
             16 => DeviceType::Tun,
             29 => DeviceType::WireGuard,
             30 => DeviceType::WifiP2P,
@@ -497,6 +508,7 @@ impl Display for DeviceType {
             DeviceType::Vlan => write!(f, "VLAN"),
             DeviceType::Tun => write!(f, "TUN"),
             DeviceType::WireGuard => write!(f, "WireGuard"),
+            DeviceType::Bridge => write!(f, "Bridge"),
             DeviceType::Other(v) => write!(
                 f,
                 "{}",

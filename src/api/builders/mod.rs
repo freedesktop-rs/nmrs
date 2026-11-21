@@ -17,6 +17,8 @@
 //!   channel, hidden SSID, BSSID pinning, and AP-mode shortcuts. See
 //!   [`WifiBand`] / [`WifiMode`].
 //! - [`WireGuardBuilder`] — kernel-level WireGuard tunnels.
+//! - [`BridgeBuilder`] / [`BridgePortBuilder`] — bridges and their port
+//!   profiles.
 //! - [`OpenVpnBuilder`] — NM-plugin OpenVPN connections, with
 //!   [`from_ovpn_file`](OpenVpnBuilder::from_ovpn_file) for `.ovpn` import.
 //!
@@ -105,6 +107,7 @@
 //! [`NetworkManager::add_and_activate_connection`](crate::NetworkManager::add_and_activate_connection).
 
 pub mod bluetooth;
+pub mod bridge_builder;
 pub mod connection_builder;
 pub mod openvpn_builder;
 pub mod vlan;
@@ -114,6 +117,7 @@ pub mod wifi_builder;
 pub mod wireguard_builder;
 
 // Re-export core builder types
+pub use bridge_builder::{BridgeBuilder, BridgePortBuilder};
 pub use connection_builder::{ConnectionBuilder, IpConfig, Route};
 pub use openvpn_builder::OpenVpnBuilder;
 pub use wifi_builder::{WifiBand, WifiConnectionBuilder, WifiMode};
