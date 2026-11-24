@@ -71,6 +71,10 @@ pub trait NMDevice {
     #[zbus(property)]
     fn set_autoconnect(&self, value: bool) -> Result<()>;
 
+    /// Port devices of this controller (bond, team, bridge), `Device.Ports`.
+    #[zbus(property)]
+    fn ports(&self) -> Result<Vec<OwnedObjectPath>>;
+
     /// Disconnect the active connection on this device, if any.
     fn disconnect(&self) -> Result<()>;
 

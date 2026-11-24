@@ -166,7 +166,7 @@ struct BondDeviceType;
 
 impl DeviceTypeInfo for BondDeviceType {
     fn nm_type_code(&self) -> u32 {
-        12
+        10
     }
 
     fn display_name(&self) -> &'static str {
@@ -175,6 +175,23 @@ impl DeviceTypeInfo for BondDeviceType {
 
     fn connection_type(&self) -> &'static str {
         "bond"
+    }
+}
+
+/// Team device type implementation.
+struct TeamDeviceType;
+
+impl DeviceTypeInfo for TeamDeviceType {
+    fn nm_type_code(&self) -> u32 {
+        15
+    }
+
+    fn display_name(&self) -> &'static str {
+        "Team"
+    }
+
+    fn connection_type(&self) -> &'static str {
+        "team"
     }
 }
 
@@ -248,6 +265,7 @@ fn registry() -> &'static HashMap<u32, Box<dyn DeviceTypeInfo>> {
             Box::new(LoopbackDeviceType),
             Box::new(BridgeDeviceType),
             Box::new(BondDeviceType),
+            Box::new(TeamDeviceType),
             Box::new(VlanDeviceType),
             Box::new(TunDeviceType),
             Box::new(WireGuardDeviceType),
@@ -320,9 +338,10 @@ mod tests {
         let expected = [
             (1, "Ethernet", "802-3-ethernet", false, false, false, true),
             (2, "Wi-Fi", "802-11-wireless", true, true, true, false),
+            (10, "Bond", "bond", false, false, false, false),
             (11, "VLAN", "vlan", false, false, false, false),
-            (12, "Bond", "bond", false, false, false, false),
             (13, "Bridge", "bridge", false, false, false, false),
+            (15, "Team", "team", false, false, false, false),
             (16, "TUN", "tun", false, false, false, false),
             (20, "Veth", "802-3-ethernet", false, false, false, true),
             (29, "WireGuard", "wireguard", false, false, false, false),
@@ -346,6 +365,40 @@ mod tests {
             assert_eq!(has_global_enabled_state(code), global_state);
             assert_eq!(is_wired(code), wired);
         }
+    }
+
+    /// Catches a wrong code like the old Bond=12. Bluetooth is not registered.
+    #[test]
+    fn registry_agrees_with_device_type_enum() {
+        use crate::api::models::DeviceType;
+
+        for variant in [
+            DeviceType::Ethernet,
+            DeviceType::Wifi,
+            DeviceType::WifiP2P,
+            DeviceType::Loopback,
+            DeviceType::Vlan,
+            DeviceType::Bridge,
+            DeviceType::Bond,
+            DeviceType::Team,
+            DeviceType::Tun,
+            DeviceType::WireGuard,
+        ] {
+            let info = get_device_type_info(variant.to_code())
+                .unwrap_or_else(|| panic!("{variant} should be registered"));
+            assert_eq!(info.nm_type_code(), variant.to_code(), "{variant}");
+            assert_eq!(info.connection_type(), variant.connection_type_str());
+            assert_eq!(info.display_name(), variant.to_string());
+        }
+    }
+
+    #[test]
+    fn code_12_is_adsl_not_bond() {
+        assert!(get_device_type_info(12).is_none());
+        assert_eq!(display_name_for_code(12), "Other(12)");
+        assert_eq!(connection_type_for_code(12), None);
+        assert_eq!(connection_type_for_code(10), Some("bond"));
+        assert_eq!(connection_type_for_code(15), Some("team"));
     }
 
     #[test]
