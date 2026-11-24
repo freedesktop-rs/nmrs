@@ -33,6 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - `BridgePortBuilder`'s bridge may be the bridge interface name or its
   profile UUID.
 - Ports are Ethernet interfaces, matching `nmcli`'s `bridge-slave` type.
+  They use `connection.controller` and `connection.port-type`
   VLAN and bond ports are not supported yet.
 
 ## Options

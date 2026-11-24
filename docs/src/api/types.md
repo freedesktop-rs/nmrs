@@ -47,7 +47,7 @@ All public methods return `nmrs::Result<T>`.
 |------|-------------|
 | `Device` | A network device (interface, type, state, MAC) |
 | `DeviceIdentity` | Device MAC addresses (permanent and current) |
-| `DeviceType` | Device kind: `Wifi`, `Ethernet`, `Bluetooth`, `WifiP2P`, `Loopback`, `Vlan`, `Tun`, `WireGuard`, `Other(u32)` |
+| `DeviceType` | Device kind: `Wifi`, `Ethernet`, `Bluetooth`, `WifiP2P`, `Loopback`, `Vlan`, `Tun`, `WireGuard`, `Bridge`, `Bond`, `Team`, `Other(u32)` |
 | `TunMode` | TUN/TAP mode of a `Tun` device: `Tun`, `Tap` |
 | `DeviceState` | Operational state: `Disconnected`, `Activated`, `Failed`, etc. |
 

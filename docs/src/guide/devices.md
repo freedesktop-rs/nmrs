@@ -58,6 +58,9 @@ use nmrs::DeviceType;
 | `DeviceType::Vlan` | 802.1Q virtual VLAN |
 | `DeviceType::Tun` | TUN/TAP device (see `Device::tun_mode`) |
 | `DeviceType::WireGuard` | WireGuard tunnel |
+| `DeviceType::Bridge` | Bridge (see [Bridges](./bridge.md)) |
+| `DeviceType::Bond` | Bond controller (see [Bonding and Teaming](./bonding.md)) |
+| `DeviceType::Team` | Team controller |
 | `DeviceType::Other(u32)` | Unknown type with raw code |
 
 Devices that NetworkManager reports as `veth` are normalized to
@@ -95,6 +98,14 @@ if device.is_tun() {
 
 if device.is_wireguard() {
     println!("{} is a WireGuard tunnel", device.interface);
+}
+
+if device.is_bond() {
+    println!("{} is a bond", device.interface);
+}
+
+if device.is_team() {
+    println!("{} is a team", device.interface);
 }
 ```
 
@@ -253,4 +264,5 @@ if nm.is_connecting().await? {
 - [WiFi Management](./wifi.md) – Wi-Fi-specific operations
 - [Bluetooth](./bluetooth.md) – Bluetooth device management
 - [Ethernet Management](./ethernet.md) – wired connections
+- [Bonding and Teaming](./bonding.md) – bond and team controllers
 - [Real-Time Monitoring](./monitoring.md) – subscribe to device state changes

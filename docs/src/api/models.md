@@ -26,7 +26,7 @@ pub struct Device {
 }
 ```
 
-Methods: `is_wireless()`, `is_wired()`, `is_bluetooth()`, `is_loopback()`, `is_vlan()`, `is_tun()`, `is_wireguard()`
+Methods: `is_wireless()`, `is_wired()`, `is_bluetooth()`, `is_loopback()`, `is_vlan()`, `is_tun()`, `is_wireguard()`, `is_bridge()`, `is_bond()`, `is_team()`
 
 ### DeviceIdentity
 
@@ -49,6 +49,9 @@ pub enum DeviceType {
     Vlan,
     Tun,
     WireGuard,
+    Bridge,
+    Bond,
+    Team,
     Other(u32),
 }
 ```
@@ -77,6 +80,99 @@ pub enum DeviceState {
 ```
 
 Methods: `is_transitional()`
+
+## Bond and Team Models
+
+See [Bonding and Teaming](../guide/bonding.md) for usage.
+
+### BondMode
+
+```rust
+#[non_exhaustive]
+pub enum BondMode {
+    BalanceRr,
+    ActiveBackup,
+    BalanceXor,
+    Broadcast,
+    Ieee8023ad,
+    BalanceTlb,
+    BalanceAlb,
+}
+```
+
+Methods: `as_str()` (NetworkManager name, e.g. `"802.3ad"`)
+
+### BondConfig
+
+```rust
+#[non_exhaustive]
+pub struct BondConfig {
+    pub interface_name: String,
+    pub mode: BondMode,
+    pub connection_name: Option<String>,   // default "Bond <interface_name>"
+    pub mtu: Option<u32>,
+    pub options: BTreeMap<String, String>, // bonding options other than `mode`
+}
+```
+
+Methods: `new(interface_name, mode)`, `with_connection_name()`, `with_mtu()`, `with_miimon()`, `with_primary()`, `with_option()`, `validate()`
+
+### BondDevice
+
+```rust
+#[non_exhaustive]
+pub struct BondDevice {
+    pub path: String,
+    pub interface: String,
+    pub hw_address: String,
+    pub state: DeviceState,
+    pub ports: Vec<String>,   // interface names of attached ports
+}
+```
+
+### TeamRunner
+
+```rust
+#[non_exhaustive]
+pub enum TeamRunner {
+    RoundRobin,
+    Broadcast,
+    ActiveBackup,
+    LoadBalance,
+    Lacp,
+    Random,
+}
+```
+
+Methods: `as_str()`
+
+### TeamConfig
+
+```rust
+#[non_exhaustive]
+pub struct TeamConfig {
+    pub interface_name: String,
+    pub runner: TeamRunner,
+    pub connection_name: Option<String>,   // default "Team <interface_name>"
+    pub mtu: Option<u32>,
+}
+```
+
+Methods: `new(interface_name, runner)`, `with_connection_name()`, `with_mtu()`, `validate()`
+
+### TeamDevice
+
+```rust
+#[non_exhaustive]
+pub struct TeamDevice {
+    pub path: String,
+    pub interface: String,
+    pub hw_address: String,
+    pub state: DeviceState,
+    pub ports: Vec<String>,
+    pub config: Option<String>,   // JSON applied by teamd
+}
+```
 
 ## Wi-Fi Models
 
