@@ -28,6 +28,8 @@
 //! - [`build_wireguard_connection`] / [`build_openvpn_connection`] (in [`vpn`])
 //! - [`build_bluetooth_connection`] (in [`bluetooth`])
 //! - [`build_vlan_connection`] (in [`vlan`])
+//! - [`build_bond_connection`] / [`build_bond_port_connection`] (in [`bond`])
+//! - [`build_team_connection`] / [`build_team_port_connection`] (in [`team`])
 //!
 //! # When to use these
 //!
@@ -107,9 +109,12 @@
 //! [`NetworkManager::add_and_activate_connection`](crate::NetworkManager::add_and_activate_connection).
 
 pub mod bluetooth;
+pub mod bond;
 pub mod bridge_builder;
 pub mod connection_builder;
 pub mod openvpn_builder;
+mod port;
+pub mod team;
 pub mod vlan;
 pub mod vpn;
 pub mod wifi;
@@ -125,6 +130,8 @@ pub use wireguard_builder::WireGuardBuilder;
 
 // Re-export builder functions for convenience
 pub use bluetooth::build_bluetooth_connection;
+pub use bond::{build_bond_connection, build_bond_port_connection};
+pub use team::{build_team_connection, build_team_port_connection};
 pub use vlan::build_vlan_connection;
 pub use vpn::{build_openvpn_connection, build_wireguard_connection};
 pub use wifi::{build_ethernet_connection, try_build_wifi_connection};
