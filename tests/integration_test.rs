@@ -13,10 +13,11 @@ use nmrs::builders::{
 };
 use nmrs::raw::zvariant::{OwnedObjectPath, OwnedValue, Str, Value};
 use nmrs::{
-    ActiveConnection, ActiveConnectionState, ConnectByUuidConfig, ConnectType, ConnectionError,
-    DeviceState, GlobalDnsConfiguration, MonitorHandle, NetworkEvent, NetworkEventStream,
-    NetworkManager, SettingsChange, SettingsEventStream, SettingsPatch, SettingsSummary,
-    TimeoutConfig, WifiKeyMgmt, WifiScope, WifiSecurity, WireGuardPeer,
+    ActiveConnection, ActiveConnectionState, BondConfig, BondMode, ConnectByUuidConfig,
+    ConnectType, ConnectionError, ConnectionOptions, DeviceState, GlobalDnsConfiguration,
+    MonitorHandle, NetworkEvent, NetworkEventStream, NetworkManager, SettingsChange,
+    SettingsEventStream, SettingsPatch, SettingsSummary, TeamConfig, TeamRunner, TimeoutConfig,
+    WifiKeyMgmt, WifiScope, WifiSecurity, WireGuardPeer,
 };
 use serial_test::serial;
 use tokio::time::{sleep, timeout};
@@ -337,6 +338,85 @@ async fn active_connections(nm: &NetworkManager) -> Vec<ActiveConnection> {
     )
     .await
     .expect("failed to list typed active connections")
+}
+
+fn raw_string(
+    raw: &HashMap<String, HashMap<String, OwnedValue>>,
+    section: &str,
+    key: &str,
+) -> Option<String> {
+    let value = raw.get(section)?.get(key)?;
+    String::try_from(value.try_clone().expect("clonable setting value")).ok()
+}
+
+fn raw_bond_options(raw: &HashMap<String, HashMap<String, OwnedValue>>) -> HashMap<String, String> {
+    let value = raw
+        .get("bond")
+        .and_then(|section| section.get("options"))
+        .expect("the bond profile has no bond.options");
+    HashMap::<String, String>::try_from(value.try_clone().expect("clonable bond options"))
+        .expect("bond.options must be a string dictionary")
+}
+
+fn raw_connection_alias(
+    raw: &HashMap<String, HashMap<String, OwnedValue>>,
+    key: &str,
+    legacy_key: &str,
+) -> Option<String> {
+    raw_string(raw, "connection", key).or_else(|| raw_string(raw, "connection", legacy_key))
+}
+
+async fn saved_raw(
+    nm: &NetworkManager,
+    what: &str,
+    uuid: &str,
+) -> HashMap<String, HashMap<String, OwnedValue>> {
+    bounded(what, DBUS_TIMEOUT, nm.get_saved_connection_raw(uuid))
+        .await
+        .unwrap_or_else(|e| panic!("failed to {what}: {e:?}"))
+}
+
+fn assert_controller_profile(
+    raw: &HashMap<String, HashMap<String, OwnedValue>>,
+    conn_type: &str,
+    interface: &str,
+) {
+    assert_eq!(
+        raw_string(raw, "connection", "type").as_deref(),
+        Some(conn_type)
+    );
+    assert_eq!(
+        raw_string(raw, "connection", "interface-name").as_deref(),
+        Some(interface)
+    );
+}
+
+fn assert_port_profile(
+    raw: &HashMap<String, HashMap<String, OwnedValue>>,
+    controller: &str,
+    port: &str,
+    port_type: &str,
+) {
+    assert_eq!(
+        raw_string(raw, "connection", "type").as_deref(),
+        Some("802-3-ethernet")
+    );
+    assert_eq!(
+        raw_string(raw, "connection", "interface-name").as_deref(),
+        Some(port)
+    );
+    assert_eq!(
+        raw_connection_alias(raw, "controller", "master").as_deref(),
+        Some(controller)
+    );
+    assert_eq!(
+        raw_connection_alias(raw, "port-type", "slave-type").as_deref(),
+        Some(port_type)
+    );
+    assert!(
+        !raw.contains_key("ipv4") && !raw.contains_key("ipv6"),
+        "port profile carries IP configuration: {raw:?}"
+    );
 }
 
 /// Exercises NetworkManager's settings API against the isolated D-Bus harness.
@@ -996,43 +1076,152 @@ async fn networkmanager_bridge_and_port_profiles() {
         .await
         .expect("NetworkManager rejected the bridge port profile");
 
-        let port = bounded(
-            "reload the bridge port profile",
-            DBUS_TIMEOUT,
-            nm.get_saved_connection_raw(&port_uuid),
-        )
-        .await
-        .expect("failed to reload the bridge port profile");
-        let connection = &port["connection"];
-        let string_at = |key: &str| {
-            connection
-                .get(key)
-                .and_then(|value| String::try_from(value.clone()).ok())
-        };
-        assert_eq!(
-            string_at("master")
-                .or_else(|| string_at("controller"))
-                .as_deref(),
-            Some("nmrs-br0"),
-            "port lost its bridge controller: {port:?}"
-        );
-        assert_eq!(
-            string_at("slave-type")
-                .or_else(|| string_at("port-type"))
-                .as_deref(),
-            Some("bridge"),
-            "port lost its port type: {port:?}"
-        );
-        assert!(
-            !port.contains_key("ipv4") && !port.contains_key("ipv6"),
-            "port profile carries IP configuration: {port:?}"
-        );
+        let port = saved_raw(&nm, "reload the bridge port profile", &port_uuid).await;
+        assert_port_profile(&port, "nmrs-br0", "nmrs-port0", "bridge");
     })
     .catch_unwind()
     .await;
 
     let mut cleanup_failures = cleanup_saved_profile(&nm, &port_uuid).await;
     cleanup_failures.extend(cleanup_saved_profile(&nm, &bridge_uuid).await);
+    finish_after_cleanup(outcome, cleanup_failures);
+}
+
+/// Saves bond profiles, reads them back, and changes the mode, keeping other options.
+#[tokio::test]
+#[serial]
+#[ignore = "requires NMRS_REQUIRE_NETWORKMANAGER=1 and an isolated NetworkManager"]
+async fn networkmanager_bond_profiles_round_trip() {
+    let nm = network_manager().await;
+    let suffix = std::process::id();
+    let bond_name = format!("nmrsb{suffix}");
+    let port_name = format!("nmrsp{suffix}");
+    let mut created: Vec<String> = Vec::new();
+    let outcome = AssertUnwindSafe(async {
+        let opts = ConnectionOptions::new(false);
+        let config = BondConfig::new(bond_name.clone(), BondMode::ActiveBackup).with_miimon(100);
+        let bond_uuid = bounded(
+            "create the bond profile",
+            DBUS_TIMEOUT,
+            nm.create_bond(&config, &opts),
+        )
+        .await
+        .expect("NetworkManager rejected the bond profile");
+        created.push(bond_uuid.clone());
+        let port_uuid = bounded(
+            "create the bond port profile",
+            DBUS_TIMEOUT,
+            nm.add_bond_port(&bond_name, &port_name, &opts),
+        )
+        .await
+        .expect("NetworkManager rejected the bond port profile");
+        created.push(port_uuid.clone());
+
+        let bond_raw = saved_raw(&nm, "load the raw bond profile", &bond_uuid).await;
+        assert_controller_profile(&bond_raw, "bond", &bond_name);
+        let options = raw_bond_options(&bond_raw);
+        assert_eq!(
+            options.get("mode").map(String::as_str),
+            Some("active-backup")
+        );
+        assert_eq!(options.get("miimon").map(String::as_str), Some("100"));
+
+        let port_raw = saved_raw(&nm, "load the raw bond port profile", &port_uuid).await;
+        assert_port_profile(&port_raw, &bond_name, &port_name, "bond");
+
+        bounded(
+            "change the bond mode",
+            DBUS_TIMEOUT,
+            nm.set_bond_mode(&bond_uuid, BondMode::BalanceXor),
+        )
+        .await
+        .expect("failed to change the bond mode");
+        let changed_raw = saved_raw(&nm, "reload the raw bond profile", &bond_uuid).await;
+        let changed = raw_bond_options(&changed_raw);
+        assert_eq!(changed.get("mode").map(String::as_str), Some("balance-xor"));
+        assert_eq!(changed.get("miimon").map(String::as_str), Some("100"));
+
+        let error = bounded(
+            "reject changing the mode of a non-bond profile",
+            DBUS_TIMEOUT,
+            nm.set_bond_mode(&port_uuid, BondMode::BalanceRr),
+        )
+        .await
+        .expect_err("a port profile is not a bond");
+        assert!(
+            matches!(
+                error,
+                ConnectionError::InvalidInput { ref field, .. } if field == "uuid"
+            ),
+            "expected InvalidInput for a non-bond profile, got {error:?}"
+        );
+    })
+    .catch_unwind()
+    .await;
+
+    let mut cleanup_failures = Vec::new();
+    for uuid in &created {
+        cleanup_failures.extend(cleanup_saved_profile(&nm, uuid).await);
+    }
+    finish_after_cleanup(outcome, cleanup_failures);
+}
+
+/// Saves team profiles, reads them back, and changes the runner (no team plugin needed).
+#[tokio::test]
+#[serial]
+#[ignore = "requires NMRS_REQUIRE_NETWORKMANAGER=1 and an isolated NetworkManager"]
+async fn networkmanager_team_profiles_round_trip() {
+    let nm = network_manager().await;
+    let suffix = std::process::id();
+    let team_name = format!("nmrst{suffix}");
+    let port_name = format!("nmrsq{suffix}");
+    let mut created: Vec<String> = Vec::new();
+    let outcome = AssertUnwindSafe(async {
+        let opts = ConnectionOptions::new(false);
+        let config = TeamConfig::new(team_name.clone(), TeamRunner::ActiveBackup);
+        let team_uuid = bounded(
+            "create the team profile",
+            DBUS_TIMEOUT,
+            nm.create_team(&config, &opts),
+        )
+        .await
+        .expect("NetworkManager rejected the team profile");
+        created.push(team_uuid.clone());
+        let port_uuid = bounded(
+            "create the team port profile",
+            DBUS_TIMEOUT,
+            nm.add_team_port(&team_name, &port_name, &opts),
+        )
+        .await
+        .expect("NetworkManager rejected the team port profile");
+        created.push(port_uuid.clone());
+
+        let team_raw = saved_raw(&nm, "load the raw team profile", &team_uuid).await;
+        assert_controller_profile(&team_raw, "team", &team_name);
+
+        let port_raw = saved_raw(&nm, "load the raw team port profile", &port_uuid).await;
+        assert_port_profile(&port_raw, &team_name, &port_name, "team");
+
+        bounded(
+            "change the team runner",
+            DBUS_TIMEOUT,
+            nm.set_team_runner(&team_uuid, TeamRunner::RoundRobin),
+        )
+        .await
+        .expect("failed to change the team runner");
+        let changed_raw = saved_raw(&nm, "reload the raw team profile", &team_uuid).await;
+        assert_eq!(
+            raw_string(&changed_raw, "team", "runner").as_deref(),
+            Some("roundrobin")
+        );
+    })
+    .catch_unwind()
+    .await;
+
+    let mut cleanup_failures = Vec::new();
+    for uuid in &created {
+        cleanup_failures.extend(cleanup_saved_profile(&nm, uuid).await);
+    }
     finish_after_cleanup(outcome, cleanup_failures);
 }
 

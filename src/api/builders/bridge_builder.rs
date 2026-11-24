@@ -11,10 +11,9 @@ use uuid::Uuid;
 use zvariant::Value;
 
 use super::connection_builder::ConnectionBuilder;
+use super::port::{attach_port, ensure_distinct, port_id};
 use crate::api::models::{ConnectionError, ConnectionOptions};
-
-/// Linux `IFNAMSIZ` minus the trailing NUL.
-const MAX_INTERFACE_NAME_LEN: usize = 15;
+use crate::util::validation::validate_interface_name;
 
 /// Builder for bridge (virtual switch) connections.
 ///
@@ -154,13 +153,13 @@ impl BridgeBuilder {
     /// # Errors
     ///
     /// Returns `ConnectionError::InvalidInput` if the interface name is not a
-    /// valid kernel interface name (1–15 bytes, no `/`, `:`, or whitespace,
-    /// not `.` or `..`), or an STP timer or ageing time is out of range.
+    /// valid kernel interface name, or an STP timer or ageing time is out of
+    /// range.
     #[must_use = "the connection settings must be passed to NetworkManager"]
     pub fn build(
         self,
     ) -> Result<HashMap<&'static str, HashMap<&'static str, Value<'static>>>, ConnectionError> {
-        check_interface_name(&self.interface_name)?;
+        validate_interface_name(&self.interface_name, "interface_name")?;
         // NetworkManager accepts 0 for the STP timers only when STP is
         // disabled; STP defaults to enabled when unset.
         let zero_ok = self.stp == Some(false);
@@ -199,16 +198,10 @@ impl BridgeBuilder {
 
 /// Builder for a bridge port: a separate wired profile attached to a bridge.
 ///
-/// Mirrors `nmcli connection add type bridge-slave ifname eth0 master br0`.
-/// The result is an `802-3-ethernet` profile with `connection.master` set to
-/// the bridge and `connection.slave-type = "bridge"`, and no `ipv4`/`ipv6`
-/// sections: NetworkManager forbids IP configuration on ports. Saving it
-/// leaves any existing profile for the interface untouched; activating it
-/// takes the interface off whatever it was using.
-///
-/// The legacy `master`/`slave-type` keys are used because NetworkManager
-/// accepts them on every version; 1.46+ exposes them as `controller` and
-/// `port-type` too.
+/// Mirrors `nmcli connection add type bridge-slave ifname eth0 master br0`:
+/// `802-3-ethernet` with `connection.controller` = the bridge,
+/// `connection.port-type = "bridge"`, no `ipv4`/`ipv6`. Saving leaves existing
+/// profiles for the interface untouched; activating takes it off its current one.
 ///
 /// # Example
 ///
@@ -237,10 +230,7 @@ impl BridgePortBuilder {
     pub fn new(bridge: impl Into<String>, interface_name: impl Into<String>) -> Self {
         let interface_name = interface_name.into();
         Self {
-            inner: ConnectionBuilder::new(
-                "802-3-ethernet",
-                format!("bridge-port-{interface_name}"),
-            ),
+            inner: ConnectionBuilder::new("802-3-ethernet", port_id("bridge", &interface_name)),
             bridge: bridge.into(),
             interface_name,
         }
@@ -295,9 +285,8 @@ impl BridgePortBuilder {
     ///
     /// # Errors
     ///
-    /// Returns `ConnectionError::InvalidInput` if `bridge` is empty or the
-    /// interface name is not a valid kernel interface name (1–15 bytes, no
-    /// `/`, `:`, or whitespace, not `.` or `..`).
+    /// Returns `ConnectionError::InvalidInput` if `bridge` is empty, the
+    /// interface name is not a valid kernel interface name, or both are equal.
     #[must_use = "the connection settings must be passed to NetworkManager"]
     pub fn build(
         self,
@@ -305,19 +294,10 @@ impl BridgePortBuilder {
         if self.bridge.is_empty() {
             return Err(invalid("bridge", "must not be empty"));
         }
-        check_interface_name(&self.interface_name)?;
+        validate_interface_name(&self.interface_name, "interface_name")?;
+        ensure_distinct(&self.bridge, &self.interface_name, "interface_name")?;
 
-        let bridge = self.bridge;
-        Ok(self
-            .inner
-            .interface_name(self.interface_name)
-            .update_section("connection", |s| {
-                s.insert("master", Value::from(bridge));
-                s.insert("slave-type", Value::from("bridge"));
-            })
-            .with_section("802-3-ethernet", HashMap::new())
-            .with_section("bridge-port", HashMap::new())
-            .build())
+        Ok(attach_port(self.inner, "bridge", self.bridge, self.interface_name).build())
     }
 }
 
@@ -325,25 +305,6 @@ fn set_id(inner: ConnectionBuilder, id: String) -> ConnectionBuilder {
     inner.update_section("connection", |s| {
         s.insert("id", Value::from(id));
     })
-}
-
-fn check_interface_name(name: &str) -> Result<(), ConnectionError> {
-    if name.is_empty() || name.len() > MAX_INTERFACE_NAME_LEN {
-        return Err(invalid("interface_name", "must be between 1 and 15 bytes"));
-    }
-    if name == "." || name == ".." {
-        return Err(invalid("interface_name", "must not be \".\" or \"..\""));
-    }
-    if name
-        .bytes()
-        .any(|b| b == b'/' || b == b':' || b.is_ascii_whitespace() || b == b'\x0b')
-    {
-        return Err(invalid(
-            "interface_name",
-            "must not contain '/', ':', or whitespace",
-        ));
-    }
-    Ok(())
 }
 
 fn invalid(field: &str, reason: &str) -> ConnectionError {
@@ -495,6 +456,7 @@ mod tests {
             "br\t0",
             "br/0",
             "br:0",
+            "br%0",
         ] {
             assert_eq!(
                 invalid_field(BridgeBuilder::new(name).build()),
@@ -538,11 +500,12 @@ mod tests {
         assert_eq!(connection.get("type"), Some(&Value::from("802-3-ethernet")));
         assert_eq!(connection.get("id"), Some(&Value::from("bridge-port-eth0")));
         assert_eq!(connection.get("interface-name"), Some(&Value::from("eth0")));
-        assert_eq!(connection.get("master"), Some(&Value::from("br0")));
-        assert_eq!(connection.get("slave-type"), Some(&Value::from("bridge")));
+        assert_eq!(connection.get("controller"), Some(&Value::from("br0")));
+        assert_eq!(connection.get("port-type"), Some(&Value::from("bridge")));
+        assert!(!connection.contains_key("master"));
+        assert!(!connection.contains_key("slave-type"));
         assert_eq!(connection.get("autoconnect"), Some(&Value::from(false)));
-        assert!(conn.contains_key("802-3-ethernet"));
-        assert!(conn.contains_key("bridge-port"));
+        assert!(conn["802-3-ethernet"].is_empty());
         assert!(!conn.contains_key("ipv4"));
         assert!(!conn.contains_key("ipv6"));
     }
@@ -566,6 +529,7 @@ mod tests {
                 BridgePortBuilder::new("br0", "0123456789abcdef"),
             ),
             ("interface_name", BridgePortBuilder::new("br0", "eth 0")),
+            ("interface_name", BridgePortBuilder::new("br0", "br0")),
         ] {
             assert_eq!(invalid_field(builder.build()), field);
         }

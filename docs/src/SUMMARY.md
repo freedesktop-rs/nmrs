@@ -23,6 +23,7 @@
   - [VPN Management](./guide/vpn-management.md)
 - [Ethernet Management](./guide/ethernet.md)
 - [Bridges](./guide/bridge.md)
+- [Bonding and Teaming](./guide/bonding.md)
 - [Bluetooth](./guide/bluetooth.md)
 - [Device Management](./guide/devices.md)
 - [Connection Profiles](./guide/profiles.md)

@@ -225,6 +225,10 @@ pub enum DeviceType {
     Bluetooth,
     /// VLAN (802.1Q) virtual device.
     Vlan,
+    /// Bond (link aggregation) controller device.
+    Bond,
+    /// Team (link aggregation) controller device.
+    Team,
     /// TUN/TAP virtual device. See [`Device::tun_mode`] for the mode.
     Tun,
     /// WireGuard tunnel device.
@@ -296,6 +300,8 @@ impl DeviceType {
             Self::Loopback => "loopback",
             Self::Bluetooth => "bluetooth",
             Self::Vlan => "vlan",
+            Self::Bond => "bond",
+            Self::Team => "team",
             Self::Tun => "tun",
             Self::WireGuard => "wireguard",
             Self::Bridge => "bridge",
@@ -316,7 +322,9 @@ impl DeviceType {
             Self::Loopback => 32,
             Self::Bluetooth => 5,
             Self::Vlan => 11,
+            Self::Bond => 10,
             Self::Bridge => 13,
+            Self::Team => 15,
             Self::Tun => 16,
             Self::WireGuard => 29,
             Self::Other(code) => *code,
@@ -431,6 +439,18 @@ impl Device {
         matches!(self.device_type, DeviceType::Vlan)
     }
 
+    /// Returns `true` if this is a bond controller device.
+    #[must_use]
+    pub fn is_bond(&self) -> bool {
+        matches!(self.device_type, DeviceType::Bond)
+    }
+
+    /// Returns `true` if this is a team controller device.
+    #[must_use]
+    pub fn is_team(&self) -> bool {
+        matches!(self.device_type, DeviceType::Team)
+    }
+
     /// Returns `true` if this is a TUN/TAP device.
     #[must_use]
     pub fn is_tun(&self) -> bool {
@@ -466,8 +486,10 @@ impl From<u32> for DeviceType {
             1 => DeviceType::Ethernet,
             2 => DeviceType::Wifi,
             5 => DeviceType::Bluetooth,
+            10 => DeviceType::Bond,
             11 => DeviceType::Vlan,
             13 => DeviceType::Bridge,
+            15 => DeviceType::Team,
             16 => DeviceType::Tun,
             29 => DeviceType::WireGuard,
             30 => DeviceType::WifiP2P,
@@ -506,6 +528,8 @@ impl Display for DeviceType {
             DeviceType::Loopback => write!(f, "Loopback"),
             DeviceType::Bluetooth => write!(f, "Bluetooth"),
             DeviceType::Vlan => write!(f, "VLAN"),
+            DeviceType::Bond => write!(f, "Bond"),
+            DeviceType::Team => write!(f, "Team"),
             DeviceType::Tun => write!(f, "TUN"),
             DeviceType::WireGuard => write!(f, "WireGuard"),
             DeviceType::Bridge => write!(f, "Bridge"),

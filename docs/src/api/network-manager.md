@@ -129,6 +129,21 @@ builder output, prefer
 For this method and the wired device-listing methods below, Ethernet includes
 devices that NetworkManager reports as `veth`.
 
+## Bond and Team Methods
+
+Each `create_*` and `add_*_port` method saves a profile without activating it and returns the profile UUID. Activate the controller with `connect_by_uuid`. See [Bonding and Teaming](../guide/bonding.md).
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `create_bond(&BondConfig, &ConnectionOptions)` | `Result<String>` | Save a bond profile |
+| `add_bond_port(bond_interface, port_interface, &ConnectionOptions)` | `Result<String>` | Save a port profile for a bond |
+| `set_bond_mode(uuid, BondMode)` | `Result<()>` | Replace the bond `mode` option, keep the others |
+| `list_bond_devices()` | `Result<Vec<BondDevice>>` | List bond devices with their ports |
+| `create_team(&TeamConfig, &ConnectionOptions)` | `Result<String>` | Save a team profile |
+| `add_team_port(team_interface, port_interface, &ConnectionOptions)` | `Result<String>` | Save a port profile for a team |
+| `set_team_runner(uuid, TeamRunner)` | `Result<()>` | Set the runner; drops any custom `team.config` |
+| `list_team_devices()` | `Result<Vec<TeamDevice>>` | List team devices with their ports and applied config |
+
 ## VPN Methods
 
 | Method | Returns | Description |

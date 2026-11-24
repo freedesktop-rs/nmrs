@@ -3,6 +3,26 @@
 All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
+### Added
+
+- Bonds and teams: `BondConfig`, `TeamConfig`, `create_bond`, `add_bond_port`,
+  `set_bond_mode`, `list_bond_devices`, and the team equivalents.
+  ([#632](https://github.com/freedesktop-rs/nmrs/pull/PR))
+- `DeviceType::Bond`, `DeviceType::Team`, `Device::is_bond()` and `Device::is_team()`.
+  ([#632](https://github.com/freedesktop-rs/nmrs/pull/PR))
+
+### Changed
+
+- Device types 10 and 15 are now `DeviceType::Bond` and `DeviceType::Team`, not
+  `Other(10)` and `Other(15)`.
+  ([#632](https://github.com/freedesktop-rs/nmrs/pull/PR))
+- `BridgePortBuilder` writes `controller` and `port-type`, rejects a port named like its bridge.
+  ([#632](https://github.com/freedesktop-rs/nmrs/pull/PR))
+
+### Fixed
+
+- `DeviceType::Other(12)` (ADSL) no longer reports as a bond.
+  ([#632](https://github.com/freedesktop-rs/nmrs/pull/PR))
 
 ## [3.5.13] - 2026-11-18
 ### Added

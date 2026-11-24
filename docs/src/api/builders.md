@@ -154,12 +154,30 @@ let wifi = try_build_wifi_connection(
 let eth = build_ethernet_connection("eth0", &ConnectionOptions::default());
 ```
 
+### Bond and Team Builders
+
+```rust
+use nmrs::builders::{
+    build_bond_connection, build_bond_port_connection,
+    build_team_connection, build_team_port_connection,
+};
+```
+
+| Function | Description |
+|----------|-------------|
+| `build_bond_connection(&BondConfig, &ConnectionOptions)` | Bond controller profile |
+| `build_bond_port_connection(bond_iface, port_iface, &ConnectionOptions)` | Ethernet port profile attached to a bond |
+| `build_team_connection(&TeamConfig, &ConnectionOptions)` | Team controller profile |
+| `build_team_port_connection(team_iface, port_iface, &ConnectionOptions)` | Ethernet port profile attached to a team |
+
+All validate interface names. Port profiles, including `BridgePortBuilder`'s, use `connection.controller` and `connection.port-type` and reject a port named like its controller.
+
 ## When to Use Builders
 
 Use the builders when you need:
 - Custom IP configuration (static IP, DNS, routes)
 - Specific Wi-Fi band or mode settings
-- Custom connection sections (bridge, bond, VLAN)
+- Custom connection sections
 - Fine-grained control over the settings dictionary
 
 For standard connections, the `NetworkManager` API handles everything automatically.

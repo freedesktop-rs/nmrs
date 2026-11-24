@@ -119,6 +119,7 @@
 //! - [`VpnConfig`] / [`VpnConfiguration`] — generic VPN dispatch trait/enum
 //! - [`VpnConnection`] / [`VpnConnectionInfo`] / [`VpnDetails`] / [`VpnType`] / [`VpnKind`] — saved or active VPN data
 //! - [`SavedConnection`] / [`SavedConnectionBrief`] / [`SettingsSummary`] / [`SettingsPatch`] — saved profile management
+//! - [`BondConfig`] / [`BondMode`] / [`BondDevice`] / [`TeamConfig`] / [`TeamRunner`] / [`TeamDevice`] — bond and team (link aggregation) profiles and devices
 //! - [`AirplaneModeState`] / [`RadioState`] — radio/rfkill state
 //! - [`BluetoothDevice`] / [`BluetoothIdentity`] / [`BluetoothNetworkRole`] — Bluetooth networking
 //! - [`ConnectivityState`] / [`ConnectivityReport`] — internet connectivity
@@ -135,7 +136,8 @@
 //! [`builders::BridgeBuilder`], [`builders::BridgePortBuilder`]) and
 //! free functions (`try_build_wifi_connection`, `build_ethernet_connection`,
 //! `build_wireguard_connection`, `build_openvpn_connection`,
-//! `build_bluetooth_connection`, `build_vlan_connection`) for constructing
+//! `build_bluetooth_connection`, `build_vlan_connection`,
+//! `build_bond_connection`, `build_team_connection`) for constructing
 //! NetworkManager settings dictionaries. Most callers should reach for the
 //! higher-level [`NetworkManager`] API; these builders are exposed for
 //! advanced use cases that need to assemble the raw settings dictionary
@@ -334,7 +336,7 @@ pub mod raw {
 // Public API
 // ============================================================================
 
-/// Connection builders for Wi-Fi, Ethernet, Bluetooth, VLAN, bridge, and VPN connections.
+/// Connection builders for Wi-Fi, Ethernet, Bluetooth, VLAN, bridge, bond, team, and VPN connections.
 ///
 /// This module provides two complementary APIs for constructing NetworkManager
 /// settings dictionaries:
@@ -348,7 +350,8 @@ pub mod raw {
 ///   chaining and validation at `.build()`.
 /// - **Free functions** — `try_build_wifi_connection`, `build_ethernet_connection`,
 ///   `build_wireguard_connection`, `build_openvpn_connection`,
-///   `build_bluetooth_connection`, and `build_vlan_connection`, which are
+///   `build_bluetooth_connection`, `build_vlan_connection`,
+///   `build_bond_connection`, and `build_team_connection`, which are
 ///   handy for one-shot construction.
 ///
 /// Most callers should prefer [`NetworkManager`]'s
@@ -389,6 +392,7 @@ pub mod builders {
 /// - [`NetworkInfo`] — Detailed network information returned by `show_details`
 /// - [`WifiDevice`] — Wi-Fi-specific device summary
 /// - [`WiredDevice`] — Ethernet-specific device summary
+/// - [`BondDevice`] / [`TeamDevice`] — Bond and team device summaries
 /// - [`ActiveConnection`] — Typed active connection summary
 /// - [`NetworkSnapshot`] — Point-in-time applet state snapshot
 /// - [`NetworkEvent`] / [`SettingsChange`] — Refresh-oriented monitoring events
@@ -405,6 +409,8 @@ pub mod builders {
 /// - [`WireGuardConfig`] / [`WireGuardPeer`] — WireGuard tunnel configuration
 /// - [`OpenVpnConfig`] — OpenVPN plugin configuration
 /// - [`VlanConfig`] — VLAN tagging configuration
+/// - [`BondConfig`] / [`BondMode`] — Bond configuration and bonding mode
+/// - [`TeamConfig`] / [`TeamRunner`] — Team configuration and runner
 /// - [`BluetoothIdentity`] — Bluetooth target (bdaddr + role)
 /// - [`VpnConfig`] / [`VpnConfiguration`] — Trait & enum used by `connect_vpn`
 ///
@@ -442,18 +448,18 @@ pub mod models {
 pub use api::models::{
     AccessPoint, ActiveConnection, ActiveConnectionState, ActiveOtherConnection,
     ActiveVpnConnection, ActiveWifiConnection, ActiveWiredConnection, AirplaneModeState, ApMode,
-    AppletNetworkSummary, BluetoothDevice, BluetoothIdentity, BluetoothNetworkRole,
-    ConnectByUuidConfig, ConnectType, ConnectionError, ConnectionOptions, ConnectionStateReason,
-    ConnectivityReport, ConnectivityState, Device, DeviceState, DeviceType, EapMethod, EapOptions,
-    GlobalDnsConfiguration, GlobalDnsDomain, MonitorHandle, Network, NetworkEvent,
-    NetworkEventStream, NetworkInfo, NetworkSnapshot, OpenVpnAuthType, OpenVpnCompression,
-    OpenVpnConfig, OpenVpnConnectionType, OpenVpnProxy, Phase2, RadioState, SavedConnection,
-    SavedConnectionBrief, SavedVpnSummary, SecurityFeatures, SettingsChange, SettingsEventStream,
-    SettingsPatch, SettingsSummary, StateReason, TimeoutConfig, TunMode, VlanConfig, VpnConfig,
-    VpnConfiguration, VpnConnection, VpnConnectionInfo, VpnCredentials, VpnDetails, VpnKind,
-    VpnRoute, VpnSecretFlags, VpnType, WifiDevice, WifiKeyMgmt, WifiNetworkGroup, WifiSecurity,
-    WifiSecuritySummary, WireGuardConfig, WireGuardPeer, WiredDevice,
-    connection_state_reason_to_error, reason_to_error,
+    AppletNetworkSummary, BluetoothDevice, BluetoothIdentity, BluetoothNetworkRole, BondConfig,
+    BondDevice, BondMode, ConnectByUuidConfig, ConnectType, ConnectionError, ConnectionOptions,
+    ConnectionStateReason, ConnectivityReport, ConnectivityState, Device, DeviceState, DeviceType,
+    EapMethod, EapOptions, GlobalDnsConfiguration, GlobalDnsDomain, MonitorHandle, Network,
+    NetworkEvent, NetworkEventStream, NetworkInfo, NetworkSnapshot, OpenVpnAuthType,
+    OpenVpnCompression, OpenVpnConfig, OpenVpnConnectionType, OpenVpnProxy, Phase2, RadioState,
+    SavedConnection, SavedConnectionBrief, SavedVpnSummary, SecurityFeatures, SettingsChange,
+    SettingsEventStream, SettingsPatch, SettingsSummary, StateReason, TeamConfig, TeamDevice,
+    TeamRunner, TimeoutConfig, TunMode, VlanConfig, VpnConfig, VpnConfiguration, VpnConnection,
+    VpnConnectionInfo, VpnCredentials, VpnDetails, VpnKind, VpnRoute, VpnSecretFlags, VpnType,
+    WifiDevice, WifiKeyMgmt, WifiNetworkGroup, WifiSecurity, WifiSecuritySummary, WireGuardConfig,
+    WireGuardPeer, WiredDevice, connection_state_reason_to_error, reason_to_error,
 };
 pub use api::network_manager::NetworkManager;
 pub use api::wifi_scope::WifiScope;

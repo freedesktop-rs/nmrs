@@ -11,14 +11,16 @@ use crate::api::models::snapshot::{
     saved_wifi_profiles as filter_saved_wifi_profiles,
 };
 use crate::api::models::{
-    ActiveConnection, AirplaneModeState, ConnectionError, Device, GlobalDnsConfiguration,
-    MonitorHandle, Network, NetworkInfo, NetworkSnapshot, RadioState, SavedConnection,
-    SavedConnectionBrief, SettingsPatch, WifiDevice, WifiSecurity, WiredDevice,
+    ActiveConnection, AirplaneModeState, BondConfig, BondDevice, BondMode, ConnectionError,
+    ConnectionOptions, Device, GlobalDnsConfiguration, MonitorHandle, Network, NetworkInfo,
+    NetworkSnapshot, RadioState, SavedConnection, SavedConnectionBrief, SettingsPatch, TeamConfig,
+    TeamDevice, TeamRunner, WifiDevice, WifiSecurity, WiredDevice,
 };
 use crate::api::wifi_scope::WifiScope;
 use crate::core::active_connection as active_connections;
 use crate::core::airplane;
 use crate::core::bluetooth::connect_bluetooth;
+use crate::core::bond;
 use crate::core::connection::{
     connect, connect_by_uuid, connect_to_bssid, connect_wired, disconnect, disconnect_by_uuid,
     forget_by_name_and_type, get_device_by_interface, is_connected,
@@ -36,6 +38,7 @@ use crate::core::device::{
 };
 use crate::core::saved_connection as saved_profiles;
 use crate::core::scan::{current_network, list_access_points, list_networks, scan_networks};
+use crate::core::team;
 use crate::core::vpn::{
     active_vpn_connections, connect_vpn, connect_vpn_by_id, disconnect_vpn, get_vpn_info,
     list_vpn_connections,
@@ -449,6 +452,94 @@ impl NetworkManager {
     /// assigned IP addresses when connected.
     pub async fn list_wired_device_details(&self) -> Result<Vec<WiredDevice>> {
         list_wired_device_details(&self.conn).await
+    }
+
+    /// Saves a bond controller profile and returns its UUID.
+    ///
+    /// Activate it with [`connect_by_uuid`](Self::connect_by_uuid); ports with
+    /// autoconnect come up with it.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use nmrs::{BondConfig, BondMode, ConnectByUuidConfig, ConnectionOptions, NetworkManager};
+    ///
+    /// # async fn example() -> nmrs::Result<()> {
+    /// let nm = NetworkManager::new().await?;
+    /// let opts = ConnectionOptions::new(true);
+    /// let config = BondConfig::new("bond0", BondMode::ActiveBackup).with_miimon(100);
+    /// let uuid = nm.create_bond(&config, &opts).await?;
+    /// nm.add_bond_port("bond0", "eth0", &opts).await?;
+    /// nm.connect_by_uuid(&uuid, ConnectByUuidConfig::default()).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn create_bond(
+        &self,
+        config: &BondConfig,
+        opts: &ConnectionOptions,
+    ) -> Result<String> {
+        bond::create_bond(&self.conn, config, opts).await
+    }
+
+    /// Saves a port profile attaching `port_interface` to a bond; returns its UUID.
+    ///
+    /// Writes `controller`/`port-type`.
+    pub async fn add_bond_port(
+        &self,
+        bond_interface: &str,
+        port_interface: &str,
+        opts: &ConnectionOptions,
+    ) -> Result<String> {
+        bond::add_bond_port(&self.conn, bond_interface, port_interface, opts).await
+    }
+
+    /// Changes the mode of a saved bond profile, keeping its other options.
+    ///
+    /// Fails with [`InvalidInput`](crate::ConnectionError::InvalidInput) if the
+    /// profile is not a bond. Applies on next activation.
+    pub async fn set_bond_mode(&self, uuid: &str, mode: BondMode) -> Result<()> {
+        bond::set_bond_mode(&self.conn, uuid, mode).await
+    }
+
+    /// Lists bond devices and their ports.
+    pub async fn list_bond_devices(&self) -> Result<Vec<BondDevice>> {
+        bond::list_bond_devices(&self.conn).await
+    }
+
+    /// Saves a team controller profile and returns its UUID.
+    ///
+    /// Needs the team plugin and `teamd`; removed in RHEL 10, prefer
+    /// [`create_bond`](Self::create_bond).
+    pub async fn create_team(
+        &self,
+        config: &TeamConfig,
+        opts: &ConnectionOptions,
+    ) -> Result<String> {
+        team::create_team(&self.conn, config, opts).await
+    }
+
+    /// Saves a port profile attaching `port_interface` to a team; returns its
+    /// UUID. See [`add_bond_port`](Self::add_bond_port).
+    pub async fn add_team_port(
+        &self,
+        team_interface: &str,
+        port_interface: &str,
+        opts: &ConnectionOptions,
+    ) -> Result<String> {
+        team::add_team_port(&self.conn, team_interface, port_interface, opts).await
+    }
+
+    /// Changes the runner of a saved team profile.
+    ///
+    /// Drops custom `team.config` JSON, as `nmcli` does. Applies on next activation.
+    pub async fn set_team_runner(&self, uuid: &str, runner: TeamRunner) -> Result<()> {
+        team::set_team_runner(&self.conn, uuid, runner).await
+    }
+
+    /// Lists team devices, their ports, and applied JSON config.
+    pub async fn list_team_devices(&self) -> Result<Vec<TeamDevice>> {
+        team::list_team_devices(&self.conn).await
     }
 
     /// Lists active NetworkManager connections classified for UI rendering.
@@ -1811,6 +1902,33 @@ mod tests {
             nm.connect(&name, None, WifiSecurity::Open).await?;
             nm.forget(&name).await?;
             nm.forget_vpn(&name).await?;
+            crate::Result::Ok(())
+        });
+    }
+
+    #[test]
+    fn bond_and_team_methods_can_be_spawned() {
+        spawnable(async {
+            let nm = NetworkManager::new().await?;
+            let uuid = String::from("uuid");
+            let opts = crate::ConnectionOptions::default();
+
+            nm.create_bond(
+                &crate::BondConfig::new("bond0", crate::BondMode::ActiveBackup),
+                &opts,
+            )
+            .await?;
+            nm.add_bond_port("bond0", "eth0", &opts).await?;
+            nm.set_bond_mode(&uuid, crate::BondMode::Ieee8023ad).await?;
+            nm.list_bond_devices().await?;
+            nm.create_team(
+                &crate::TeamConfig::new("team0", crate::TeamRunner::Lacp),
+                &opts,
+            )
+            .await?;
+            nm.add_team_port("team0", "eth0", &opts).await?;
+            nm.set_team_runner(&uuid, crate::TeamRunner::Random).await?;
+            nm.list_team_devices().await?;
             crate::Result::Ok(())
         });
     }

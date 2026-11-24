@@ -912,12 +912,12 @@ pub(crate) async fn get_saved_connection(conn: &Connection, uuid: &str) -> Resul
         .ok_or_else(|| ConnectionError::MalformedSavedConnection(uuid.to_string()))
 }
 
-pub(crate) async fn get_saved_connection_raw(
-    conn: &Connection,
+async fn saved_connection_proxy<'a>(
+    conn: &'a Connection,
     uuid: &str,
-) -> Result<HashMap<String, HashMap<String, OwnedValue>>> {
+) -> Result<NMSettingsConnectionProxy<'a>> {
     let path = resolve_saved_path_by_uuid(conn, uuid).await?;
-    let proxy = NMSettingsConnectionProxy::builder(conn)
+    NMSettingsConnectionProxy::builder(conn)
         .path(path)
         .map_err(ConnectionError::Dbus)?
         .build()
@@ -925,9 +925,15 @@ pub(crate) async fn get_saved_connection_raw(
         .map_err(|e| ConnectionError::DbusOperation {
             context: "failed to build Settings.Connection proxy".into(),
             source: e,
-        })?;
+        })
+}
 
-    proxy
+pub(crate) async fn get_saved_connection_raw(
+    conn: &Connection,
+    uuid: &str,
+) -> Result<HashMap<String, HashMap<String, OwnedValue>>> {
+    saved_connection_proxy(conn, uuid)
+        .await?
         .get_settings()
         .await
         .map_err(|e| ConnectionError::DbusOperation {
@@ -937,16 +943,7 @@ pub(crate) async fn get_saved_connection_raw(
 }
 
 pub(crate) async fn delete_saved_connection(conn: &Connection, uuid: &str) -> Result<()> {
-    let path = resolve_saved_path_by_uuid(conn, uuid).await?;
-    let proxy = NMSettingsConnectionProxy::builder(conn)
-        .path(path)
-        .map_err(ConnectionError::Dbus)?
-        .build()
-        .await
-        .map_err(|e| ConnectionError::DbusOperation {
-            context: "failed to build Settings.Connection proxy".into(),
-            source: e,
-        })?;
+    let proxy = saved_connection_proxy(conn, uuid).await?;
 
     proxy
         .delete()
@@ -964,22 +961,35 @@ pub(crate) async fn update_saved_connection(
 ) -> Result<()> {
     validate_settings_patch_removals(patch)?;
 
-    let path = resolve_saved_path_by_uuid(conn, uuid).await?;
-    let proxy = NMSettingsConnectionProxy::builder(conn)
-        .path(path)
-        .map_err(ConnectionError::Dbus)?
-        .build()
-        .await
-        .map_err(|e| ConnectionError::DbusOperation {
-            context: "failed to build Settings.Connection proxy".into(),
-            source: e,
-        })?;
+    let proxy = saved_connection_proxy(conn, uuid).await?;
 
     let delta = build_settings_patch_delta(patch);
     if delta.is_empty() && patch.remove.is_empty() && !matches!(patch.interface_name, Some(None)) {
         return Ok(());
     }
 
+    rewrite_settings(&proxy, |settings| {
+        merge_settings_patch_delta(settings, delta);
+        apply_settings_patch_removals(settings, patch);
+        Ok(())
+    })
+    .await
+}
+
+/// Applies `edit` to a profile's current settings and writes them back.
+pub(crate) async fn edit_saved_connection<F>(conn: &Connection, uuid: &str, edit: F) -> Result<()>
+where
+    F: FnOnce(&mut HashMap<String, HashMap<String, OwnedValue>>) -> Result<()> + Send,
+{
+    let proxy = saved_connection_proxy(conn, uuid).await?;
+    rewrite_settings(&proxy, edit).await
+}
+
+/// `GetSettings`, `edit`, then `Update` (or `UpdateUnsaved` for an unsaved profile).
+async fn rewrite_settings<F>(proxy: &NMSettingsConnectionProxy<'_>, edit: F) -> Result<()>
+where
+    F: FnOnce(&mut HashMap<String, HashMap<String, OwnedValue>>) -> Result<()> + Send,
+{
     let mut settings = proxy
         .get_settings()
         .await
@@ -987,8 +997,7 @@ pub(crate) async fn update_saved_connection(
             context: "GetSettings failed before update".into(),
             source: e,
         })?;
-    merge_settings_patch_delta(&mut settings, delta);
-    apply_settings_patch_removals(&mut settings, patch);
+    edit(&mut settings)?;
 
     let unsaved = proxy
         .unsaved()

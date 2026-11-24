@@ -847,10 +847,108 @@ pub fn validate_bssid(bssid: &str) -> Result<(), ConnectionError> {
     Ok(())
 }
 
+/// `IFNAMSIZ` minus the NUL.
+const MAX_INTERFACE_NAME_BYTES: usize = 15;
+
+/// Validates a kernel interface name like NetworkManager's
+/// `_nm_utils_ifname_valid_kernel`: 1–15 bytes, not `.` or `..`, no `/`, `:`,
+/// `%`, or ASCII whitespace (including vertical tab).
+///
+/// # Errors
+///
+/// Returns [`ConnectionError::InvalidInput`] with the given `field`.
+pub fn validate_interface_name(name: &str, field: &str) -> Result<(), ConnectionError> {
+    let invalid = |reason: String| ConnectionError::InvalidInput {
+        field: field.to_string(),
+        reason,
+    };
+
+    if name.is_empty() {
+        return Err(invalid("interface name cannot be empty".to_string()));
+    }
+    if name == "." || name == ".." {
+        return Err(invalid(format!("interface name cannot be \"{name}\"")));
+    }
+    if name.len() > MAX_INTERFACE_NAME_BYTES {
+        return Err(invalid(format!(
+            "interface name too long: {} bytes (max {} bytes)",
+            name.len(),
+            MAX_INTERFACE_NAME_BYTES
+        )));
+    }
+    if let Some(c) = name
+        .chars()
+        .find(|c| matches!(c, '/' | ':' | '%' | '\u{0b}') || c.is_ascii_whitespace())
+    {
+        return Err(invalid(format!("interface name cannot contain {c:?}")));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::api::models::{EapMethod, EapOptions, Phase2, VpnKind, VpnRoute};
+
+    #[test]
+    fn interface_name_accepts_valid_names() {
+        for name in [
+            "bond0",
+            "eth0",
+            "enp3s0",
+            "a",
+            "team-0",
+            "br.100",
+            "123456789012345",
+        ] {
+            validate_interface_name(name, "f").unwrap_or_else(|e| panic!("{name}: {e}"));
+        }
+    }
+
+    #[test]
+    fn interface_name_rejects_empty_and_dots() {
+        for name in ["", ".", ".."] {
+            assert!(
+                matches!(
+                    validate_interface_name(name, "f"),
+                    Err(ConnectionError::InvalidInput { ref field, .. }) if field == "f"
+                ),
+                "{name:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn interface_name_enforces_15_byte_limit() {
+        validate_interface_name("123456789012345", "f").unwrap();
+        assert!(validate_interface_name("1234567890123456", "f").is_err());
+        // 8 two-byte characters = 16 bytes
+        assert!(validate_interface_name("éééééééé", "f").is_err());
+    }
+
+    #[test]
+    fn interface_name_rejects_forbidden_characters() {
+        for name in [
+            "a/b", "a:b", "a%b", "a b", "a\tb", "a\nb", "a\u{0b}b", "a\u{0c}b", "a\rb",
+        ] {
+            assert!(
+                validate_interface_name(name, "f").is_err(),
+                "{name:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn interface_name_error_carries_field() {
+        match validate_interface_name("", "options.primary") {
+            Err(ConnectionError::InvalidInput { field, reason }) => {
+                assert_eq!(field, "options.primary");
+                assert_eq!(reason, "interface name cannot be empty");
+            }
+            other => panic!("unexpected result: {other:?}"),
+        }
+    }
 
     macro_rules! assert_error_message {
         ($result:expr, $variant:ident, $expected:expr) => {
