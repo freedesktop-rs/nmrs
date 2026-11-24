@@ -66,7 +66,7 @@ misplaced `primary` return `InvalidInput`.
 options that conflict with the new mode (e.g. `primary` with `802.3ad`).
 Reactivate to apply.
 
-`list_bond_devices()` returns `BondDevice { path, interface, hw_address, state, ports }`,
+`list_bond_devices()` returns `BondDevice { path, interface, hw_address, state, carrier, ports }`,
 where `ports` are interface names.
 
 ## Teams

@@ -224,6 +224,9 @@ pub struct BondDevice {
     /// Current device state.
     pub state: DeviceState,
 
+    /// Whether the bond has carrier.
+    pub carrier: bool,
+
     /// Interface names of the port devices attached to the bond.
     pub ports: Vec<String>,
 }

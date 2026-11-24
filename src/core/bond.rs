@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use zbus::Connection;
+use zbus::proxy::CacheProperties;
 use zvariant::{Dict, OwnedValue, Value};
 
 use crate::Result;
@@ -12,6 +13,7 @@ use crate::api::models::{
 };
 use crate::core::controller::{controller_devices, ensure_connection_type, save_profile};
 use crate::core::saved_connection::edit_saved_connection;
+use crate::dbus::NMBondProxy;
 
 /// Saves a bond controller profile and returns its UUID.
 pub(crate) async fn create_bond(
@@ -57,19 +59,27 @@ fn set_mode(settings: &mut RawSettings, uuid: &str, mode: BondMode) -> Result<()
     Ok(())
 }
 
-/// Lists bond devices with their MAC address, state, and port interfaces.
+/// Lists bond devices with their MAC address, state, carrier, and port interfaces.
 pub(crate) async fn list_bond_devices(conn: &Connection) -> Result<Vec<BondDevice>> {
-    Ok(controller_devices(conn, DeviceType::Bond.to_code())
-        .await?
-        .into_iter()
-        .map(|device| BondDevice {
+    let mut bonds = Vec::new();
+    for device in controller_devices(conn, DeviceType::Bond.to_code()).await? {
+        let bond = NMBondProxy::builder(conn)
+            .path(device.path.clone())?
+            .cache_properties(CacheProperties::No)
+            .build()
+            .await?;
+        let carrier = bond.carrier().await.unwrap_or(false);
+
+        bonds.push(BondDevice {
             path: device.path.to_string(),
             interface: device.interface,
             hw_address: device.hw_address,
             state: device.state,
+            carrier,
             ports: device.ports,
-        })
-        .collect())
+        });
+    }
+    Ok(bonds)
 }
 
 #[cfg(test)]
