@@ -3,6 +3,21 @@
 All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
+### Added
+
+- `DeviceType::Bond` and `Device::is_bond()`.
+  ([#633](https://github.com/freedesktop-rs/nmrs/pull/633))
+
+### Changed
+
+- Device type 10 is now `DeviceType::Bond`, not `Other(10)`. Code that matches
+  on that `Other` value needs updating. ([#633](https://github.com/freedesktop-rs/nmrs/pull/633))
+
+### Fixed
+
+- The device type registry mapped bond to code 12, which is ADSL. Bond is 10, and
+  `Other(12)` no longer displays as "Bond" or reports connection type `bond`.
+  ([#633](https://github.com/freedesktop-rs/nmrs/pull/633))
 
 ## [3.5.13] - 2026-11-18
 ### Added
