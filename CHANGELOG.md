@@ -4,6 +4,10 @@ All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- `NetworkManager::network_events` no longer keeps a signal stream, proxy and match rule alive for every access point and device NetworkManager has removed, which grew memory without bound in long-running consumers (#635)
+
 ## [3.5.13] - 2026-11-18
 ### Added
 
