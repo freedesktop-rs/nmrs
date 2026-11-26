@@ -9,7 +9,8 @@ use std::time::Duration;
 use futures::{FutureExt, StreamExt};
 use nmrs::agent::{SecretAgent, SecretAgentFlags, SecretAgentHandle, SecretSetting};
 use nmrs::builders::{
-    BridgeBuilder, BridgePortBuilder, ConnectionBuilder, IpConfig, WireGuardBuilder,
+    BondBuilder, BondMode, BondPortBuilder, BridgeBuilder, BridgePortBuilder, ConnectionBuilder,
+    IpConfig, WireGuardBuilder,
 };
 use nmrs::raw::zvariant::{OwnedObjectPath, OwnedValue, Str, Value};
 use nmrs::{
@@ -1033,6 +1034,111 @@ async fn networkmanager_bridge_and_port_profiles() {
 
     let mut cleanup_failures = cleanup_saved_profile(&nm, &port_uuid).await;
     cleanup_failures.extend(cleanup_saved_profile(&nm, &bridge_uuid).await);
+    finish_after_cleanup(outcome, cleanup_failures);
+}
+
+/// A bond and a separate port profile save through `add_connection`
+/// without activating anything. NetworkManager keeps the bonding options and
+/// the port's bond membership with no IP configuration. No bond device is
+/// required.
+#[tokio::test]
+#[serial]
+#[ignore = "requires NMRS_REQUIRE_NETWORKMANAGER=1 and an isolated NetworkManager"]
+async fn networkmanager_bond_and_port_profiles() {
+    let nm = network_manager().await;
+    let bond_settings = BondBuilder::new("nmrs-bond0")
+        .mode(BondMode::ActiveBackup)
+        .miimon(100)
+        .autoconnect(false)
+        .build()
+        .expect("valid bond");
+    let port_settings = BondPortBuilder::new("nmrs-bond0", "nmrs-bport0")
+        .autoconnect(false)
+        .build()
+        .expect("valid bond port");
+    let uuid_of = |settings: &HashMap<&str, HashMap<&str, Value<'static>>>| {
+        String::try_from(settings["connection"]["uuid"].clone()).expect("builder uuid is a string")
+    };
+    let bond_uuid = uuid_of(&bond_settings);
+    let port_uuid = uuid_of(&port_settings);
+
+    let outcome = AssertUnwindSafe(async {
+        bounded(
+            "save the bond profile",
+            DBUS_TIMEOUT,
+            nm.add_connection(bond_settings),
+        )
+        .await
+        .expect("NetworkManager rejected the bond profile");
+        bounded(
+            "save the bond port profile",
+            DBUS_TIMEOUT,
+            nm.add_connection(port_settings),
+        )
+        .await
+        .expect("NetworkManager rejected the bond port profile");
+
+        let bond = bounded(
+            "reload the bond profile",
+            DBUS_TIMEOUT,
+            nm.get_saved_connection_raw(&bond_uuid),
+        )
+        .await
+        .expect("failed to reload the bond profile");
+        let options = bond
+            .get("bond")
+            .and_then(|section| section.get("options"))
+            .and_then(|value| value.try_clone().ok())
+            .and_then(|value| HashMap::<String, String>::try_from(value).ok())
+            .unwrap_or_else(|| panic!("bond profile has no a{{ss}} bond.options: {bond:?}"));
+        assert_eq!(
+            options.get("mode").map(String::as_str),
+            Some("active-backup"),
+            "bond lost its mode: {options:?}"
+        );
+        assert_eq!(
+            options.get("miimon").map(String::as_str),
+            Some("100"),
+            "bond lost miimon: {options:?}"
+        );
+
+        let port = bounded(
+            "reload the bond port profile",
+            DBUS_TIMEOUT,
+            nm.get_saved_connection_raw(&port_uuid),
+        )
+        .await
+        .expect("failed to reload the bond port profile");
+        let connection = &port["connection"];
+        let string_at = |key: &str| {
+            connection
+                .get(key)
+                .and_then(|value| String::try_from(value.clone()).ok())
+        };
+        assert_eq!(
+            string_at("master")
+                .or_else(|| string_at("controller"))
+                .as_deref(),
+            Some("nmrs-bond0"),
+            "port lost its bond controller: {port:?}"
+        );
+        assert_eq!(
+            string_at("slave-type")
+                .or_else(|| string_at("port-type"))
+                .as_deref(),
+            Some("bond"),
+            "port lost its port type: {port:?}"
+        );
+        assert!(
+            !port.contains_key("ipv4") && !port.contains_key("ipv6"),
+            "port profile carries IP configuration: {port:?}"
+        );
+    })
+    .catch_unwind()
+    .await;
+
+    let mut cleanup_failures = cleanup_saved_profile(&nm, &port_uuid).await;
+    cleanup_failures.extend(cleanup_saved_profile(&nm, &bond_uuid).await);
     finish_after_cleanup(outcome, cleanup_failures);
 }
 
