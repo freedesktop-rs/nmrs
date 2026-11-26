@@ -132,7 +132,8 @@
 //! The [`builders`] module provides both fluent builder types
 //! ([`builders::ConnectionBuilder`], [`builders::WifiConnectionBuilder`],
 //! [`builders::WireGuardBuilder`], [`builders::OpenVpnBuilder`],
-//! [`builders::BridgeBuilder`], [`builders::BridgePortBuilder`]) and
+//! [`builders::BridgeBuilder`], [`builders::BridgePortBuilder`],
+//! [`builders::BondBuilder`], [`builders::BondPortBuilder`]) and
 //! free functions (`try_build_wifi_connection`, `build_ethernet_connection`,
 //! `build_wireguard_connection`, `build_openvpn_connection`,
 //! `build_bluetooth_connection`, `build_vlan_connection`) for constructing
@@ -334,7 +335,7 @@ pub mod raw {
 // Public API
 // ============================================================================
 
-/// Connection builders for Wi-Fi, Ethernet, Bluetooth, VLAN, bridge, and VPN connections.
+/// Connection builders for Wi-Fi, Ethernet, Bluetooth, VLAN, bridge, bond, and VPN connections.
 ///
 /// This module provides two complementary APIs for constructing NetworkManager
 /// settings dictionaries:
@@ -343,8 +344,10 @@ pub mod raw {
 ///   [`WifiConnectionBuilder`](builders::WifiConnectionBuilder),
 ///   [`WireGuardBuilder`](builders::WireGuardBuilder),
 ///   [`OpenVpnBuilder`](builders::OpenVpnBuilder),
-///   [`BridgeBuilder`](builders::BridgeBuilder), and
-///   [`BridgePortBuilder`](builders::BridgePortBuilder), which support method
+///   [`BridgeBuilder`](builders::BridgeBuilder),
+///   [`BridgePortBuilder`](builders::BridgePortBuilder),
+///   [`BondBuilder`](builders::BondBuilder), and
+///   [`BondPortBuilder`](builders::BondPortBuilder), which support method
 ///   chaining and validation at `.build()`.
 /// - **Free functions** — `try_build_wifi_connection`, `build_ethernet_connection`,
 ///   `build_wireguard_connection`, `build_openvpn_connection`,

@@ -321,13 +321,13 @@ impl BridgePortBuilder {
     }
 }
 
-fn set_id(inner: ConnectionBuilder, id: String) -> ConnectionBuilder {
+pub(super) fn set_id(inner: ConnectionBuilder, id: String) -> ConnectionBuilder {
     inner.update_section("connection", |s| {
         s.insert("id", Value::from(id));
     })
 }
 
-fn check_interface_name(name: &str) -> Result<(), ConnectionError> {
+pub(super) fn check_interface_name(name: &str) -> Result<(), ConnectionError> {
     if name.is_empty() || name.len() > MAX_INTERFACE_NAME_LEN {
         return Err(invalid("interface_name", "must be between 1 and 15 bytes"));
     }
@@ -346,7 +346,7 @@ fn check_interface_name(name: &str) -> Result<(), ConnectionError> {
     Ok(())
 }
 
-fn invalid(field: &str, reason: &str) -> ConnectionError {
+pub(super) fn invalid(field: &str, reason: &str) -> ConnectionError {
     ConnectionError::InvalidInput {
         field: field.to_string(),
         reason: reason.to_string(),
