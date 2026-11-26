@@ -3,6 +3,10 @@
 All notable changes to the `nmrs` crate will be documented in this file.
 
 ## [Unreleased]
+### Added
+
+- Bonds: `BondBuilder` and `BondPortBuilder`, saved with `add_connection`, and
+  `BondMode`. ([#636](https://github.com/freedesktop-rs/nmrs/pull/636))
 
 ## [3.5.13] - 2026-11-18
 ### Added
