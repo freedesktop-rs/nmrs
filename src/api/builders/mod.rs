@@ -19,6 +19,8 @@
 //! - [`WireGuardBuilder`] — kernel-level WireGuard tunnels.
 //! - [`BridgeBuilder`] / [`BridgePortBuilder`] — bridges and their port
 //!   profiles.
+//! - [`BondBuilder`] / [`BondPortBuilder`] — bonds and their port profiles.
+//!   See [`BondMode`].
 //! - [`OpenVpnBuilder`] — NM-plugin OpenVPN connections, with
 //!   [`from_ovpn_file`](OpenVpnBuilder::from_ovpn_file) for `.ovpn` import.
 //!
@@ -107,6 +109,7 @@
 //! [`NetworkManager::add_and_activate_connection`](crate::NetworkManager::add_and_activate_connection).
 
 pub mod bluetooth;
+pub mod bond_builder;
 pub mod bridge_builder;
 pub mod connection_builder;
 pub mod openvpn_builder;
@@ -117,6 +120,7 @@ pub mod wifi_builder;
 pub mod wireguard_builder;
 
 // Re-export core builder types
+pub use bond_builder::{BondBuilder, BondMode, BondPortBuilder};
 pub use bridge_builder::{BridgeBuilder, BridgePortBuilder};
 pub use connection_builder::{ConnectionBuilder, IpConfig, Route};
 pub use openvpn_builder::OpenVpnBuilder;
