@@ -54,9 +54,12 @@ fn device_type_code_round_trips_all_variants() {
 #[test]
 fn device_type_from_u32_registry_types() {
     // VLAN and bridge are first-class variants
+    assert_eq!(DeviceType::from(10), DeviceType::Bond);
     assert_eq!(DeviceType::from(11), DeviceType::Vlan);
+    assert_eq!(DeviceType::from(15), DeviceType::Other(15));
     assert_eq!(DeviceType::from(13), DeviceType::Bridge);
     // These still fall through to Other since they're only in the registry
+    // 12 is ADSL, not Bond
     assert_eq!(DeviceType::from(12), DeviceType::Other(12));
     assert_eq!(DeviceType::from(20), DeviceType::Other(20));
 }
@@ -76,7 +79,8 @@ fn device_type_display() {
 #[test]
 fn device_type_display_registry() {
     assert_eq!(format!("{}", DeviceType::Other(13)), "Bridge");
-    assert_eq!(format!("{}", DeviceType::Other(12)), "Bond");
+    assert_eq!(format!("{}", DeviceType::Bond), "Bond");
+    assert_eq!(format!("{}", DeviceType::Other(12)), "Other(12)");
     assert_eq!(format!("{}", DeviceType::Other(11)), "VLAN");
     assert_eq!(format!("{}", DeviceType::Tun), "TUN");
     assert_eq!(format!("{}", DeviceType::Other(20)), "Veth");
@@ -140,7 +144,8 @@ fn device_type_connection_type_str() {
 #[test]
 fn device_type_connection_type_str_registry() {
     assert_eq!(DeviceType::Other(13).connection_type_str(), "bridge");
-    assert_eq!(DeviceType::Other(12).connection_type_str(), "bond");
+    assert_eq!(DeviceType::Bond.connection_type_str(), "bond");
+    assert_eq!(DeviceType::Other(12).connection_type_str(), "generic");
     assert_eq!(DeviceType::Other(11).connection_type_str(), "vlan");
     assert_eq!(
         DeviceType::Other(20).connection_type_str(),
@@ -152,6 +157,7 @@ fn device_type_connection_type_str_registry() {
 #[test]
 fn device_type_to_code_registry() {
     assert_eq!(DeviceType::Other(11).to_code(), 11);
+    assert_eq!(DeviceType::Bond.to_code(), 10);
     assert_eq!(DeviceType::Other(12).to_code(), 12);
     assert_eq!(DeviceType::Other(13).to_code(), 13);
     assert_eq!(DeviceType::Tun.to_code(), 16);
@@ -1592,4 +1598,11 @@ fn tun_mode_from_nm_str() {
     assert_eq!(TunMode::from_nm_str(""), None);
     assert_eq!(TunMode::from_nm_str("TUN"), None);
     assert_ne!(TunMode::Tun, TunMode::Tap);
+}
+
+#[test]
+fn device_is_bond() {
+    assert!(device_with_type(DeviceType::Bond).is_bond());
+    assert!(!device_with_type(DeviceType::Ethernet).is_bond());
+    assert!(!device_with_type(DeviceType::Other(12)).is_bond());
 }

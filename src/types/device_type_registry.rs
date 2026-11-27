@@ -166,7 +166,7 @@ struct BondDeviceType;
 
 impl DeviceTypeInfo for BondDeviceType {
     fn nm_type_code(&self) -> u32 {
-        12
+        10
     }
 
     fn display_name(&self) -> &'static str {
@@ -320,8 +320,8 @@ mod tests {
         let expected = [
             (1, "Ethernet", "802-3-ethernet", false, false, false, true),
             (2, "Wi-Fi", "802-11-wireless", true, true, true, false),
+            (10, "Bond", "bond", false, false, false, false),
             (11, "VLAN", "vlan", false, false, false, false),
-            (12, "Bond", "bond", false, false, false, false),
             (13, "Bridge", "bridge", false, false, false, false),
             (16, "TUN", "tun", false, false, false, false),
             (20, "Veth", "802-3-ethernet", false, false, false, true),
@@ -346,6 +346,37 @@ mod tests {
             assert_eq!(has_global_enabled_state(code), global_state);
             assert_eq!(is_wired(code), wired);
         }
+    }
+
+    #[test]
+    fn registry_agrees_with_device_type_enum() {
+        use crate::api::models::DeviceType;
+
+        for variant in [
+            DeviceType::Ethernet,
+            DeviceType::Wifi,
+            DeviceType::WifiP2P,
+            DeviceType::Loopback,
+            DeviceType::Vlan,
+            DeviceType::Bridge,
+            DeviceType::Bond,
+            DeviceType::Tun,
+            DeviceType::WireGuard,
+        ] {
+            let info = get_device_type_info(variant.to_code())
+                .unwrap_or_else(|| panic!("{variant} should be registered"));
+            assert_eq!(info.nm_type_code(), variant.to_code(), "{variant}");
+            assert_eq!(info.connection_type(), variant.connection_type_str());
+            assert_eq!(info.display_name(), variant.to_string());
+        }
+    }
+
+    #[test]
+    fn code_12_is_adsl_not_bond() {
+        assert!(get_device_type_info(12).is_none());
+        assert_eq!(display_name_for_code(12), "Other(12)");
+        assert_eq!(connection_type_for_code(12), None);
+        assert_eq!(connection_type_for_code(10), Some("bond"));
     }
 
     #[test]
