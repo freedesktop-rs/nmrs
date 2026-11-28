@@ -1,9 +1,10 @@
 //! Unified stream-based NetworkManager event monitoring.
 
+use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 
 use futures::channel::{mpsc, oneshot};
-use futures::stream::{Stream, StreamExt};
+use futures::stream::{AbortHandle, Stream, StreamExt, abortable};
 use log::trace;
 use zbus::Connection;
 use zvariant::OwnedObjectPath;
@@ -15,33 +16,97 @@ use crate::monitoring::settings;
 use crate::types::constants::device_type;
 
 type InternalEventStream<'a> = Pin<Box<dyn Stream<Item = InternalEvent> + Send + 'a>>;
+struct ObjectEventStream<'a> {
+    path: OwnedObjectPath,
+    parent: Option<OwnedObjectPath>,
+    stream: InternalEventStream<'a>,
+}
 
 enum InternalEvent {
     Event(NetworkEvent),
     Error(ConnectionError),
-    AccessPointAdded(OwnedObjectPath),
-    AccessPointRemoved,
+    AccessPointAdded {
+        device: OwnedObjectPath,
+        access_point: OwnedObjectPath,
+    },
+    AccessPointRemoved(OwnedObjectPath),
     DeviceAdded(OwnedObjectPath),
-    DeviceRemoved,
+    DeviceRemoved(OwnedObjectPath),
 }
 
 enum InternalEventAction {
     Event(NetworkEvent),
     Error(ConnectionError),
-    MonitorAccessPoint(OwnedObjectPath),
+    MonitorAccessPoint {
+        device: OwnedObjectPath,
+        access_point: OwnedObjectPath,
+    },
     MonitorDevice(OwnedObjectPath),
+    ForgetObject(OwnedObjectPath, NetworkEvent),
 }
 
 fn classify_internal_event(event: InternalEvent) -> InternalEventAction {
     match event {
         InternalEvent::Event(event) => InternalEventAction::Event(event),
         InternalEvent::Error(error) => InternalEventAction::Error(error),
-        InternalEvent::AccessPointAdded(path) => InternalEventAction::MonitorAccessPoint(path),
-        InternalEvent::AccessPointRemoved => {
-            InternalEventAction::Event(NetworkEvent::AccessPointsChanged)
+        InternalEvent::AccessPointAdded {
+            device,
+            access_point,
+        } => InternalEventAction::MonitorAccessPoint {
+            device,
+            access_point,
+        },
+        InternalEvent::AccessPointRemoved(path) => {
+            InternalEventAction::ForgetObject(path, NetworkEvent::AccessPointsChanged)
         }
         InternalEvent::DeviceAdded(path) => InternalEventAction::MonitorDevice(path),
-        InternalEvent::DeviceRemoved => InternalEventAction::Event(device_change_event(None)),
+        InternalEvent::DeviceRemoved(path) => {
+            InternalEventAction::ForgetObject(path, device_change_event(None))
+        }
+    }
+}
+
+#[derive(Default)]
+struct ObjectStreams {
+    handles: HashMap<OwnedObjectPath, Vec<AbortHandle>>,
+    children: HashMap<OwnedObjectPath, HashSet<OwnedObjectPath>>,
+    parents: HashMap<OwnedObjectPath, OwnedObjectPath>,
+}
+
+impl ObjectStreams {
+    fn track<'a>(&mut self, object: ObjectEventStream<'a>) -> InternalEventStream<'a> {
+        let (stream, handle) = abortable(object.stream);
+        if let Some(parent) = object.parent {
+            self.children
+                .entry(parent.clone())
+                .or_default()
+                .insert(object.path.clone());
+            self.parents.insert(object.path.clone(), parent);
+        }
+        self.handles.entry(object.path).or_default().push(handle);
+        Box::pin(stream)
+    }
+
+    fn release(&mut self, path: &OwnedObjectPath) {
+        for handle in self.handles.remove(path).unwrap_or_default() {
+            handle.abort();
+        }
+        if let Some(parent) = self.parents.remove(path)
+            && let Some(siblings) = self.children.get_mut(&parent)
+        {
+            siblings.remove(path);
+            if siblings.is_empty() {
+                self.children.remove(&parent);
+            }
+        }
+        for child in self.children.remove(path).unwrap_or_default() {
+            self.release(&child);
+        }
+    }
+
+    #[cfg(test)]
+    fn is_empty(&self) -> bool {
+        self.handles.is_empty() && self.children.is_empty() && self.parents.is_empty()
     }
 }
 
@@ -91,12 +156,14 @@ async fn run_network_events(
         Err(err) => InternalEvent::Error(err),
     })));
 
-    for stream in setup_or_report!(device_state_streams(&conn, &nm)) {
-        streams.push(stream);
+    let mut objects = ObjectStreams::default();
+
+    for object in setup_or_report!(device_state_streams(&conn, &nm)) {
+        streams.push(objects.track(object));
     }
 
-    for stream in setup_or_report!(access_point_streams(&conn, &nm)) {
-        streams.push(stream);
+    for object in setup_or_report!(access_point_streams(&conn, &nm)) {
+        streams.push(objects.track(object));
     }
 
     if ready_tx.send(Ok(())).is_err() {
@@ -116,13 +183,17 @@ async fn run_network_events(
                     return Ok(());
                 }
             }
-            InternalEventAction::MonitorAccessPoint(path) => {
+            InternalEventAction::MonitorAccessPoint {
+                device,
+                access_point,
+            } => {
                 if !send_event(&tx, NetworkEvent::AccessPointsChanged) {
                     return Ok(());
                 }
-                match access_point_strength_stream(&conn, path.clone()).await {
-                    Ok(stream) => merged.push(stream),
-                    Err(err) => trace!("failed to monitor access point {path}: {err}"),
+                objects.release(&access_point);
+                match access_point_strength_stream(&conn, device, access_point.clone()).await {
+                    Ok(object) => merged.push(objects.track(object)),
+                    Err(err) => trace!("failed to monitor access point {access_point}: {err}"),
                 }
             }
             InternalEventAction::MonitorDevice(path) => {
@@ -130,17 +201,28 @@ async fn run_network_events(
                 if !send_event(&tx, event) {
                     return Ok(());
                 }
+                objects.release(&path);
                 match device_state_stream(&conn, path.clone()).await {
-                    Ok(stream) => merged.push(stream),
+                    Ok(stream) => merged.push(objects.track(ObjectEventStream {
+                        path: path.clone(),
+                        parent: None,
+                        stream,
+                    })),
                     Err(err) => trace!("failed to monitor device {path}: {err}"),
                 }
                 match wireless_device_streams(&conn, path.clone()).await {
                     Ok(streams) => {
-                        for stream in streams {
-                            merged.push(stream);
+                        for object in streams {
+                            merged.push(objects.track(object));
                         }
                     }
                     Err(err) => trace!("failed to monitor wireless device {path}: {err}"),
+                }
+            }
+            InternalEventAction::ForgetObject(path, event) => {
+                objects.release(&path);
+                if !send_event(&tx, event) {
+                    return Ok(());
                 }
             }
         }
@@ -165,9 +247,13 @@ async fn base_network_event_streams<'a>(
     })));
 
     let device_removed = nm.receive_device_removed().await?;
-    streams.push(Box::pin(
-        device_removed.map(|_| InternalEvent::DeviceRemoved),
-    ));
+    streams.push(Box::pin(device_removed.map(|signal| {
+        signal
+            .args()
+            .map_or(InternalEvent::Event(device_change_event(None)), |args| {
+                InternalEvent::DeviceRemoved(args.device().clone())
+            })
+    })));
 
     let nm_state_changed = nm.receive_state_changed().await?;
     streams.push(Box::pin(
@@ -215,12 +301,16 @@ async fn base_network_event_streams<'a>(
 async fn device_state_streams<'a>(
     conn: &'a Connection,
     nm: &'a NMProxy<'a>,
-) -> Result<Vec<InternalEventStream<'a>>> {
-    let mut streams: Vec<InternalEventStream<'_>> = Vec::new();
+) -> Result<Vec<ObjectEventStream<'a>>> {
+    let mut streams: Vec<ObjectEventStream<'_>> = Vec::new();
 
     for path in nm.get_devices().await? {
         match device_state_stream(conn, path.clone()).await {
-            Ok(stream) => streams.push(stream),
+            Ok(stream) => streams.push(ObjectEventStream {
+                path,
+                parent: None,
+                stream,
+            }),
             Err(err) => trace!("failed to monitor device {path}: {err}"),
         }
     }
@@ -262,8 +352,8 @@ async fn device_changed_for_path(conn: &Connection, path: &OwnedObjectPath) -> N
 async fn access_point_streams<'a>(
     conn: &'a Connection,
     nm: &'a NMProxy<'a>,
-) -> Result<Vec<InternalEventStream<'a>>> {
-    let mut streams: Vec<InternalEventStream<'_>> = Vec::new();
+) -> Result<Vec<ObjectEventStream<'a>>> {
+    let mut streams: Vec<ObjectEventStream<'_>> = Vec::new();
 
     for device_path in nm.get_devices().await? {
         match wireless_device_streams(conn, device_path.clone()).await {
@@ -278,8 +368,8 @@ async fn access_point_streams<'a>(
 async fn wireless_device_streams<'a>(
     conn: &'a Connection,
     device_path: OwnedObjectPath,
-) -> Result<Vec<InternalEventStream<'a>>> {
-    let mut streams: Vec<InternalEventStream<'_>> = Vec::new();
+) -> Result<Vec<ObjectEventStream<'a>>> {
+    let mut streams: Vec<ObjectEventStream<'_>> = Vec::new();
     let device = NMDeviceProxy::builder(conn)
         .path(device_path.clone())?
         .build()
@@ -295,26 +385,40 @@ async fn wireless_device_streams<'a>(
         .await?;
 
     let added = wifi.receive_access_point_added().await?;
-    streams.push(Box::pin(added.map(|signal| {
-        signal.args().map_or(
-            InternalEvent::Event(NetworkEvent::AccessPointsChanged),
-            |args| InternalEvent::AccessPointAdded(args.path().clone()),
-        )
-    })));
+    let owner = device_path.clone();
+    streams.push(ObjectEventStream {
+        path: device_path.clone(),
+        parent: None,
+        stream: Box::pin(added.map(move |signal| {
+            signal.args().map_or(
+                InternalEvent::Event(NetworkEvent::AccessPointsChanged),
+                |args| InternalEvent::AccessPointAdded {
+                    device: owner.clone(),
+                    access_point: args.path().clone(),
+                },
+            )
+        })),
+    });
 
     let removed = wifi.receive_access_point_removed().await?;
-    streams.push(Box::pin(removed.map(|signal| {
-        signal.args().map_or(
-            InternalEvent::Event(NetworkEvent::AccessPointsChanged),
-            |_| InternalEvent::AccessPointRemoved,
-        )
-    })));
+    streams.push(ObjectEventStream {
+        path: device_path.clone(),
+        parent: None,
+        stream: Box::pin(removed.map(|signal| {
+            signal.args().map_or(
+                InternalEvent::Event(NetworkEvent::AccessPointsChanged),
+                |args| InternalEvent::AccessPointRemoved(args.path().clone()),
+            )
+        })),
+    });
 
     match wifi.access_points().await {
         Ok(access_points) => {
             for access_point in access_points {
-                match access_point_strength_stream(conn, access_point.clone()).await {
-                    Ok(stream) => streams.push(stream),
+                match access_point_strength_stream(conn, device_path.clone(), access_point.clone())
+                    .await
+                {
+                    Ok(object) => streams.push(object),
                     Err(err) => trace!("failed to monitor access point {access_point}: {err}"),
                 }
             }
@@ -327,20 +431,25 @@ async fn wireless_device_streams<'a>(
 
 async fn access_point_strength_stream<'a>(
     conn: &'a Connection,
+    device: OwnedObjectPath,
     path: OwnedObjectPath,
-) -> Result<InternalEventStream<'a>> {
+) -> Result<ObjectEventStream<'a>> {
     let access_point = NMAccessPointProxy::builder(conn)
         .path(path.clone())?
         .build()
         .await?;
 
-    Ok(Box::pin(
-        access_point
-            .receive_strength_changed()
-            .await
-            .skip(1)
-            .map(|_| InternalEvent::Event(NetworkEvent::AccessPointsChanged)),
-    ))
+    Ok(ObjectEventStream {
+        path,
+        parent: Some(device),
+        stream: Box::pin(
+            access_point
+                .receive_strength_changed()
+                .await
+                .skip(1)
+                .map(|_| InternalEvent::Event(NetworkEvent::AccessPointsChanged)),
+        ),
+    })
 }
 
 pub(crate) fn settings_change_event(change: SettingsChange) -> NetworkEvent {
@@ -361,7 +470,7 @@ fn send_error(tx: &mpsc::UnboundedSender<Result<NetworkEvent>>, err: ConnectionE
 
 #[cfg(test)]
 mod tests {
-    use futures::StreamExt;
+    use futures::{FutureExt, StreamExt};
 
     use super::*;
 
@@ -384,26 +493,129 @@ mod tests {
         ));
 
         let access_point = path("/org/freedesktop/NetworkManager/AccessPoint/4");
-        match classify_internal_event(InternalEvent::AccessPointAdded(access_point.clone())) {
-            InternalEventAction::MonitorAccessPoint(actual) => {
+        let wifi = path("/org/freedesktop/NetworkManager/Devices/3");
+        match classify_internal_event(InternalEvent::AccessPointAdded {
+            device: wifi.clone(),
+            access_point: access_point.clone(),
+        }) {
+            InternalEventAction::MonitorAccessPoint {
+                device,
+                access_point: actual,
+            } => {
+                assert_eq!(device, wifi);
                 assert_eq!(actual, access_point);
             }
             _ => panic!("expected access-point monitoring action"),
         }
-        assert!(matches!(
-            classify_internal_event(InternalEvent::AccessPointRemoved),
-            InternalEventAction::Event(NetworkEvent::AccessPointsChanged)
-        ));
+        match classify_internal_event(InternalEvent::AccessPointRemoved(access_point.clone())) {
+            InternalEventAction::ForgetObject(actual, NetworkEvent::AccessPointsChanged) => {
+                assert_eq!(actual, access_point);
+            }
+            _ => panic!("expected access-point forget action"),
+        }
 
         let device = path("/org/freedesktop/NetworkManager/Devices/2");
         match classify_internal_event(InternalEvent::DeviceAdded(device.clone())) {
             InternalEventAction::MonitorDevice(actual) => assert_eq!(actual, device),
             _ => panic!("expected device monitoring action"),
         }
-        assert!(matches!(
-            classify_internal_event(InternalEvent::DeviceRemoved),
-            InternalEventAction::Event(NetworkEvent::DeviceChanged { interface: None })
-        ));
+        match classify_internal_event(InternalEvent::DeviceRemoved(device.clone())) {
+            InternalEventAction::ForgetObject(
+                actual,
+                NetworkEvent::DeviceChanged { interface: None },
+            ) => assert_eq!(actual, device),
+            _ => panic!("expected device forget action"),
+        }
+    }
+
+    fn silent(
+        path: &OwnedObjectPath,
+        parent: Option<&OwnedObjectPath>,
+    ) -> ObjectEventStream<'static> {
+        ObjectEventStream {
+            path: path.clone(),
+            parent: parent.cloned(),
+            stream: Box::pin(futures::stream::pending()),
+        }
+    }
+
+    #[test]
+    fn released_object_streams_leave_the_merged_stream() {
+        let mut objects = ObjectStreams::default();
+        let removed = path("/org/freedesktop/NetworkManager/AccessPoint/7");
+        let mut merged = futures::stream::select_all([
+            objects.track(silent(&removed, None)),
+            objects.track(silent(&removed, None)),
+        ]);
+
+        assert!(merged.next().now_or_never().is_none());
+
+        objects.release(&removed);
+
+        assert!(matches!(merged.next().now_or_never(), Some(None)));
+        assert!(merged.is_empty());
+        assert!(objects.is_empty());
+    }
+
+    #[test]
+    fn releasing_one_object_keeps_the_others() {
+        let mut objects = ObjectStreams::default();
+        let removed = path("/org/freedesktop/NetworkManager/Devices/9");
+        let kept = path("/org/freedesktop/NetworkManager/Devices/2");
+        let mut merged = futures::stream::select_all([
+            objects.track(silent(&removed, None)),
+            objects.track(silent(&kept, None)),
+        ]);
+
+        objects.release(&removed);
+
+        assert!(merged.next().now_or_never().is_none());
+        assert_eq!(merged.len(), 1);
+    }
+
+    #[test]
+    fn releasing_a_device_releases_its_access_points() {
+        let mut objects = ObjectStreams::default();
+        let wifi = path("/org/freedesktop/NetworkManager/Devices/3");
+        let other_wifi = path("/org/freedesktop/NetworkManager/Devices/4");
+        let first = path("/org/freedesktop/NetworkManager/AccessPoint/10");
+        let second = path("/org/freedesktop/NetworkManager/AccessPoint/11");
+        let elsewhere = path("/org/freedesktop/NetworkManager/AccessPoint/12");
+        let mut merged = futures::stream::select_all([
+            objects.track(silent(&wifi, None)),
+            objects.track(silent(&first, Some(&wifi))),
+            objects.track(silent(&second, Some(&wifi))),
+            objects.track(silent(&other_wifi, None)),
+            objects.track(silent(&elsewhere, Some(&other_wifi))),
+        ]);
+
+        objects.release(&wifi);
+
+        assert!(merged.next().now_or_never().is_none());
+        assert_eq!(merged.len(), 2);
+
+        objects.release(&other_wifi);
+
+        assert!(matches!(merged.next().now_or_never(), Some(None)));
+        assert!(objects.is_empty());
+    }
+
+    #[test]
+    fn releasing_an_access_point_detaches_it_from_its_device() {
+        let mut objects = ObjectStreams::default();
+        let wifi = path("/org/freedesktop/NetworkManager/Devices/3");
+        let mut merged = futures::stream::select_all([objects.track(silent(&wifi, None))]);
+
+        for id in 0..100 {
+            let access_point = path(&format!("/org/freedesktop/NetworkManager/AccessPoint/{id}"));
+            merged.push(objects.track(silent(&access_point, Some(&wifi))));
+            objects.release(&access_point);
+        }
+
+        assert!(merged.next().now_or_never().is_none());
+        assert_eq!(merged.len(), 1);
+        assert!(!objects.children.contains_key(&wifi));
+        assert!(objects.parents.is_empty());
     }
 
     #[test]
